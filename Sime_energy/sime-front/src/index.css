@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* SIME Energy Management - Professional B2B Design System */
+    /* Crème background with navy and burgundy accents */
+    
+    --background: 32 25% 96%;          /* Warm cream #F7F2EA */
+    --foreground: 213 40% 20%;         /* Deep navy for text */
+
+    --card: 0 0% 100%;                 /* Pure white cards */
+    --card-foreground: 213 40% 20%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 213 40% 20%;
+
+    --primary: 213 55% 24%;            /* Navy blue #1E3A5F for CTAs */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 32 20% 92%;           /* Light cream for secondary surfaces */
+    --secondary-foreground: 213 40% 20%;
+
+    --muted: 32 15% 90%;               /* Muted cream */
+    --muted-foreground: 213 20% 45%;
+
+    --accent: 213 55% 24%;             /* Navy accent */
+    --accent-foreground: 0 0% 100%;
+
+    --warning: 345 75% 32%;            /* Burgundy #8B1538 for alerts */
+    --warning-foreground: 0 0% 100%;
+
+    --success: 142 55% 45%;            /* Professional green */
+    --success-foreground: 0 0% 100%;
+
+    --destructive: 345 75% 32%;        /* Burgundy for destructive actions */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 32 20% 88%;              /* Soft cream border */
+    --input: 32 20% 88%;
+    --ring: 213 55% 24%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 213 40% 20%;
+    --sidebar-primary: 213 55% 24%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 32 25% 96%;
+    --sidebar-accent-foreground: 213 40% 20%;
+    --sidebar-border: 32 20% 88%;
+    --sidebar-ring: 213 55% 24%;
+
+    /* Custom SIME tokens */
+    --chart-1: 213 55% 24%;            /* Navy */
+    --chart-2: 345 75% 32%;            /* Burgundy */
+    --chart-3: 142 55% 45%;            /* Green */
+    --chart-4: 32 80% 60%;             /* Warm orange */
+    --chart-5: 213 40% 60%;            /* Light navy */
+
+    --shadow: 213 20% 20% / 0.08;
+    --shadow-lg: 213 20% 20% / 0.12;
+  }
+
+  .dark {
+    --background: 0 0% 11%;            /* Base dark #1c1c1c */
+    --foreground: 0 0% 92%;            /* Light gray text */
+
+    --card: 0 0% 15%;                  /* Lighter cards */
+    --card-foreground: 0 0% 92%;
+
+    --popover: 0 0% 15%;
+    --popover-foreground: 0 0% 92%;
+
+    --primary: 213 55% 50%;            /* Navy accent */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 18%;             /* Slightly lighter secondary */
+    --secondary-foreground: 0 0% 92%;
+
+    --muted: 0 0% 22%;                 /* Muted surfaces */
+    --muted-foreground: 0 0% 65%;
+
+    --accent: 213 55% 50%;             /* Navy accent */
+    --accent-foreground: 0 0% 100%;
+
+    --warning: 345 65% 45%;            /* Burgundy */
+    --warning-foreground: 0 0% 100%;
+
+    --success: 142 50% 50%;            /* Green */
+    --success-foreground: 0 0% 100%;
+
+    --destructive: 345 65% 45%;        /* Burgundy */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 25%;                /* Subtle borders */
+    --input: 0 0% 18%;
+    --ring: 213 55% 50%;
+
+    --sidebar-background: 0 0% 13%;    /* Slightly lighter than base */
+    --sidebar-foreground: 0 0% 92%;
+    --sidebar-primary: 213 55% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 18%;
+    --sidebar-accent-foreground: 0 0% 92%;
+    --sidebar-border: 0 0% 25%;
+    --sidebar-ring: 213 55% 50%;
+
+    --chart-1: 213 55% 50%;
+    --chart-2: 345 65% 45%;
+    --chart-3: 142 50% 50%;
+    --chart-4: 32 75% 55%;
+    --chart-5: 213 40% 65%;
+
+    --shadow: 0 0% 0% / 0.3;
+    --shadow-lg: 0 0% 0% / 0.5;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold;
+  }
+}

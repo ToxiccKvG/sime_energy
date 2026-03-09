@@ -1,0 +1,1 @@
+Energy managment platform for CER2E (front)
