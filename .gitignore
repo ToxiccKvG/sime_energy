@@ -1,0 +1,9 @@
+.claude/
+docs/
+
+__MACOSX/
+.DS_Store
+**/.DS_Store
+
+# Windows Zone Identifier files
+**:Zone.Identifier
