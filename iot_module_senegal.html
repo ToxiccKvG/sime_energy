@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Module IOT — SIME Energy · Sénégal</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f9f9f7;color:#1a1a18;padding:24px}
+.wrap{max-width:760px;margin:0 auto;padding:16px 0}
+
+/* Navigation */
+.nav{display:flex;gap:4px;flex-wrap:wrap;justify-content:center;margin-bottom:14px}
+.tab{border:1.5px solid transparent;border-radius:8px;padding:5px 10px;cursor:pointer;font-size:11px;font-weight:500;text-align:center;min-width:76px;transition:opacity .15s;user-select:none;position:relative}
+.tab:hover{opacity:.8}
+.tab.active{box-shadow:0 0 0 2.5px currentColor}
+.tab span{font-size:9px;font-weight:400;display:block;margin-top:1px;opacity:.75}
+.step-num{position:absolute;top:-6px;left:50%;transform:translateX(-50%);background:#1a1a18;color:#fff;font-size:8px;font-weight:600;border-radius:8px;padding:1px 5px;line-height:14px}
+
+.t1{background:#EEEDFE;color:#3C3489;border-color:#534AB7}
+.t2{background:#E6F1FB;color:#0C447C;border-color:#185FA5}
+.t3{background:#FCEBEB;color:#791F1F;border-color:#A32D2D}
+.t4{background:#E1F5EE;color:#085041;border-color:#0F6E56}
+.t5{background:#F1EFE8;color:#444441;border-color:#5F5E5A}
+.t6{background:#FAEEDA;color:#633806;border-color:#854F0B}
+.t7{background:#FAECE7;color:#712B13;border-color:#993C1D}
+.t8{background:#FBEAF0;color:#72243E;border-color:#993556}
+.t9{background:#EAF3DE;color:#27500A;border-color:#3B6D11}
+.t10{background:#E1F5EE;color:#085041;border-color:#0F6E56}
+.t11{background:#F1EFE8;color:#444441;border-color:#5F5E5A}
+
+.panel{display:none}
+.panel.show{display:block}
+
+/* Cards */
+.card{border-radius:10px;padding:14px 16px;border:1px solid #e0ddd6;background:#fff}
+.ptitle{font-size:13px;font-weight:500;color:#1a1a18;margin-bottom:10px}
+.psub{font-size:11px;font-weight:500;color:#5f5e5a;margin-bottom:6px;margin-top:12px}
+
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.chip{font-size:11px;border-radius:6px;padding:3px 8px}
+.rows{display:flex;flex-direction:column;gap:6px}
+.row{display:flex;gap:8px;align-items:flex-start}
+.rl{font-size:11px;font-weight:500;color:#5f5e5a;min-width:110px;padding-top:1px;flex-shrink:0}
+.rv{font-size:11px;color:#1a1a18;line-height:1.5}
+.etag{font-size:11px;border-radius:6px;padding:3px 8px;background:#EAF3DE;color:#27500A;border:1px solid #3B6D11}
+.etags{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+
+.tbl{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+.tbl th{text-align:left;padding:5px 8px;color:#5f5e5a;font-weight:500;border-bottom:1px solid #e0ddd6;background:#fafaf8}
+.tbl td{padding:5px 8px;color:#1a1a18;border-bottom:1px solid #e0ddd6;vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+
+.alert{background:#FAEEDA;border:1px solid #854F0B;border-radius:8px;padding:8px 12px;font-size:11px;color:#412402;margin-top:8px;line-height:1.5}
+.alert strong{font-weight:500}
+.info{background:#E6F1FB;border:1px solid #185FA5;border-radius:8px;padding:8px 12px;font-size:11px;color:#042C53;margin-top:8px;line-height:1.5}
+.info strong{font-weight:500}
+
+/* SVG */
+.unif{width:100%;overflow-x:auto}
+.unif svg{display:block;margin:0 auto}
+
+/* Bilan */
+.fbox{background:#fafaf8;border:1px solid #d3d1c7;border-radius:8px;padding:10px 14px;margin-bottom:8px}
+.frow{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.frow:last-child{margin-bottom:0}
+.badge{font-size:12px;font-weight:500;border-radius:6px;padding:2px 8px;min-width:34px;text-align:center;flex-shrink:0}
+.bm1{background:#E6F1FB;color:#0C447C}
+.bm3{background:#EEEDFE;color:#3C3489}
+.bm5{background:#EAF3DE;color:#27500A}
+.bmt{background:#FAEEDA;color:#633806}
+.feq{font-size:11px;color:#1a1a18;line-height:1.4}
+
+.kpis{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.kpi{font-size:11px;border-radius:6px;padding:4px 9px;background:#fff;border:1px solid #d3d1c7;color:#5f5e5a}
+
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle}
+
+/* Upload sous-onglets */
+.net-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.ntab{border:1.5px solid #d3d1c7;border-radius:8px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:500;color:#5f5e5a;background:#fff;transition:all .15s;display:flex;align-items:center;gap:6px}
+.ntab:hover{border-color:#888}
+.ntab.sel{background:#E6F1FB;border-color:#185FA5;color:#0C447C}
+.net-panel{display:none}
+.net-panel.show{display:block}
+
+/* Tarif */
+.tarif-section{border:1px solid #e0ddd6;border-radius:8px;margin-bottom:10px;overflow:hidden}
+.tarif-head{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#fafaf8;border-bottom:1px solid #e0ddd6}
+.tarif-head-title{font-size:12px;font-weight:500;color:#1a1a18}
+.tranche-row{display:grid;grid-template-columns:80px 1fr 1fr 70px;border-bottom:1px solid #e0ddd6}
+.tranche-row:last-child{border-bottom:none}
+.tranche-row.header{background:#fafaf8}
+.tc{padding:6px 10px;font-size:11px;color:#1a1a18}
+.tc.label{color:#5f5e5a;font-weight:500;font-size:10px}
+.tc.highlight{font-weight:600}
+.tc.right{text-align:right}
+.badge-plage{display:inline-block;font-size:10px;border-radius:4px;padding:1px 6px;font-weight:500}
+.bp-hp{background:#FAEEDA;color:#633806}
+.bp-hc{background:#E6F1FB;color:#0C447C}
+.coef-row{display:flex;align-items:center;gap:10px;padding:7px 12px;border-bottom:1px solid #e0ddd6;flex-wrap:wrap}
+.coef-row:last-child{border-bottom:none}
+.coef-label{font-size:11px;color:#5f5e5a;min-width:160px;flex-shrink:0}
+.coef-val{font-size:12px;font-weight:500;color:#1a1a18}
+
+.formule-box{background:#fafaf8;border:1px solid #d3d1c7;border-radius:8px;padding:10px 14px;margin-top:10px}
+.f-row{display:flex;align-items:flex-start;gap:10px;margin-bottom:6px}
+.f-row:last-child{margin-bottom:0}
+.fbadge{font-size:11px;font-weight:500;border-radius:6px;padding:2px 8px;flex-shrink:0}
+.fb-p{background:#EEEDFE;color:#3C3489}
+.fb-g{background:#EAF3DE;color:#27500A}
+.fb-b{background:#E6F1FB;color:#0C447C}
+
+/* Excel sheets */
+.xl-sheet-list{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.xl-sheet{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;background:#fafaf8;border:1px solid #e0ddd6}
+.xl-sheet-tab{font-size:10px;font-weight:500;border-radius:4px;padding:2px 7px;background:#EAF3DE;color:#27500A;min-width:90px;text-align:center;flex-shrink:0}
+.xl-sheet-desc{font-size:11px;color:#5f5e5a}
+
+/* Supabase */
+.flow-wrap{display:flex;flex-direction:column;gap:10px}
+.flow-row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+.flow-box{border-radius:8px;padding:10px 12px;border:1px solid #e0ddd6;flex:1;min-width:130px}
+.flow-box .fb-title{font-size:12px;font-weight:500;margin-bottom:4px}
+.flow-box .fb-sub{font-size:10px;color:#5f5e5a;line-height:1.5}
+.flow-arrow{display:flex;align-items:center;justify-content:center;font-size:18px;color:#aaa;padding:0 2px}
+.fb-blue{background:#E6F1FB;border-color:#185FA5}.fb-blue .fb-title{color:#0C447C}
+.fb-green{background:#EAF3DE;border-color:#3B6D11}.fb-green .fb-title{color:#27500A}
+.fb-purple{background:#EEEDFE;border-color:#534AB7}.fb-purple .fb-title{color:#3C3489}
+.fb-amber{background:#FAEEDA;border-color:#854F0B}.fb-amber .fb-title{color:#633806}
+.fb-teal{background:#E1F5EE;border-color:#0F6E56}.fb-teal .fb-title{color:#085041}
+
+.supa-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+.supa-table th{text-align:left;padding:5px 8px;color:#5f5e5a;font-weight:500;border-bottom:1px solid #e0ddd6;background:#fafaf8}
+.supa-table td{padding:5px 8px;color:#1a1a18;border-bottom:1px solid #e0ddd6;vertical-align:top}
+.supa-table tr:last-child td{border-bottom:none}
+.tag-sm{display:inline-block;font-size:9px;border-radius:4px;padding:1px 5px;font-weight:500;margin-right:2px}
+.tag-rls{background:#EAF3DE;color:#27500A}
+.tag-rt{background:#E6F1FB;color:#0C447C}
+.tag-fn{background:#EEEDFE;color:#3C3489}
+
+/* Exports */
+.export-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+.export-card{border-radius:8px;padding:10px 12px;border:1px solid #e0ddd6;background:#fff}
+.export-card .ec-title{font-size:12px;font-weight:500;color:#1a1a18;margin-bottom:4px}
+.export-card .ec-sub{font-size:10px;color:#5f5e5a;line-height:1.5}
+.export-card .ec-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.ec-tag{font-size:10px;border-radius:4px;padding:2px 6px}
+.ec-xl{background:#EAF3DE;color:#27500A;border:1px solid #3B6D11}
+.ec-csv{background:#E6F1FB;color:#0C447C;border:1px solid #185FA5}
+.ec-pdf{background:#FCEBEB;color:#791F1F;border:1px solid #A32D2D}
+.ec-png{background:#FAEEDA;color:#633806;border:1px solid #854F0B}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- NAV — ordre logique d'analyse -->
+<div class="nav">
+  <div class="tab t1 active" onclick="show('arch')"><span class="step-num">1</span>Architecture<span>Schéma</span></div>
+  <div class="tab t2" onclick="show('sources')"><span class="step-num">2</span>Sources<span>M1–M5</span></div>
+  <div class="tab t3" onclick="show('tarifs')"><span class="step-num">3</span>Tarif Senelec<span>HP/HC K2</span></div>
+  <div class="tab t4" onclick="show('upload')"><span class="step-num">4</span>Upload<span>Import données</span></div>
+  <div class="tab t5" onclick="show('cal')"><span class="step-num">5</span>Calendrier<span>Fériés Sénégal</span></div>
+  <div class="tab t6" onclick="show('courbe')"><span class="step-num">6</span>Courbe charge<span>Visualisation</span></div>
+  <div class="tab t7" onclick="show('tcd')"><span class="step-num">7</span>TCD<span>Analyse</span></div>
+  <div class="tab t8" onclick="show('bilan')"><span class="step-num">8</span>Bilan M1–M5<span>Financier</span></div>
+  <div class="tab t9" onclick="show('simu')"><span class="step-num">9</span>Simulations<span>Optimisation</span></div>
+  <div class="tab t10" onclick="show('supabase')"><span class="step-num">10</span>Supabase<span>Données</span></div>
+  <div class="tab t11" onclick="show('exports')"><span class="step-num">11</span>Exports<span>Excel / PDF</span></div>
+</div>
+
+<!-- ① ARCHITECTURE -->
+<div class="panel show" id="p-arch">
+  <div class="card">
+    <div class="ptitle">Schéma unifilaire — points de mesure</div>
+    <div class="unif">
+      <svg width="100%" viewBox="0 0 640 360">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+        <!-- M1 Réseau Senelec -->
+        <rect x="20" y="28" width="130" height="56" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+        <text font-family="system-ui,sans-serif" font-size="12" font-weight="500" fill="#0C447C" x="85" y="48" text-anchor="middle" dominant-baseline="central">M1 — Réseau public</text>
+        <text font-family="system-ui,sans-serif" font-size="11" fill="#185FA5" x="85" y="65" text-anchor="middle" dominant-baseline="central">Senelec · HP/HC · FCFA</text>
+        <rect x="22" y="76" width="98" height="16" rx="4" fill="#185FA5" fill-opacity="0.12"/>
+        <text font-family="system-ui,sans-serif" font-size="9" fill="#0C447C" x="71" y="84" text-anchor="middle" dominant-baseline="central">Tarif K2 actif</text>
+        <!-- M5 PV -->
+        <rect x="20" y="148" width="130" height="56" rx="8" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+        <text font-family="system-ui,sans-serif" font-size="12" font-weight="500" fill="#27500A" x="85" y="168" text-anchor="middle" dominant-baseline="central">M5 — PV + Batt.</text>
+        <text font-family="system-ui,sans-serif" font-size="11" fill="#3B6D11" x="85" y="185" text-anchor="middle" dominant-baseline="central">Solaire prioritaire</text>
+        <!-- M4 GE -->
+        <rect x="20" y="268" width="130" height="56" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+        <text font-family="system-ui,sans-serif" font-size="12" font-weight="500" fill="#633806" x="85" y="288" text-anchor="middle" dominant-baseline="central">M4 — GE</text>
+        <text font-family="system-ui,sans-serif" font-size="11" fill="#854F0B" x="85" y="305" text-anchor="middle" dominant-baseline="central">Groupe secours</text>
+        <!-- M2 Sélecteur -->
+        <rect x="255" y="148" width="120" height="56" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="1"/>
+        <text font-family="system-ui,sans-serif" font-size="12" font-weight="500" fill="#712B13" x="315" y="168" text-anchor="middle" dominant-baseline="central">M2 — Sélecteur</text>
+        <text font-family="system-ui,sans-serif" font-size="11" fill="#993C1D" x="315" y="185" text-anchor="middle" dominant-baseline="central">Inverseur / ATS</text>
+        <!-- M3 Charge -->
+        <rect x="490" y="148" width="130" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="1"/>
+        <text font-family="system-ui,sans-serif" font-size="12" font-weight="500" fill="#3C3489" x="555" y="168" text-anchor="middle" dominant-baseline="central">M3 — Charge</text>
+        <text font-family="system-ui,sans-serif" font-size="11" fill="#534AB7" x="555" y="185" text-anchor="middle" dominant-baseline="central">TGBD — conso. totale</text>
+        <!-- Flèches -->
+        <line x1="150" y1="56" x2="228" y2="165" stroke="#378ADD" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="150" y1="176" x2="253" y2="176" stroke="#639922" stroke-width="2" marker-end="url(#arr)"/>
+        <line x1="150" y1="290" x2="228" y2="195" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="375" y1="176" x2="488" y2="176" stroke="#D85A30" stroke-width="2" marker-end="url(#arr)"/>
+        <text font-family="system-ui,sans-serif" font-size="10" fill="#185FA5" x="196" y="112" text-anchor="middle">si M5 insuffisant</text>
+        <text font-family="system-ui,sans-serif" font-size="10" fill="#BA7517" x="192" y="246" text-anchor="middle">secours</text>
+        <text font-family="system-ui,sans-serif" font-size="10" fill="#993C1D" x="433" y="163" text-anchor="middle">vers charge</text>
+        <!-- Formule M5 -->
+        <rect x="178" y="234" width="152" height="38" rx="6" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+        <text font-family="system-ui,sans-serif" font-size="11" font-weight="500" fill="#27500A" x="254" y="248" text-anchor="middle" dominant-baseline="central">M5 = M2 − M1</text>
+        <text font-family="system-ui,sans-serif" font-size="10" fill="#3B6D11" x="254" y="263" text-anchor="middle" dominant-baseline="central">si pas de capteur direct</text>
+        <!-- Taux couverture -->
+        <rect x="415" y="234" width="208" height="38" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+        <text font-family="system-ui,sans-serif" font-size="11" font-weight="500" fill="#3C3489" x="519" y="248" text-anchor="middle" dominant-baseline="central">Taux couverture = M5/M3 × 100</text>
+        <text font-family="system-ui,sans-serif" font-size="10" fill="#534AB7" x="519" y="263" text-anchor="middle" dominant-baseline="central">% conso couverte par le solaire</text>
+        <!-- Triphasé -->
+        <rect x="20" y="334" width="600" height="20" rx="5" fill="#fafaf8" stroke="#d3d1c7" stroke-width="0.5"/>
+        <text font-family="system-ui,sans-serif" font-size="10" fill="#5f5e5a" x="320" y="344" text-anchor="middle" dominant-baseline="central">Installation triphasée — phases A, B, C · adaptable monophasé</text>
+      </svg>
+    </div>
+    <div class="alert"><strong>Priorité solaire :</strong> M5 couvre M3 en premier. Surplus → batteries → réseau. Si M5 &lt; M3 → M1 (Senelec) complète.</div>
+    <div class="info"><strong>Réseau actif :</strong> M1 est configuré sur Senelec avec tarif K2 (MT industriel). La grille HP/HC est paramétrable dans l'onglet "Tarif Senelec".</div>
+  </div>
+</div>
+
+<!-- ② SOURCES -->
+<div class="panel" id="p-sources">
+  <div class="card">
+    <div class="ptitle">Sources de données énergétiques</div>
+    <table class="tbl">
+      <thead><tr><th>Point</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><strong>M1</strong></td><td>RÉSEAU PUBLIC</td><td>Senelec — Sénégal · tarif K2 MT · HP/HC · FCFA</td></tr>
+        <tr><td><strong>M2</strong></td><td>SÉLECTEUR</td><td>Inverseur ATS — convergence des sources</td></tr>
+        <tr><td><strong>M3</strong></td><td>CHARGE</td><td>Consommation totale réelle (TGBD)</td></tr>
+        <tr><td><strong>M4</strong></td><td>SECOURS</td><td>Groupe électrogène</td></tr>
+        <tr><td><strong>M5</strong></td><td>PV + Batt.</td><td>Production solaire (direct ou déduit : M2 − M1)</td></tr>
+      </tbody>
+    </table>
+    <div class="psub">Réseau public actif</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #185FA5;border-radius:8px;background:#E6F1FB;margin-top:4px">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#378ADD;flex-shrink:0"></span>
+      <div>
+        <div style="font-size:12px;font-weight:500;color:#0C447C">Senelec</div>
+        <div style="font-size:10px;color:#185FA5;margin-top:2px">Sénégal · Tarif K2 MT · HP/HC · FCFA (XOF)</div>
+      </div>
+    </div>
+    <div class="psub">Capteurs compatibles</div>
+    <div class="rows">
+      <div class="row"><span class="rl">Capteurs</span><span class="rv">Shelly · SMA Sunny Portal · Voltcraft · Fluke · DENT Elite Pro · Sentinel 8</span></div>
+      <div class="row"><span class="rl">Édition</span><span class="rv">Nom, couleur, ordre (drag), activer/désactiver</span></div>
+      <div class="row"><span class="rl">Affectation</span><span class="rv">Site ou bâtiment · Sénégal · fournisseur Senelec</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ③ TARIF SENELEC -->
+<div class="panel" id="p-tarifs">
+  <div class="card">
+    <div class="ptitle">Grille tarifaire Senelec — Sénégal</div>
+    <div class="rows" style="margin-bottom:12px">
+      <div class="row"><span class="rl">Fournisseur</span><span class="rv">Senelec — Société Nationale d'Électricité du Sénégal</span></div>
+      <div class="row"><span class="rl">Pays</span><span class="rv">Sénégal</span></div>
+      <div class="row"><span class="rl">Devise</span><span class="rv">FCFA (XOF)</span></div>
+      <div class="row"><span class="rl">Type tarif</span><span class="rv">K1 (Basse Tension) / K2 (Moyenne Tension industriel)</span></div>
+    </div>
+
+    <div class="tarif-section">
+      <div class="tarif-head"><span class="tarif-head-title">Tarif K2 — Moyenne Tension (industriel)</span></div>
+      <div>
+        <div class="tranche-row header">
+          <div class="tc label">Plage</div>
+          <div class="tc label">Heures</div>
+          <div class="tc label">Tarif énergie</div>
+          <div class="tc label right">Durée</div>
+        </div>
+        <div class="tranche-row">
+          <div class="tc"><span class="badge-plage bp-hc">HC</span></div>
+          <div class="tc">00h–19h · 23h–00h</div>
+          <div class="tc highlight">140 FCFA/kWh</div>
+          <div class="tc right">20h/jour</div>
+        </div>
+        <div class="tranche-row">
+          <div class="tc"><span class="badge-plage bp-hp">HP</span></div>
+          <div class="tc">19h–23h</div>
+          <div class="tc highlight" style="color:#633806">232 FCFA/kWh</div>
+          <div class="tc right">4h/jour</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tarif-section">
+      <div class="tarif-head"><span class="tarif-head-title">Charges fixes et taxes</span></div>
+      <div>
+        <div class="coef-row"><span class="coef-label">Prime fixe (abonnement)</span><span class="coef-val">Selon puissance souscrite (kVA)</span></div>
+        <div class="coef-row"><span class="coef-label">Pénalité cos φ</span><span class="coef-val">Applicable si cos φ &lt; 0.85</span></div>
+        <div class="coef-row"><span class="coef-label">TVA</span><span class="coef-val">18 %</span></div>
+        <div class="coef-row"><span class="coef-label">Taxe communale</span><span class="coef-val">Variable selon commune</span></div>
+      </div>
+    </div>
+
+    <div class="formule-box">
+      <div class="f-row"><span class="fbadge fb-p">Moy. pond.</span><span style="font-size:11px;color:#1a1a18;line-height:1.5">(140 × 20 + 232 × 4) / 24 ≈ <strong>155 FCFA/kWh</strong></span></div>
+      <div class="f-row"><span class="fbadge fb-g">Coût réel</span><span style="font-size:11px;color:#1a1a18;line-height:1.5">Montant total facture ÷ kWh consommés ≈ <strong>205 FCFA/kWh</strong> (avec taxes)</span></div>
+      <div class="f-row"><span class="fbadge fb-b">Économie</span><span style="font-size:11px;color:#1a1a18;line-height:1.5">M5 (kWh) × 205 FCFA = montant économisé réel</span></div>
+    </div>
+
+    <div class="alert"><strong>Tarifs indicatifs</strong> — à mettre à jour selon la grille officielle Senelec en vigueur. La facture importée (onglet Upload) corrige automatiquement le coût unitaire réel.</div>
+  </div>
+</div>
+
+<!-- ④ UPLOAD -->
+<div class="panel" id="p-upload">
+  <div class="card">
+    <div class="ptitle">Import universel de fichiers</div>
+    <div class="net-tabs">
+      <div class="ntab sel" onclick="showUp('capteurs',this)"><span class="dot" style="background:#378ADD"></span>Capteurs connus</div>
+      <div class="ntab" onclick="showUp('libre',this)"><span class="dot" style="background:#7F77DD"></span>Fichier quelconque</div>
+      <div class="ntab" onclick="showUp('facture',this)"><span class="dot" style="background:#D85A30"></span>Facture Senelec</div>
+      <div class="ntab" onclick="showUp('stockage',this)"><span class="dot" style="background:#1D9E75"></span>Stockage Supabase</div>
+    </div>
+
+    <!-- CAPTEURS -->
+    <div class="net-panel show" id="up-capteurs">
+      <table class="tbl">
+        <thead><tr><th>Capteur</th><th>Format</th><th>Champs clés</th></tr></thead>
+        <tbody>
+          <tr><td>Shelly</td><td>CSV</td><td>timestamp, W, Wh</td></tr>
+          <tr><td>SMA Sunny Portal</td><td>CSV/XLSX</td><td>Datetime, kW, kWh</td></tr>
+          <tr><td>Voltcraft</td><td>CSV</td><td>Temps, Puissance W</td></tr>
+          <tr><td>Fluke</td><td>CSV/XLS</td><td>Date/Time, kW, PF</td></tr>
+          <tr><td>DENT Elite Pro</td><td>CSV</td><td>kW, kVAR, kVA</td></tr>
+          <tr><td>Sentinel 8</td><td>CSV</td><td>Date, heure, kWh</td></tr>
+        </tbody>
+      </table>
+      <div class="rows" style="margin-top:10px">
+        <div class="row"><span class="rl">Détection auto</span><span class="rv">Format reconnu automatiquement selon le capteur sélectionné</span></div>
+        <div class="row"><span class="rl">Granularité</span><span class="rv">Horaire ou par minute recommandé — journalier insuffisant pour HP/HC Senelec</span></div>
+        <div class="row"><span class="rl">Upload</span><span class="rv">Glisser-déposer multiple, prévisualisation des premières lignes</span></div>
+        <div class="row"><span class="rl">Conversion</span><span class="rv">Facteur W→kW, Wh→kWh automatique ou manuel</span></div>
+      </div>
+    </div>
+
+    <!-- FICHIER LIBRE -->
+    <div class="net-panel" id="up-libre">
+      <div class="info"><strong>Mode libre :</strong> Uploader n'importe quel fichier tabulaire — relevé Excel interne, export comptable, données SCADA, fichier custom. La plateforme détecte la structure et propose un mapping manuel.</div>
+      <div class="psub">Formats acceptés</div>
+      <div class="chips">
+        <span class="chip" style="background:#EAF3DE;color:#27500A">CSV (tout séparateur)</span>
+        <span class="chip" style="background:#EAF3DE;color:#27500A">XLSX / XLS</span>
+        <span class="chip" style="background:#EAF3DE;color:#27500A">ODS</span>
+        <span class="chip" style="background:#EAF3DE;color:#27500A">JSON</span>
+        <span class="chip" style="background:#EAF3DE;color:#27500A">TSV</span>
+        <span class="chip" style="background:#EAF3DE;color:#27500A">TXT colonnes fixes</span>
+      </div>
+      <div class="psub">Étapes après upload</div>
+      <div class="xl-sheet-list">
+        <div class="xl-sheet"><span class="xl-sheet-tab" style="background:#E6F1FB;color:#0C447C">1 — Aperçu</span><span class="xl-sheet-desc">Affichage des 10 premières lignes · détection du séparateur · encodage</span></div>
+        <div class="xl-sheet"><span class="xl-sheet-tab" style="background:#FAEEDA;color:#633806">2 — Mapping</span><span class="xl-sheet-desc">Choisir quelle colonne = timestamp / puissance / énergie / source · unité</span></div>
+        <div class="xl-sheet"><span class="xl-sheet-tab" style="background:#EEEDFE;color:#3C3489">3 — Qualification</span><span class="xl-sheet-desc">Associer à un point de mesure (M1 à M5) · site · période</span></div>
+        <div class="xl-sheet"><span class="xl-sheet-tab" style="background:#EAF3DE;color:#27500A">4 — Validation</span><span class="xl-sheet-desc">Détection des valeurs aberrantes · doublons · trous de données · confirmation</span></div>
+        <div class="xl-sheet"><span class="xl-sheet-tab" style="background:#F1EFE8;color:#444441">5 — Stockage</span><span class="xl-sheet-desc">Données normalisées insérées en base Supabase · disponibles dans tous les onglets</span></div>
+      </div>
+    </div>
+
+    <!-- FACTURE SENELEC -->
+    <div class="net-panel" id="up-facture">
+      <div class="info"><strong>Import facture Senelec :</strong> Uploader une facture PDF ou image pour extraire automatiquement les données tarifaires et les index de consommation. Alimente M1 et corrige le coût unitaire réel K2.</div>
+      <div class="psub">Formats acceptés</div>
+      <div class="chips">
+        <span class="chip" style="background:#FAECE7;color:#712B13">PDF (texte natif)</span>
+        <span class="chip" style="background:#FAECE7;color:#712B13">PDF scanné (OCR)</span>
+        <span class="chip" style="background:#FAECE7;color:#712B13">PNG / JPG photo facture</span>
+        <span class="chip" style="background:#FAECE7;color:#712B13">XLSX relevé Senelec</span>
+      </div>
+      <div class="psub">Données extraites automatiquement</div>
+      <table class="tbl">
+        <thead><tr><th>Champ extrait</th><th>Utilisation dans la plateforme</th></tr></thead>
+        <tbody>
+          <tr><td>Période de facturation</td><td>Fenêtre temporelle de l'analyse M1</td></tr>
+          <tr><td>Index début / fin (kWh)</td><td>Calcul M1 réel (consommation Senelec)</td></tr>
+          <tr><td>Montant total (HT + TTC)</td><td>Coût unitaire réel = total ÷ kWh</td></tr>
+          <tr><td>Prime fixe abonnement</td><td>Intégrée dans la grille tarifaire K2</td></tr>
+          <tr><td>Pénalité réactif (cos φ)</td><td>Ajoutée au coût réel si présente</td></tr>
+          <tr><td>TVA 18 % appliquée</td><td>Mise à jour automatique de la grille K2</td></tr>
+        </tbody>
+      </table>
+      <div class="rows" style="margin-top:10px">
+        <div class="row"><span class="rl">Correction</span><span class="rv">Toutes les valeurs extraites sont vérifiables et corrigeables avant validation</span></div>
+        <div class="row"><span class="rl">Historique</span><span class="rv">Toutes les factures Senelec importées sont conservées en base et retéléchargeables</span></div>
+      </div>
+    </div>
+
+    <!-- STOCKAGE -->
+    <div class="net-panel" id="up-stockage">
+      <div class="info"><strong>Fichiers déjà en base :</strong> Tous les fichiers uploadés sont conservés dans Supabase Storage. Réutilisables, re-analysables ou partageables sans nouvel upload.</div>
+      <div class="psub">Fonctionnalités</div>
+      <div class="rows">
+        <div class="row"><span class="rl">Bibliothèque</span><span class="rv">Liste de tous les fichiers uploadés par site · date · type · taille</span></div>
+        <div class="row"><span class="rl">Re-traitement</span><span class="rv">Relancer le mapping sur un fichier existant avec de nouveaux paramètres</span></div>
+        <div class="row"><span class="rl">Partage</span><span class="rv">Générer un lien signé temporaire pour partager un fichier avec un tiers</span></div>
+        <div class="row"><span class="rl">Suppression</span><span class="rv">Supprimer un fichier et ses données associées en base (avec confirmation)</span></div>
+        <div class="row"><span class="rl">Versioning</span><span class="rv">Conserver l'historique des versions d'un même fichier (ex : facture corrigée)</span></div>
+        <div class="row"><span class="rl">Accès</span><span class="rv">RLS Supabase — chaque utilisateur ne voit que ses propres fichiers</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ⑤ CALENDRIER -->
+<div class="panel" id="p-cal">
+  <div class="card">
+    <div class="ptitle">Calendrier — Jours ouvrés et fériés Sénégal</div>
+    <div class="rows">
+      <div class="row"><span class="rl">Jours ouvrés</span><span class="rv">Lun→Dim · horaires ouv./ferm. · pauses · horaires spéciaux par plage</span></div>
+      <div class="row"><span class="rl">Exemple</span><span class="rv">Sam = jour travaillé / Dim = chômé (configurable par site)</span></div>
+    </div>
+    <div class="psub">Fériés nationaux — Sénégal</div>
+    <div class="chips">
+      <span class="chip" style="background:#E6F1FB;color:#0C447C">1er janvier — Jour de l'An</span>
+      <span class="chip" style="background:#E6F1FB;color:#0C447C">4 avril — Fête Nationale</span>
+      <span class="chip" style="background:#E6F1FB;color:#0C447C">1er mai — Fête du Travail</span>
+      <span class="chip" style="background:#E6F1FB;color:#0C447C">15 août — Assomption</span>
+      <span class="chip" style="background:#E6F1FB;color:#0C447C">1er novembre — Toussaint</span>
+      <span class="chip" style="background:#E6F1FB;color:#0C447C">25 décembre — Noël</span>
+    </div>
+    <div class="rows" style="margin-top:8px">
+      <div class="row"><span class="rl">Fêtes variables</span><span class="rv">Korité · Tabaski · Tamkharit · Maouloud · Pâques — dates modifiables chaque année</span></div>
+      <div class="row"><span class="rl">Événements</span><span class="rv">Fermetures exceptionnelles, travaux, custom</span></div>
+      <div class="row"><span class="rl">Impact HP/HC</span><span class="rv">Les jours fériés sont exclus ou traités comme jours chômés dans l'analyse HP/HC Senelec</span></div>
+      <div class="row"><span class="rl">Visuel</span><span class="rv">Jours marqués sur tous les graphiques de la plateforme</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ⑥ COURBE DE CHARGE -->
+<div class="panel" id="p-courbe">
+  <div class="card">
+    <div class="ptitle">Courbe de charge — Visualisation puissance dans le temps</div>
+    <div class="chips">
+      <span class="chip" style="background:#FAEEDA;color:#633806">AreaChart / LineChart</span>
+      <span class="chip" style="background:#FAEEDA;color:#633806">BarChart empilé</span>
+      <span class="chip" style="background:#FAEEDA;color:#633806">Énergie cumulée</span>
+    </div>
+    <div class="rows">
+      <div class="row"><span class="rl">Axe X</span><span class="rv">Granularité 15min → 1 semaine · filtre date/heure/type jour</span></div>
+      <div class="row"><span class="rl">Axe Y</span><span class="rv">W / kW / MW · min-max · log/linéaire</span></div>
+      <div class="row"><span class="rl">Séries</span><span class="rv">M1, M2, M3, M4, M5 — cocher/décocher · ligne/aire/barres</span></div>
+      <div class="row"><span class="rl">Seuil</span><span class="rv">Ligne horizontale : puissance souscrite Senelec ou cible</span></div>
+      <div class="row"><span class="rl">HP/HC Senelec</span><span class="rv">Plages colorées 19h–23h (HP) et 00h–19h · 23h–00h (HC) sur tous les graphiques</span></div>
+    </div>
+    <div class="etags"><span class="etag">PNG</span><span class="etag">SVG</span><span class="etag">CSV</span><span class="etag">Excel</span></div>
+  </div>
+</div>
+
+<!-- ⑦ TCD -->
+<div class="panel" id="p-tcd">
+  <div class="card">
+    <div class="ptitle">Tableaux croisés dynamiques</div>
+    <div class="rows">
+      <div class="row"><span class="rl">Lignes</span><span class="rv">Heure · Jour · Semaine · Mois · Site · Source</span></div>
+      <div class="row"><span class="rl">Colonnes</span><span class="rv">Source · Jour semaine · Mois · Année</span></div>
+      <div class="row"><span class="rl">Valeurs</span><span class="rv">kWh · kW moy · kW max · Coût FCFA</span></div>
+      <div class="row"><span class="rl">Agrégation</span><span class="rv">Somme · Moyenne · Max · Min</span></div>
+    </div>
+    <div class="psub">TCD pré-configurés — Senelec</div>
+    <div class="chips">
+      <span class="chip" style="background:#FAECE7;color:#712B13">Consommation par source (M1–M5)</span>
+      <span class="chip" style="background:#FAECE7;color:#712B13">Profil journalier (0h–23h)</span>
+      <span class="chip" style="background:#FAECE7;color:#712B13">Profil hebdomadaire</span>
+      <span class="chip" style="background:#FAECE7;color:#712B13">Comparaison mensuelle</span>
+      <span class="chip" style="background:#FAECE7;color:#712B13">HP (19h–23h) vs HC Senelec</span>
+    </div>
+    <div class="rows" style="margin-top:6px">
+      <div class="row"><span class="rl">Édition</span><span class="rv">Pivot drag, heatmap, filtres, tri, totaux</span></div>
+    </div>
+    <div class="etags"><span class="etag">Excel</span><span class="etag">CSV</span></div>
+  </div>
+</div>
+
+<!-- ⑧ BILAN M1–M5 -->
+<div class="panel" id="p-bilan">
+  <div class="card">
+    <div class="ptitle">Bilan énergétique et financier — FCFA</div>
+    <div class="psub">Formules de base</div>
+    <div class="fbox">
+      <div class="frow"><span class="badge bm3">M3</span><span class="feq">Charge totale réelle = M1 (facture Senelec) + M5 (production PV)</span></div>
+      <div class="frow"><span class="badge bm1">M1</span><span class="feq">Énergie achetée à Senelec (index compteur · tarif K2)</span></div>
+      <div class="frow"><span class="badge bm5">M5</span><span class="feq">Énergie PV = M2 − M1 (si pas de capteur direct)</span></div>
+      <div class="frow"><span class="badge bmt">Taux</span><span class="feq">Taux de couverture = (M5 / M3) × 100 %</span></div>
+    </div>
+    <div class="alert"><strong>Coût réel Senelec :</strong> Coût unitaire = Montant total facture ÷ Consommation totale. Inclut prime fixe, pénalités cos φ, TVA 18 %, taxes communales. Calculé automatiquement depuis la grille K2 active.</div>
+    <div class="psub">Indicateurs ROI</div>
+    <div class="kpis">
+      <span class="kpi">Économie = M5 × coût unitaire réel (FCFA)</span>
+      <span class="kpi">Taux autoconsommation = M5 / M3</span>
+      <span class="kpi">Taux couverture PV = M5 / production totale</span>
+      <span class="kpi">Énergie injectée réseau = PV − M5</span>
+    </div>
+    <div class="etags"><span class="etag">PDF</span><span class="etag">Excel</span></div>
+  </div>
+</div>
+
+<!-- ⑨ SIMULATIONS -->
+<div class="panel" id="p-simu">
+  <div class="card">
+    <div class="ptitle">Simulations et scénarios d'optimisation</div>
+    <div class="chips">
+      <span class="chip" style="background:#F1EFE8;color:#444441">Filtre plage horaire</span>
+      <span class="chip" style="background:#F1EFE8;color:#444441">Séparer HP / HC Senelec</span>
+      <span class="chip" style="background:#F1EFE8;color:#444441">Jours ouvrés / weekend</span>
+      <span class="chip" style="background:#F1EFE8;color:#444441">Exclure jours fériés Sénégal</span>
+      <span class="chip" style="background:#F1EFE8;color:#444441">Coefficient × n</span>
+      <span class="chip" style="background:#F1EFE8;color:#444441">Seuil de puissance</span>
+      <span class="chip" style="background:#F1EFE8;color:#444441">Exclusion valeurs aberrantes</span>
+      <span class="chip" style="background:#F1EFE8;color:#444441">Grille tarifaire K2 active</span>
+    </div>
+    <div class="rows" style="margin-top:8px">
+      <div class="row"><span class="rl">Comparaison</span><span class="rv">2 simulations côte à côte sur le même graphique</span></div>
+      <div class="row"><span class="rl">Résultats</span><span class="rv">kWh économisés · % réduction · économies en FCFA</span></div>
+      <div class="row"><span class="rl">Gestion</span><span class="rv">Nommer · activer/désactiver · réordonner (drag)</span></div>
+    </div>
+    <div class="info"><strong>Exemple :</strong> Simuler un déplacement de charge des HP (19h–23h, 232 FCFA/kWh) vers les HC (140 FCFA/kWh) → calcul automatique du gain financier en FCFA.</div>
+    <div class="etags"><span class="etag">PDF</span><span class="etag">Excel</span></div>
+  </div>
+</div>
+
+<!-- ⑩ SUPABASE -->
+<div class="panel" id="p-supabase">
+  <div class="card">
+    <div class="ptitle">Liaison Supabase — stockage et flux de données</div>
+
+    <div class="flow-wrap">
+      <div style="font-size:10px;font-weight:500;color:#5f5e5a;margin-bottom:2px">1 — Collecte des données</div>
+      <div class="flow-row">
+        <div class="flow-box fb-blue"><div class="fb-title">Capteurs terrain</div><div class="fb-sub">Shelly · SMA · Voltcraft · Fluke · DENT · Sentinel</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box fb-amber"><div class="fb-title">Upload universel</div><div class="fb-sub">CSV · XLSX · PDF facture Senelec · JSON · OCR si scanné</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box fb-green"><div class="fb-title">Edge Function</div><div class="fb-sub">Parsing · normalisation · validation · conversion unités</div></div>
+      </div>
+      <div class="flow-arrow" style="text-align:center">↓</div>
+      <div style="font-size:10px;font-weight:500;color:#5f5e5a;margin-bottom:2px">2 — Stockage Supabase (PostgreSQL)</div>
+      <div class="flow-row">
+        <div class="flow-box fb-purple" style="flex:2"><div class="fb-title">Base de données Supabase</div><div class="fb-sub">Tables : mesures · sources · sites · tarifs Senelec · simulations · calendrier</div></div>
+        <div class="flow-arrow">↔</div>
+        <div class="flow-box fb-teal"><div class="fb-title">Realtime</div><div class="fb-sub">Mise à jour en direct des graphiques si nouveau flux entrant</div></div>
+      </div>
+      <div class="flow-arrow" style="text-align:center">↓</div>
+      <div style="font-size:10px;font-weight:500;color:#5f5e5a;margin-bottom:2px">3 — Lecture par les onglets IOT</div>
+      <div class="flow-row">
+        <div class="flow-box fb-blue"><div class="fb-title">Courbe de charge</div><div class="fb-sub">Requête filtrée par source, date, granularité</div></div>
+        <div class="flow-box fb-amber"><div class="fb-title">TCD</div><div class="fb-sub">Agrégation SQL côté serveur</div></div>
+        <div class="flow-box fb-green"><div class="fb-title">Bilan M1–M5</div><div class="fb-sub">Calcul M5 = M2−M1 en DB</div></div>
+        <div class="flow-box fb-purple"><div class="fb-title">Simulations</div><div class="fb-sub">Conditions appliquées en requête</div></div>
+      </div>
+    </div>
+
+    <div class="psub">Tables principales en base</div>
+    <table class="supa-table">
+      <thead><tr><th>Table</th><th>Contenu</th><th>Fonctionnalités</th></tr></thead>
+      <tbody>
+        <tr><td><code>mesures</code></td><td>timestamp · source_id · kW · kWh · site_id</td><td><span class="tag-sm tag-rls">RLS</span><span class="tag-sm tag-rt">Realtime</span></td></tr>
+        <tr><td><code>sources</code></td><td>nom · type (M1–M5) · couleur · capteur · site_id</td><td><span class="tag-sm tag-rls">RLS</span></td></tr>
+        <tr><td><code>tarifs_senelec</code></td><td>fournisseur · devise FCFA · tranches HP/HC · taxes · K1/K2</td><td><span class="tag-sm tag-rls">RLS</span></td></tr>
+        <tr><td><code>sites</code></td><td>nom · adresse · Sénégal · réseau Senelec · audit_id</td><td><span class="tag-sm tag-rls">RLS</span></td></tr>
+        <tr><td><code>simulations</code></td><td>nom · conditions JSON · résultats · site_id</td><td><span class="tag-sm tag-rls">RLS</span></td></tr>
+        <tr><td><code>calendrier</code></td><td>site_id · jours ouvrés · fériés Sénégal · horaires</td><td><span class="tag-sm tag-rls">RLS</span></td></tr>
+        <tr><td><code>exports_log</code></td><td>user_id · type · date · fichier généré</td><td><span class="tag-sm tag-fn">Function</span></td></tr>
+      </tbody>
+    </table>
+    <div class="info" style="margin-top:10px"><strong>Sécurité :</strong> Row Level Security (RLS) activée sur toutes les tables — chaque utilisateur ne voit que les données de ses propres sites et audits.</div>
+  </div>
+</div>
+
+<!-- ⑪ EXPORTS -->
+<div class="panel" id="p-exports">
+  <div class="card">
+    <div class="ptitle">Exports — téléchargement des analyses</div>
+
+    <div class="psub">Fichier Excel structuré (.xlsx)</div>
+    <div class="info"><strong>Multi-onglets :</strong> fichier avec en-têtes formatés, formules, mise en forme conditionnelle (heatmap) et graphiques en image. Généré via <strong>ExcelJS</strong> côté serveur (Edge Function Supabase).</div>
+    <div class="xl-sheet-list">
+      <div class="xl-sheet"><span class="xl-sheet-tab">Récapitulatif</span><span class="xl-sheet-desc">M1, M2, M3, M5, taux couverture, coût évité FCFA — période sélectionnée</span></div>
+      <div class="xl-sheet"><span class="xl-sheet-tab">Courbe de charge</span><span class="xl-sheet-desc">Données brutes horodatées par source + graphique intégré · HP/HC Senelec colorées</span></div>
+      <div class="xl-sheet"><span class="xl-sheet-tab">TCD mensuel</span><span class="xl-sheet-desc">Tableau croisé kWh par source × mois + mise en forme heatmap</span></div>
+      <div class="xl-sheet"><span class="xl-sheet-tab">Profil journalier</span><span class="xl-sheet-desc">Consommation moyenne 0h–23h · jours ouvrés vs weekend · fériés Sénégal</span></div>
+      <div class="xl-sheet"><span class="xl-sheet-tab">Bilan M1–M5</span><span class="xl-sheet-desc">Formules M3, M5, taux autoconsommation, économies en FCFA</span></div>
+      <div class="xl-sheet"><span class="xl-sheet-tab">Tarif Senelec</span><span class="xl-sheet-desc">Grille K2 HP/HC active · coût unitaire réel · calcul moyen pondéré en FCFA</span></div>
+      <div class="xl-sheet"><span class="xl-sheet-tab">Simulations</span><span class="xl-sheet-desc">Résultats : kWh économisés, % réduction, gain FCFA</span></div>
+    </div>
+
+    <div class="psub">Autres formats</div>
+    <div class="export-grid">
+      <div class="export-card">
+        <div class="ec-title">CSV brut</div>
+        <div class="ec-sub">Données filtrées telles quelles · compatible tout logiciel · léger</div>
+        <div class="ec-tags"><span class="ec-tag ec-csv">CSV</span></div>
+      </div>
+      <div class="export-card">
+        <div class="ec-title">PDF rapport</div>
+        <div class="ec-sub">Mise en page A4 · graphiques intégrés · logo client · généré via Puppeteer</div>
+        <div class="ec-tags"><span class="ec-tag ec-pdf">PDF</span></div>
+      </div>
+      <div class="export-card">
+        <div class="ec-title">PNG / SVG graphique</div>
+        <div class="ec-sub">Export d'un graphique seul · prêt pour présentation ou rapport</div>
+        <div class="ec-tags"><span class="ec-tag ec-png">PNG</span><span class="ec-tag ec-png">SVG</span></div>
+      </div>
+      <div class="export-card">
+        <div class="ec-title">Partage lien Supabase</div>
+        <div class="ec-sub">Lien temporaire vers l'analyse stockée en DB · accessible sans téléchargement</div>
+        <div class="ec-tags"><span class="ec-tag ec-xl">Lien</span></div>
+      </div>
+    </div>
+
+    <div class="psub">Déclenchement</div>
+    <div class="rows">
+      <div class="row"><span class="rl">Par onglet</span><span class="rv">Bouton "Télécharger" dans chaque onglet — exporte la vue filtrée active</span></div>
+      <div class="row"><span class="rl">Export global</span><span class="rv">Bouton "Exporter l'analyse complète" → génère le .xlsx multi-onglets complet</span></div>
+      <div class="row"><span class="rl">Automatique</span><span class="rv">Rapport mensuel PDF généré automatiquement via cron Supabase et envoyé par email</span></div>
+      <div class="row"><span class="rl">Historique</span><span class="rv">Tous les exports loggés en base (exports_log) — retéléchargeables</span></div>
+    </div>
+  </div>
+</div>
+
+</div><!-- .wrap -->
+
+<script>
+const ids={arch:'p-arch',sources:'p-sources',tarifs:'p-tarifs',upload:'p-upload',cal:'p-cal',courbe:'p-courbe',tcd:'p-tcd',bilan:'p-bilan',simu:'p-simu',supabase:'p-supabase',exports:'p-exports'};
+const keys=['arch','sources','tarifs','upload','cal','courbe','tcd','bilan','simu','supabase','exports'];
+const tabs=document.querySelectorAll('.tab');
+
+function show(k){
+  Object.values(ids).forEach(id=>document.getElementById(id).className='panel');
+  document.getElementById(ids[k]).className='panel show';
+  tabs.forEach(t=>t.classList.remove('active'));
+  const i=keys.indexOf(k);
+  if(i>=0) tabs[i].classList.add('active');
+}
+
+function showUp(k,el){
+  document.querySelectorAll('[id^="up-"]').forEach(p=>p.className='net-panel');
+  document.getElementById('up-'+k).className='net-panel show';
+  el.closest('.net-tabs').querySelectorAll('.ntab').forEach(t=>t.classList.remove('sel'));
+  el.classList.add('sel');
+}
+</script>
+</body>
+</html>
