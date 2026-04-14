@@ -16,8 +16,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useIOT } from './IOTContext';
 import { parseShellyRow, calculerStats, detecterFormatShelly } from '@/lib/iot-profil-engine';
-import { JOURS_SEMAINE, MOIS_FR } from './shared';
+import { JOURS_SEMAINE } from './shared';
 import type { ShellyRow } from './shared';
+import { ExcelPivotTable } from './ExcelPivotTable';
 
 type AnalyseMode = 'tcd' | 'profil_semaine' | 'distribution' | 'correlation' | 'serie';
 
@@ -85,7 +86,7 @@ export function AnalyseTab() {
 
   // ---- Analyse ----
   const [mode, setMode] = useState<AnalyseMode>('serie');
-  const [tcdLigne, setTcdLigne] = useState<'mois' | 'jouSemaine' | 'typeJour'>('mois');
+  // tcdLigne replaced by ExcelPivotTable's own field-builder state
   const [showFeries, setShowFeries] = useState(true);
   const [showWeekends, setShowWeekends] = useState(true);
 
@@ -230,57 +231,7 @@ export function AnalyseTab() {
       isFerie: r.isJourFerie,
     })), [filteredRows]);
 
-  const tcdData = useMemo(() => {
-    if (filteredRows.length === 0) return [];
-    if (tcdLigne === 'mois') {
-      const byMois: Record<string, number[]> = {};
-      for (const r of filteredRows) {
-        const key = `${MOIS_FR[r.date.getMonth()]} ${r.date.getFullYear()}`;
-        if (!byMois[key]) byMois[key] = [];
-        byMois[key].push(r.kwhNet);
-      }
-      return Object.entries(byMois).map(([label, vals]) => ({
-        label,
-        total: +vals.reduce((s, v) => s + v, 0).toFixed(2),
-        moyenne: +(vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(2),
-        max: +Math.max(...vals).toFixed(2),
-        min: +Math.min(...vals).toFixed(2),
-        n: vals.length,
-      }));
-    }
-    if (tcdLigne === 'jouSemaine') {
-      const byJour: Record<string, number[]> = {};
-      for (const r of filteredRows) {
-        if (!byJour[r.jourSemaine]) byJour[r.jourSemaine] = [];
-        byJour[r.jourSemaine].push(r.kwhNet);
-      }
-      return JOURS_SEMAINE.map(jour => {
-        const vals = byJour[jour] ?? [];
-        return {
-          label: jour,
-          total: +vals.reduce((s, v) => s + v, 0).toFixed(2),
-          moyenne: vals.length ? +(vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(2) : 0,
-          max: vals.length ? +Math.max(...vals).toFixed(2) : 0,
-          min: vals.length ? +Math.min(...vals).toFixed(2) : 0,
-          n: vals.length,
-        };
-      });
-    }
-    const types = [
-      { key: 'Jours ouvrés', rows: filteredRows.filter(r => !r.isWeekend && !r.isJourFerie) },
-      { key: 'Samedis', rows: filteredRows.filter(r => r.date.getDay() === 6) },
-      { key: 'Dimanches', rows: filteredRows.filter(r => r.date.getDay() === 0) },
-      { key: 'Jours fériés', rows: filteredRows.filter(r => r.isJourFerie) },
-    ];
-    return types.map(({ key, rows }) => ({
-      label: key,
-      total: +rows.reduce((s, r) => s + r.kwhNet, 0).toFixed(2),
-      moyenne: rows.length ? +(rows.reduce((s, r) => s + r.kwhNet, 0) / rows.length).toFixed(2) : 0,
-      max: rows.length ? +Math.max(...rows.map(r => r.kwhNet)).toFixed(2) : 0,
-      min: rows.length ? +Math.min(...rows.map(r => r.kwhNet)).toFixed(2) : 0,
-      n: rows.length,
-    }));
-  }, [filteredRows, tcdLigne]);
+  // tcdData removed — pivot logic now handled by ExcelPivotTable component
 
   const profilSemaineData = useMemo(() =>
     JOURS_SEMAINE.map((jour, idx) => {
@@ -595,70 +546,8 @@ export function AnalyseTab() {
             </div>
           )}
 
-          {/* ---- TCD ---- */}
-          {mode === 'tcd' && (
-            <div className="space-y-4">
-              <div className="flex gap-3 items-center">
-                <span className="text-slate-400 text-sm">Regrouper par :</span>
-                <Select value={tcdLigne} onValueChange={(v) => setTcdLigne(v as typeof tcdLigne)}>
-                  <SelectTrigger className="w-44 bg-white/5 border-white/20 text-white text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#1a1d2e] border-white/20">
-                    <SelectItem value="mois">Mois</SelectItem>
-                    <SelectItem value="jouSemaine">Jour de semaine</SelectItem>
-                    <SelectItem value="typeJour">Type de jour</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="bg-white/5 rounded-xl border border-white/10 p-4">
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={tcdData} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="label" tick={{ fill: '#94a3b8', fontSize: 11 }}
-                      angle={tcdLigne === 'mois' ? -25 : 0} textAnchor={tcdLigne === 'mois' ? 'end' : 'middle'} />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} />
-                    <Tooltip contentStyle={{ backgroundColor: '#1a1d2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }} />
-                    <Bar dataKey="total" name="Total" radius={[4, 4, 0, 0]}>
-                      {tcdData.map((_, i) => <Cell key={i} fill={COULEURS[i % COULEURS.length]} />)}
-                    </Bar>
-                    <Bar dataKey="moyenne" name="Moyenne" radius={[4, 4, 0, 0]} fill="#06b6d4" opacity={0.6} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              <div className="overflow-x-auto bg-white/5 rounded-xl border border-white/10">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-white/5">
-                    <tr>
-                      {['Catégorie', 'N', 'Total', 'Moyenne/j', 'Max', 'Min'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-slate-300 font-medium">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tcdData.map((row, i) => (
-                      <tr key={i} className="border-t border-white/10 hover:bg-white/5">
-                        <td className="px-4 py-2.5 text-white font-medium">{row.label}</td>
-                        <td className="px-4 py-2.5 text-slate-400">{row.n}</td>
-                        <td className="px-4 py-2.5 text-blue-400 font-medium">{row.total.toLocaleString('fr-FR')}</td>
-                        <td className="px-4 py-2.5 text-cyan-400">{row.moyenne.toLocaleString('fr-FR')}</td>
-                        <td className="px-4 py-2.5 text-green-400">{row.max.toLocaleString('fr-FR')}</td>
-                        <td className="px-4 py-2.5 text-slate-400">{row.min.toLocaleString('fr-FR')}</td>
-                      </tr>
-                    ))}
-                    <tr className="border-t-2 border-white/20 bg-white/5 font-bold">
-                      <td className="px-4 py-2.5 text-white">TOTAL</td>
-                      <td className="px-4 py-2.5 text-slate-400">{tcdData.reduce((s, r) => s + r.n, 0)}</td>
-                      <td className="px-4 py-2.5 text-blue-400">{tcdData.reduce((s, r) => s + r.total, 0).toLocaleString('fr-FR')}</td>
-                      <td colSpan={3} />
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          {/* ---- TCD Excel-like pivot table ---- */}
+          {mode === 'tcd' && <ExcelPivotTable rows={filteredRows} />}
 
           {/* ---- Profil semaine ---- */}
           {mode === 'profil_semaine' && (
