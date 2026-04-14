@@ -1,24 +1,14 @@
-import { LayoutDashboard, FileText, Activity, Package, ClipboardCheck, Settings, Radio } from "lucide-react";
+import { LayoutDashboard, FileText, Activity, Package, ClipboardCheck, Settings, Zap } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "@/components/ui/sidebar";
 
 const menuItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard, blocked:true },
   { title: "Facturation", url: "/facturation", icon: FileText, blocked: false },
   { title: "Mesures", url: "/mesures", icon: Activity, blocked: true },
-  { title: "IOT", url: "/iot", icon: Radio, blocked: false },
   { title: "Inventaire", url: "/inventaire", icon: Package, blocked: true },
   { title: "Audits", url: "/audits", icon: ClipboardCheck, blocked: false },
+  { title: "IOT", url: "/iot", icon: Zap, blocked: false },
   { title: "Paramètres", url: "/parametres", icon: Settings, blocked: true },
 ];
 

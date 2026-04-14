@@ -21,8 +21,8 @@ import AuditDetail from "./pages/AuditDetail";
 import Parametres from "./pages/Parametres";
 import Compte from "./pages/Compte";
 import Auth from "./pages/Auth";
-import NotFound from "./pages/NotFound";
 import IOT from "./pages/IOT";
+import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
@@ -82,6 +82,7 @@ const App = () => (
                             <Route path="/audits" element={<Audits />} />
                             <Route path="/audits/:auditId" element={<AuditDetail />} />
                             <Route path="/iot" element={<IOT />} />
+
                             <Route path="/parametres" element={<Parametres />} />
                             <Route path="/compte" element={<Compte />} />
                             <Route path="*" element={<NotFound />} />

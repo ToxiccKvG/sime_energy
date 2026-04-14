@@ -1,111 +1,205 @@
-import { useState } from 'react';
-import { useAuth } from '@/context/AuthContext';
-import { useOrganization } from '@/context/OrganizationContext';
-import { Activity, Cpu, Zap, Upload, CalendarDays, TrendingUp, Table2, BarChart3, FlaskConical, Database, Download } from 'lucide-react';
+import {
+  Upload, Zap, BarChart2, Settings2,
+  Database, Eraser,
+} from 'lucide-react';
+import { IOTProvider, useIOT } from '@/components/iot/IOTContext';
+import { SourcesTab }      from '@/components/iot/SourcesTab';
+import { UploadTab }       from '@/components/iot/UploadTab';
+import { ProfilChargeTab } from '@/components/iot/ProfilChargeTab';
+import { AnalyseTab }      from '@/components/iot/AnalyseTab';
+import { NettoyageTab }    from '@/components/iot/NettoyageTab';
+import { Badge }           from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label }           from '@/components/ui/label';
+import { Input }           from '@/components/ui/input';
+import type { CategorieTarifaire } from '@/components/iot/shared';
+import { useIOT as useIOTCtx }     from '@/components/iot/IOTContext';
 
-import { ArchitectureTab }  from '@/components/iot/ArchitectureTab';
-import { SourcesTab }       from '@/components/iot/SourcesTab';
-import { TarifsTab }        from '@/components/iot/TarifsTab';
-import { UploadTab }        from '@/components/iot/UploadTab';
-import { CalendrierTab }    from '@/components/iot/CalendrierTab';
-import { CourbeChargeTab }  from '@/components/iot/CourbeChargeTab';
-import { TCDTab }           from '@/components/iot/TCDTab';
-import { BilanTab }         from '@/components/iot/BilanTab';
-import { SimulationsTab }   from '@/components/iot/SimulationsTab';
-import { SupabaseTab }      from '@/components/iot/SupabaseTab';
-import { ExportsTab }       from '@/components/iot/ExportsTab';
-
-// ─── Définition des onglets ────────────────────────────────────────────────────
-
+// ---- Définition des onglets ----
 const TABS = [
-  { id: 'arch',      label: 'Architecture', sub: 'Schéma',        icon: Cpu,          color: '#534AB7', bg: '#EEEDFE' },
-  { id: 'sources',   label: 'Sources',      sub: 'M1–M5',          icon: Activity,     color: '#185FA5', bg: '#E6F1FB' },
-  { id: 'tarifs',    label: 'Tarifs',       sub: 'HP/HC · K2',     icon: Zap,          color: '#A32D2D', bg: '#FCEBEB' },
-  { id: 'upload',    label: 'Import',       sub: 'Données',        icon: Upload,       color: '#0F6E56', bg: '#E1F5EE' },
-  { id: 'cal',       label: 'Calendrier',   sub: 'Fériés',         icon: CalendarDays, color: '#5F5E5A', bg: '#F1EFE8' },
-  { id: 'courbe',    label: 'Courbe',       sub: 'Charge',         icon: TrendingUp,   color: '#854F0B', bg: '#FAEEDA' },
-  { id: 'tcd',       label: 'TCD',          sub: 'Analyse',        icon: Table2,       color: '#712B13', bg: '#FAECE7' },
-  { id: 'bilan',     label: 'Bilan M1–M5',  sub: 'Financier',      icon: BarChart3,    color: '#72243E', bg: '#FBEAF0' },
-  { id: 'simu',      label: 'Simulations',  sub: 'Optimisation',   icon: FlaskConical, color: '#27500A', bg: '#EAF3DE' },
-  { id: 'supabase',  label: 'Supabase',     sub: 'Données',        icon: Database,     color: '#085041', bg: '#E1F5EE' },
-  { id: 'exports',   label: 'Exports',      sub: 'Excel · PDF',    icon: Download,     color: '#444441', bg: '#F1EFE8' },
+  { id: 'sources',     label: 'Sources',         icon: Database,     description: 'Capteurs & sources' },
+  { id: 'upload',      label: 'Upload',           icon: Upload,       description: 'CSV / XLSX' },
+  { id: 'nettoyage',   label: 'Nettoyage',        icon: Eraser,       description: 'Tri · filtre · édition' },
+  { id: 'profil',      label: 'Courbe de charge', icon: Zap,          description: 'Multi-sources' },
+  { id: 'tcd',         label: 'TCD',              icon: BarChart2,    description: 'Tableaux croisés' },
 ] as const;
 
-type TabId = typeof TABS[number]['id'];
+type TabId = (typeof TABS)[number]['id'];
 
-// ─── Composant principal ───────────────────────────────────────────────────────
-
-export default function IOT() {
-  const { user }         = useAuth();
-  const { organization } = useOrganization();
-  const [activeTab, setActiveTab] = useState<TabId>('arch');
-  const [siteId, setSiteId]       = useState<string | null>(null);
-
-  const sharedProps = {
-    organizationId: organization?.id ?? '',
-    userId:         user?.id ?? '',
-    siteId,
-    onSiteChange:   setSiteId,
-  };
+// ---- Panneau paramètres globaux ----
+function ParamsTarifPanel() {
+  const { state, updateParamsTarif, updateDonneesTechniques } = useIOTCtx();
+  const { paramsTarif, donneesTechniques } = state;
 
   return (
-    <div className="space-y-4">
-
-      {/* En-tête */}
-      <div>
-        <h1 className="text-2xl font-semibold text-slate-100">Module IoT</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Analyse énergétique temps réel · Shelly 3EM · M1–M5 · Senelec HP/HC
-        </p>
+    <div className="bg-white/5 rounded-xl border border-white/10 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Settings2 className="h-4 w-4 text-slate-400" />
+        <h4 className="text-white font-medium text-sm">Paramètres globaux</h4>
       </div>
-
-      {/* Navigation onglets */}
-      <div className="flex flex-wrap gap-1.5">
-        {TABS.map((tab, i) => {
-          const Icon    = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className="relative flex flex-col items-center gap-0.5 rounded-lg border px-3 py-2 text-center transition-all duration-150 hover:opacity-80 min-w-[76px]"
-              style={{
-                background:   isActive ? tab.bg : 'rgba(255,255,255,0.04)',
-                borderColor:  isActive ? tab.color : 'rgba(255,255,255,0.1)',
-                boxShadow:    isActive ? `0 0 0 2px ${tab.color}` : 'none',
-                color:        isActive ? tab.color : '#94a3b8',
-              }}
-            >
-              {/* Numéro étape */}
-              <span
-                className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full px-1.5 text-[9px] font-semibold leading-4"
-                style={{ background: tab.color, color: '#fff' }}
-              >
-                {i + 1}
-              </span>
-              <Icon size={14} />
-              <span className="text-[11px] font-medium leading-none">{tab.label}</span>
-              <span className="text-[9px] opacity-70 leading-none">{tab.sub}</span>
-            </button>
-          );
-        })}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div>
+          <Label className="text-slate-400 text-xs mb-1 block">Type tarif</Label>
+          <Select
+            value={paramsTarif.typeTarif}
+            onValueChange={(v) => updateParamsTarif({ typeTarif: v as 'MT' | 'BT' })}
+          >
+            <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1a1d2e] border-white/20">
+              <SelectItem value="MT">MT — Moyenne Tension</SelectItem>
+              <SelectItem value="BT">BT — Basse Tension</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label className="text-slate-400 text-xs mb-1 block">Tarif K1/HHP (FCFA/kWh)</Label>
+          <Input
+            type="number"
+            value={paramsTarif.tarifK1}
+            onChange={(e) => updateParamsTarif({ tarifK1: parseFloat(e.target.value) || 0 })}
+            className="bg-white/5 border-white/20 text-white text-sm h-8"
+          />
+        </div>
+        <div>
+          <Label className="text-slate-400 text-xs mb-1 block">Tarif K2/HP (FCFA/kWh)</Label>
+          <Input
+            type="number"
+            value={paramsTarif.tarifK2}
+            onChange={(e) => updateParamsTarif({ tarifK2: parseFloat(e.target.value) || 0 })}
+            className="bg-white/5 border-white/20 text-white text-sm h-8"
+          />
+        </div>
+        <div>
+          <Label className="text-slate-400 text-xs mb-1 block">Catégorie facturation</Label>
+          <Select
+            value={donneesTechniques.categorie}
+            onValueChange={(v) => updateDonneesTechniques({ categorie: v as CategorieTarifaire })}
+          >
+            <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1a1d2e] border-white/20">
+              {(['DPP','DMP','PPP','PMP','DGP','PGP','TCU','TG','TLU','TG_HT','TS'] as CategorieTarifaire[]).map(c => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
-
-      {/* Contenu des onglets */}
-      <div>
-        {activeTab === 'arch'     && <ArchitectureTab  {...sharedProps} />}
-        {activeTab === 'sources'  && <SourcesTab       {...sharedProps} />}
-        {activeTab === 'tarifs'   && <TarifsTab        {...sharedProps} />}
-        {activeTab === 'upload'   && <UploadTab        {...sharedProps} />}
-        {activeTab === 'cal'      && <CalendrierTab    {...sharedProps} />}
-        {activeTab === 'courbe'   && <CourbeChargeTab  {...sharedProps} />}
-        {activeTab === 'tcd'      && <TCDTab           {...sharedProps} />}
-        {activeTab === 'bilan'    && <BilanTab         {...sharedProps} />}
-        {activeTab === 'simu'     && <SimulationsTab   {...sharedProps} />}
-        {activeTab === 'supabase' && <SupabaseTab      {...sharedProps} />}
-        {activeTab === 'exports'  && <ExportsTab       {...sharedProps} />}
-      </div>
-
     </div>
+  );
+}
+
+// ---- Page intérieure (accès au contexte) ----
+function IOTInner() {
+  const { state, setActiveTab } = useIOT();
+  const { activeTab, shellyRows, files, sources } = state;
+
+  const tabId = (activeTab as TabId) ?? 'sources';
+
+  const badges: Partial<Record<TabId, number>> = {
+    sources:   sources.length > 0 ? sources.length : undefined,
+    upload:    files.length > 0 ? files.length : undefined,
+    nettoyage: shellyRows.length > 0 ? shellyRows.length : undefined,
+    profil:    shellyRows.length > 0 ? shellyRows.length : undefined,
+  };
+
+  // Onglets qui n'affichent pas le panneau paramètres
+  const hideParams: TabId[] = ['sources', 'upload', 'nettoyage'];
+
+  return (
+    <div className="space-y-6">
+      {/* En-tête */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-600/30 border border-blue-500/50 flex items-center justify-center">
+              <Zap className="h-4 w-4 text-blue-400" />
+            </div>
+            Module IOT
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">
+            Sources · Upload · Nettoyage · Courbe de charge · TCD
+          </p>
+        </div>
+
+        {/* Indicateurs rapides */}
+        <div className="flex gap-3 text-xs text-slate-400">
+          {sources.filter(s => s.actif).length > 0 && (
+            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
+              <p className="text-blue-400 font-bold text-sm">{sources.filter(s => s.actif).length}</p>
+              <p>source(s)</p>
+            </div>
+          )}
+          {shellyRows.length > 0 && (
+            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
+              <p className="text-green-400 font-bold text-sm">{shellyRows.length}</p>
+              <p>jours</p>
+            </div>
+          )}
+          {files.length > 0 && (
+            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
+              <p className="text-yellow-400 font-bold text-sm">{files.length}</p>
+              <p>fichier(s)</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Navigation onglets — scrollable horizontal sur mobile */}
+      <div className="overflow-x-auto">
+        <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-max min-w-full sm:w-fit">
+          {TABS.map(tab => {
+            const Icon = tab.icon;
+            const badge = badges[tab.id];
+            const isActive = tabId === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all relative whitespace-nowrap
+                  ${isActive
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="hidden md:inline">{tab.label}</span>
+                {badge !== undefined && (
+                  <Badge
+                    className={`ml-1 h-5 min-w-5 text-xs px-1 ${isActive ? 'bg-white/20 text-white' : 'bg-blue-600/50 text-blue-300'} border-0`}
+                  >
+                    {badge}
+                  </Badge>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Paramètres globaux (compact) — hors onglets non concernés */}
+      {!hideParams.includes(tabId) && <ParamsTarifPanel />}
+
+      {/* Contenu onglet */}
+      <div className="min-h-[400px]">
+        {tabId === 'sources'     && <SourcesTab />}
+        {tabId === 'upload'      && <UploadTab />}
+        {tabId === 'nettoyage'   && <NettoyageTab />}
+        {tabId === 'profil'      && <ProfilChargeTab />}
+        {tabId === 'tcd'         && <AnalyseTab />}
+      </div>
+    </div>
+  );
+}
+
+// ---- Export page ----
+export default function IOT() {
+  return (
+    <IOTProvider>
+      <IOTInner />
+    </IOTProvider>
   );
 }

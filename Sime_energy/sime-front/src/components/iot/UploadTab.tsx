@@ -1,304 +1,623 @@
-import { useState, useRef } from 'react';
-import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, ChevronRight } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { toast } from 'sonner';
-import type { IotTabProps } from './shared';
-import type { SourceCode } from '@/lib/iot-sources-service';
+import { useRef, useState, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import {
-  apercuFichier, normaliserFichier, validerLignes, stockerDonnees,
-  getMappingCapteur, type CapteurConnu, type AperçuFichier, type RapportValidation,
-} from '@/services/iotImportService';
+  Upload, FileSpreadsheet, Trash2, CheckCircle, AlertCircle,
+  ChevronLeft, ChevronRight, Hash, Calendar, Type, Database,
+  Eye, EyeOff,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useIOT } from './IOTContext';
+import type { ImportedFile, ShellyRow } from './shared';
+import { parseShellyRow, detecterFormatShelly } from '@/lib/iot-profil-engine';
+import { parseFacturationRow } from '@/lib/iot-facturation-engine';
+import type { LigneFacturation } from './shared';
 
-const CAPTEURS: { id: CapteurConnu; label: string }[] = [
-  { id: 'Shelly_3EM',    label: 'Shelly 3EM' },
-  { id: 'SMA_Sunny',     label: 'SMA Sunny Portal' },
-  { id: 'Voltcraft',     label: 'Voltcraft' },
-  { id: 'Fluke',         label: 'Fluke' },
-  { id: 'DENT_Elite_Pro',label: 'DENT Elite Pro' },
-  { id: 'Sentinel_8',    label: 'Sentinel 8' },
-  { id: 'Libre',         label: 'Fichier libre (mapping manuel)' },
-];
+type FileType = 'shelly' | 'facturation' | 'autre';
 
-const SOURCE_CODES: SourceCode[] = ['M1', 'M2', 'M3', 'M4', 'M5'];
+const ROWS_PER_PAGE = 50;
 
-type Step = 1 | 2 | 3 | 4 | 5;
+interface SheetData {
+  name: string;
+  columns: string[];
+  preview: Record<string, unknown>[]; // 200 premières lignes pour l'affichage
+  rowCount: number;
+}
 
-export function UploadTab({ organizationId, userId, siteId }: IotTabProps) {
+interface FileEntry {
+  file: File;
+  type: FileType;
+  sourceId: string;
+  status: 'pending' | 'processing' | 'done' | 'error';
+  error?: string;
+  sheets: SheetData[];
+  activeSheet: number;
+  page: number;
+  detected?: string;
+}
+
+// ---- Détection du type d'une colonne ----
+function detectColType(col: string, rows: Record<string, unknown>[]): 'date' | 'number' | 'text' {
+  const sample = rows.slice(0, 20).map(r => r[col]).filter(v => v != null && v !== '');
+  if (sample.length === 0) return 'text';
+  const isDate = sample.every(v => typeof v === 'string' && /\d{4}-\d{2}-\d{2}/.test(String(v)));
+  if (isDate) return 'date';
+  const isNum = sample.every(v => !isNaN(Number(v)));
+  if (isNum) return 'number';
+  return 'text';
+}
+
+const COL_TYPE_ICON = {
+  date:   <Calendar className="h-3 w-3 text-blue-400" />,
+  number: <Hash className="h-3 w-3 text-green-400" />,
+  text:   <Type className="h-3 w-3 text-slate-400" />,
+};
+const COL_TYPE_COLOR = {
+  date:   'text-blue-300',
+  number: 'text-green-300',
+  text:   'text-slate-300',
+};
+
+export function UploadTab() {
+  const { state, addFile, setShellyRows, setFacturationRows, removeFile, setSourceData } = useIOT();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [file, setFile]         = useState<File | null>(null);
-  const [step, setStep]         = useState<Step>(1);
-  const [loading, setLoading]   = useState(false);
+  const [entries, setEntries] = useState<FileEntry[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedPage, setExpandedPage] = useState<Record<string, number>>({});
 
-  // Étape 1 — Aperçu
-  const [apercu, setApercu]     = useState<AperçuFichier | null>(null);
-  const [capteur, setCapteur]   = useState<CapteurConnu>('Shelly_3EM');
+  // ---- Lecture du fichier : toutes les feuilles ----
+  const processFile = useCallback(async (file: File, type: FileType, sourceId: string): Promise<FileEntry> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target!.result as ArrayBuffer);
+          const wb = XLSX.read(data, { type: 'array', cellDates: true });
 
-  // Étape 2 — Mapping
-  const [colTimestamp, setColTimestamp]   = useState('');
-  const [colPuissance, setColPuissance]   = useState('');
-  const [colPuissanceA, setColPuissanceA] = useState('');
-  const [colPuissanceB, setColPuissanceB] = useState('');
-  const [colPuissanceC, setColPuissanceC] = useState('');
-  const [colEnergie, setColEnergie]       = useState('');
-  const [unitePuissance, setUnitePuissance] = useState<'W' | 'kW'>('W');
-  const [uniteEnergie, setUniteEnergie]     = useState<'Wh' | 'kWh'>('Wh');
-  const [facteur, setFacteur]               = useState('1');
+          const sheets: SheetData[] = wb.SheetNames.map(name => {
+            const ws = wb.Sheets[name];
+            const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
+              defval: null, raw: false, dateNF: 'YYYY-MM-DD',
+            });
+            return {
+              name,
+              columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+              preview: rows.slice(0, 200),
+              rowCount: rows.length,
+            };
+          });
 
-  // Étape 3 — Qualification
-  const [sourceCode, setSourceCode] = useState<SourceCode>('M1');
-  const [deviceId, setDeviceId]     = useState('import_csv');
+          if (sheets.length === 0 || sheets[0].rowCount === 0) {
+            resolve({ file, type, sourceId, status: 'error', error: 'Fichier vide ou format non reconnu', sheets: [], activeSheet: 0, page: 0 });
+            return;
+          }
 
-  // Étape 4 — Validation
-  const [rapport, setRapport]   = useState<RapportValidation | null>(null);
-  const [lignes, setLignes]     = useState<Awaited<ReturnType<typeof normaliserFichier>>>([]);
+          // Auto-sélection de la meilleure feuille selon le type
+          let activeSheet = 0;
+          if (type === 'shelly') {
+            const idx = wb.SheetNames.findIndex(n =>
+              n.toLowerCase().includes('profil') || n.toLowerCase().includes('données') || n.toLowerCase().includes('data')
+            );
+            if (idx >= 0) activeSheet = idx;
+          } else if (type === 'facturation') {
+            const idx = wb.SheetNames.findIndex(n =>
+              n.toLowerCase().includes('tab_fact') || n.toLowerCase().includes('facturation') || n.toLowerCase().includes('données')
+            );
+            if (idx >= 0) activeSheet = idx;
+          }
 
-  // Étape 5 — Résultat
-  const [resultat, setResultat] = useState<{ inserted: number; skipped: number } | null>(null);
+          const cols = sheets[activeSheet]?.columns ?? [];
+          const detect = detecterFormatShelly(cols);
+          const detected = detect.isShelly
+            ? `Shelly 3EM détecté (${detect.hasRetour ? 'avec retour' : 'sans retour'})`
+            : type === 'facturation' ? 'Données facturation'
+            : `${cols.length} colonnes détectées`;
 
-  function reset() {
-    setFile(null); setStep(1); setApercu(null); setRapport(null); setLignes([]); setResultat(null);
-  }
+          resolve({ file, type, sourceId, status: 'done', sheets, activeSheet, page: 0, detected });
+        } catch (err) {
+          resolve({ file, type, sourceId, status: 'error', error: String(err), sheets: [], activeSheet: 0, page: 0 });
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }, []);
 
-  async function handleFileDrop(f: File) {
-    setFile(f); setLoading(true);
-    try {
-      const ap = await apercuFichier(f);
-      setApercu(ap);
-      if (ap.capteur_detecte) {
-        setCapteur(ap.capteur_detecte);
-        const m = getMappingCapteur(ap.capteur_detecte);
-        setColTimestamp(m.timestamp ?? '');
-        setColPuissance(m.puissance ?? '');
-        setColPuissanceA(m.puissance_a ?? '');
-        setColPuissanceB(m.puissance_b ?? '');
-        setColPuissanceC(m.puissance_c ?? '');
-        setColEnergie(m.energie ?? '');
-        setUnitePuissance((m.unite_puissance as 'W' | 'kW') ?? 'W');
-        setUniteEnergie((m.unite_energie as 'Wh' | 'kWh') ?? 'Wh');
-      }
-      setStep(2);
-    } catch { toast.error('Erreur lecture fichier'); }
-    finally { setLoading(false); }
-  }
+  const handleFiles = useCallback(async (files: FileList) => {
+    const defaultSourceId = state.sources[0]?.id ?? '';
+    const newEntries: FileEntry[] = Array.from(files).map(f => ({
+      file: f,
+      type: (f.name.toLowerCase().includes('fact') ? 'facturation' : 'shelly') as FileType,
+      sourceId: defaultSourceId,
+      status: 'pending' as const,
+      sheets: [],
+      activeSheet: 0,
+      page: 0,
+    }));
+    setEntries(prev => [...prev, ...newEntries]);
 
-  async function handleMapping() {
-    if (!file || !colTimestamp) return;
-    setLoading(true);
-    try {
-      const norm = await normaliserFichier(file, {
-        timestamp: colTimestamp, puissance: colPuissance || undefined,
-        puissance_a: colPuissanceA || undefined, puissance_b: colPuissanceB || undefined, puissance_c: colPuissanceC || undefined,
-        energie: colEnergie || undefined,
-        unite_puissance: unitePuissance, unite_energie: uniteEnergie,
-        facteur_multiplicateur: parseFloat(facteur) || 1,
+    for (const entry of newEntries) {
+      setEntries(prev => prev.map(e => e.file === entry.file ? { ...e, status: 'processing' } : e));
+      const processed = await processFile(entry.file, entry.type, entry.sourceId);
+      setEntries(prev => prev.map(e => e.file === entry.file ? { ...processed, sourceId: entry.sourceId } : e));
+    }
+  }, [processFile, state.sources]);
+
+  // ---- Import : relit le fichier complet avec la feuille sélectionnée ----
+  const handleImport = useCallback((entry: FileEntry) => {
+    const selectedSheet = entry.sheets[entry.activeSheet];
+    if (!selectedSheet) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const data = new Uint8Array(e.target!.result as ArrayBuffer);
+      const wb = XLSX.read(data, { type: 'array', cellDates: true });
+      const ws = wb.Sheets[selectedSheet.name];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
+        defval: null, raw: false, dateNF: 'YYYY-MM-DD',
       });
-      setLignes(norm);
-      setStep(3);
-    } catch { toast.error('Erreur normalisation'); }
-    finally { setLoading(false); }
-  }
 
-  async function handleQualification() {
-    if (!siteId) { toast.error('Aucun site sélectionné'); return; }
-    const r = validerLignes(lignes);
-    setRapport(r);
-    setStep(4);
-  }
+      const id = `${Date.now()}-${entry.file.name}`;
+      const importedFile: ImportedFile = {
+        id,
+        name: entry.file.name,
+        type: entry.type,
+        sourceId: entry.sourceId || undefined,
+        uploadedAt: new Date(),
+        rowCount: rows.length,
+        columns: selectedSheet.columns,
+        preview: rows.slice(0, 10),
+        rawData: rows,
+      };
+      addFile(importedFile);
 
-  async function handleStockage() {
-    if (!siteId) return;
-    setLoading(true);
-    try {
-      const res = await stockerDonnees(lignes, { organization_id: organizationId, iot_site_id: siteId, source_code: sourceCode, device_id: deviceId });
-      setResultat(res);
-      setStep(5);
-      toast.success(`${res.inserted} lignes importées`);
-    } catch (e: any) { toast.error(e.message ?? 'Erreur stockage'); }
-    finally { setLoading(false); }
-  }
+      if (entry.type === 'shelly') {
+        const shellyRows: ShellyRow[] = rows
+          .map(r => parseShellyRow(r, state.joursFerier, state.paramsTarif))
+          .filter((r): r is ShellyRow => r !== null);
+        setShellyRows([...state.shellyRows, ...shellyRows]);
+        if (entry.sourceId) {
+          let cumKwh = 0;
+          setSourceData(entry.sourceId, shellyRows.map(r => {
+            cumKwh += r.kwhNet ?? 0;
+            return {
+              timestamp: r.date,
+              sourceId: entry.sourceId!,
+              puissanceKw: r.puissKwTotal ?? 0,
+              energieKwh: r.kwhNet ?? 0,
+              energieCumKwh: cumKwh,
+            };
+          }));
+        }
+      } else if (entry.type === 'facturation') {
+        const factRows = rows.map((r, i) => ({
+          id: `${id}-${i}`,
+          ...parseFacturationRow(r),
+        })) as LigneFacturation[];
+        setFacturationRows([...state.facturationRows, ...factRows]);
+      }
 
-  const STEPS = ['Aperçu', 'Mapping', 'Qualification', 'Validation', 'Stockage'];
+      setEntries(prev => prev.filter(e => e.file !== entry.file));
+    };
+    reader.readAsArrayBuffer(entry.file);
+  }, [addFile, setShellyRows, setFacturationRows, setSourceData, state]);
+
+  const patchEntry = useCallback((file: File, patch: Partial<FileEntry>) => {
+    setEntries(prev => prev.map(e => e.file === file ? { ...e, ...patch } : e));
+  }, []);
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files);
+  }, [handleFiles]);
 
   return (
-    <div className="space-y-4">
-      {/* Stepper */}
-      <div className="flex items-center gap-1 flex-wrap">
-        {STEPS.map((s, i) => {
-          const num = (i + 1) as Step;
-          const done = step > num;
-          const active = step === num;
-          return (
-            <div key={s} className="flex items-center gap-1">
-              <div className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-                done ? 'bg-green-900/40 text-green-300' : active ? 'bg-blue-900/40 text-blue-300 ring-1 ring-blue-500' : 'bg-white/5 text-slate-500'}`}>
-                {done ? <CheckCircle2 size={12}/> : <span>{num}</span>}
-                {s}
-              </div>
-              {i < STEPS.length - 1 && <ChevronRight size={12} className="text-slate-600"/>}
-            </div>
-          );
-        })}
+    <div className="space-y-6">
+      {/* Zone de dépôt */}
+      <div
+        className={`border-2 border-dashed rounded-xl p-10 text-center transition-all cursor-pointer
+          ${dragOver ? 'border-blue-400 bg-blue-500/10' : 'border-white/20 hover:border-white/40 hover:bg-white/5'}`}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+        onClick={() => inputRef.current?.click()}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv,.xlsx,.xls"
+          multiple
+          className="hidden"
+          onChange={(e) => e.target.files && handleFiles(e.target.files)}
+        />
+        <Upload className="mx-auto h-10 w-10 text-blue-400 mb-3" />
+        <p className="text-white font-medium text-lg">Glisser-déposer ou cliquer pour importer</p>
+        <p className="text-slate-400 text-sm mt-1">CSV, XLSX, XLS — Shelly 3EM, Facturation SENELEC</p>
       </div>
 
-      {/* Étape 1 — Drop zone */}
-      {step === 1 && (
-        <div
-          className="rounded-xl border-2 border-dashed border-white/20 bg-white/5 p-10 text-center cursor-pointer hover:border-blue-500/50 hover:bg-blue-950/20 transition-all"
-          onClick={() => inputRef.current?.click()}
-          onDragOver={e => e.preventDefault()}
-          onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFileDrop(f); }}
-        >
-          <input ref={inputRef} type="file" className="hidden" accept=".csv,.xlsx,.xls,.ods,.json,.tsv,.txt"
-            onChange={e => { const f = e.target.files?.[0]; if (f) handleFileDrop(f); }}/>
-          {loading ? <Loader2 size={32} className="animate-spin mx-auto text-blue-400"/> : <Upload size={32} className="mx-auto text-slate-500"/>}
-          <div className="mt-3 text-sm text-slate-300">Glissez un fichier ou cliquez pour sélectionner</div>
-          <div className="mt-1 text-xs text-slate-500">CSV · XLSX · ODS · JSON · TSV · TXT — max 50 Mo</div>
-        </div>
-      )}
+      {/* Fichiers en cours de traitement */}
+      {entries.length > 0 && (
+        <div className="space-y-4">
+          <h3 className="text-white font-semibold">Fichiers à configurer</h3>
+          {entries.map((entry, idx) => {
+            const activeSheetData = entry.sheets[entry.activeSheet];
+            const totalPages = activeSheetData ? Math.ceil(activeSheetData.preview.length / ROWS_PER_PAGE) : 0;
+            const pageRows = activeSheetData
+              ? activeSheetData.preview.slice(entry.page * ROWS_PER_PAGE, (entry.page + 1) * ROWS_PER_PAGE)
+              : [];
 
-      {/* Étape 2 — Mapping */}
-      {step === 2 && apercu && (
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FileText size={16} className="text-slate-400"/>
-              <span className="text-sm text-slate-300">{file?.name}</span>
-              {apercu.capteur_detecte && (
-                <span className="rounded-full bg-green-900/40 text-green-300 text-[10px] px-2 py-0.5">
-                  Capteur détecté : {apercu.capteur_detecte}
-                </span>
-              )}
-            </div>
-            <button onClick={reset} className="text-slate-500 hover:text-slate-300"><X size={16}/></button>
-          </div>
+            return (
+              <div key={idx} className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
+                {/* En-tête fichier */}
+                <div className="flex items-center gap-3 p-4 border-b border-white/10">
+                  <FileSpreadsheet className="h-5 w-5 text-green-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-medium truncate">{entry.file.name}</p>
+                    <p className="text-slate-400 text-xs">
+                      {(entry.file.size / 1024).toFixed(1)} KB
+                      {activeSheetData && ` · ${activeSheetData.rowCount.toLocaleString('fr-FR')} lignes · ${activeSheetData.columns.length} colonnes`}
+                      {entry.detected && ` · ${entry.detected}`}
+                    </p>
+                  </div>
+                  {entry.status === 'processing' && (
+                    <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  )}
+                  {entry.status === 'done' && <CheckCircle className="h-5 w-5 text-green-400" />}
+                  {entry.status === 'error' && <AlertCircle className="h-5 w-5 text-red-400" />}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-slate-400 hover:text-red-400 hover:bg-red-500/10"
+                    onClick={() => setEntries(prev => prev.filter((_, i) => i !== idx))}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
 
-          {/* Preview 5 premières lignes */}
-          <div className="overflow-x-auto rounded-lg border border-white/10">
-            <table className="w-full text-xs">
-              <thead>
-                <tr>{apercu.colonnes.slice(0, 8).map(c => <th key={c} className="px-3 py-2 text-left text-slate-400 bg-white/5 font-medium whitespace-nowrap">{c}</th>)}</tr>
-              </thead>
-              <tbody>
-                {apercu.lignes_preview.slice(0, 5).map((row, i) => (
-                  <tr key={i} className="border-t border-white/5">
-                    {apercu.colonnes.slice(0, 8).map(c => <td key={c} className="px-3 py-1.5 text-slate-300 whitespace-nowrap">{row[c]}</td>)}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                {entry.status === 'error' && (
+                  <p className="px-4 py-3 text-red-400 text-sm">{entry.error}</p>
+                )}
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {[
-              { label: 'Colonne Timestamp *', val: colTimestamp, set: setColTimestamp },
-              { label: 'Colonne Puissance totale', val: colPuissance, set: setColPuissance },
-              { label: 'Colonne Phase A', val: colPuissanceA, set: setColPuissanceA },
-              { label: 'Colonne Phase B', val: colPuissanceB, set: setColPuissanceB },
-              { label: 'Colonne Phase C', val: colPuissanceC, set: setColPuissanceC },
-              { label: 'Colonne Énergie', val: colEnergie, set: setColEnergie },
-            ].map(({ label, val, set }) => (
-              <div key={label}>
-                <label className="text-xs text-slate-400 mb-1 block">{label}</label>
-                <Select value={val} onValueChange={set}>
-                  <SelectTrigger className="bg-white/5 border-white/10 text-slate-200 text-xs h-8"><SelectValue placeholder="—"/></SelectTrigger>
-                  <SelectContent>{['', ...apercu.colonnes].map(c => <SelectItem key={c} value={c}>{c || '—'}</SelectItem>)}</SelectContent>
-                </Select>
+                {entry.status === 'done' && activeSheetData && (
+                  <>
+                    {/* Barre de configuration */}
+                    <div className="flex flex-wrap items-center gap-3 px-4 py-3 bg-white/3 border-b border-white/10">
+                      <Select
+                        value={entry.type}
+                        onValueChange={(val) => patchEntry(entry.file, { type: val as FileType })}
+                      >
+                        <SelectTrigger className="w-52 bg-white/5 border-white/20 text-white text-sm h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[#1a1d2e] border-white/20">
+                          <SelectItem value="shelly">Shelly 3EM — Profil de charge</SelectItem>
+                          <SelectItem value="facturation">Facturation SENELEC</SelectItem>
+                          <SelectItem value="autre">Autre / Générique</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      {entry.type !== 'facturation' && state.sources.length > 0 && (
+                        <Select
+                          value={entry.sourceId}
+                          onValueChange={(val) => patchEntry(entry.file, { sourceId: val })}
+                        >
+                          <SelectTrigger className="w-44 bg-white/5 border-white/20 text-white text-sm h-8">
+                            <SelectValue placeholder="Source…" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-[#1a1d2e] border-white/20">
+                            {state.sources.map(src => (
+                              <SelectItem key={src.id} value={src.id} className="text-white">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: src.couleur }} />
+                                  {src.nom}
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+
+                      <div className="ml-auto flex gap-2">
+                        <Button
+                          size="sm"
+                          className="bg-blue-600 hover:bg-blue-500 text-white h-8"
+                          onClick={() => handleImport(entry)}
+                        >
+                          <Database className="h-3.5 w-3.5 mr-1.5" />
+                          Importer {activeSheetData.rowCount.toLocaleString('fr-FR')} lignes
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Onglets feuilles (style Excel) */}
+                    {entry.sheets.length > 1 && (
+                      <div className="flex gap-0.5 px-4 pt-3 border-b border-white/10 overflow-x-auto">
+                        {entry.sheets.map((sheet, sheetIdx) => (
+                          <button
+                            key={sheetIdx}
+                            onClick={() => patchEntry(entry.file, { activeSheet: sheetIdx, page: 0 })}
+                            className={`px-3 py-1.5 text-xs whitespace-nowrap rounded-t border-b-2 transition-colors ${
+                              entry.activeSheet === sheetIdx
+                                ? 'border-blue-400 text-blue-400 bg-blue-400/10 font-medium'
+                                : 'border-transparent text-slate-400 hover:text-white hover:bg-white/5'
+                            }`}
+                          >
+                            <FileSpreadsheet className="h-3 w-3 inline mr-1 opacity-70" />
+                            {sheet.name}
+                            <span className="ml-1.5 text-slate-500 font-normal">
+                              {sheet.rowCount.toLocaleString('fr-FR')}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Tableau Excel-like */}
+                    <div className="overflow-auto" style={{ maxHeight: '55vh' }}>
+                      <table className="min-w-full text-xs border-collapse">
+                        <thead className="sticky top-0 z-10" style={{ backgroundColor: '#1a1d2e' }}>
+                          {/* Ligne en-têtes colonnes */}
+                          <tr>
+                            {/* Numéro de ligne */}
+                            <th className="w-10 px-2 py-2 text-slate-600 text-right border-b border-r border-white/10 font-normal select-none bg-white/5">
+                              #
+                            </th>
+                            {activeSheetData.columns.map(col => {
+                              const colType = detectColType(col, activeSheetData.preview);
+                              return (
+                                <th
+                                  key={col}
+                                  className="px-3 py-2 text-left border-b border-r border-white/10 whitespace-nowrap font-medium bg-white/5"
+                                >
+                                  <div className="flex items-center gap-1.5">
+                                    {COL_TYPE_ICON[colType]}
+                                    <span className={COL_TYPE_COLOR[colType]}>{col}</span>
+                                  </div>
+                                </th>
+                              );
+                            })}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pageRows.map((row, rowIdx) => {
+                            const absIdx = entry.page * ROWS_PER_PAGE + rowIdx;
+                            return (
+                              <tr
+                                key={rowIdx}
+                                className={`hover:bg-blue-500/5 ${rowIdx % 2 === 0 ? '' : 'bg-white/[0.02]'}`}
+                              >
+                                <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none text-[10px] font-mono">
+                                  {absIdx + 1}
+                                </td>
+                                {activeSheetData.columns.map(col => {
+                                  const val = String(row[col] ?? '');
+                                  const colType = detectColType(col, activeSheetData.preview);
+                                  return (
+                                    <td
+                                      key={col}
+                                      className={`px-3 py-1 border-r border-white/5 whitespace-nowrap max-w-[220px] truncate
+                                        ${colType === 'number' ? 'text-right font-mono text-emerald-300/80' :
+                                          colType === 'date' ? 'text-blue-300/80' : 'text-slate-400'}`}
+                                      title={val.length > 30 ? val : undefined}
+                                    >
+                                      {val}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination */}
+                    <div className="flex items-center justify-between px-4 py-2 border-t border-white/10 bg-white/3">
+                      <span className="text-slate-500 text-xs">
+                        Lignes {entry.page * ROWS_PER_PAGE + 1}–{Math.min((entry.page + 1) * ROWS_PER_PAGE, activeSheetData.preview.length)} affichées
+                        {activeSheetData.rowCount > 200 && (
+                          <span className="text-yellow-500/70 ml-1">
+                            (prévisualisation 200/{activeSheetData.rowCount.toLocaleString('fr-FR')} — import = fichier complet)
+                          </span>
+                        )}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-500 text-xs">
+                          Page {entry.page + 1}/{Math.max(totalPages, 1)}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 text-slate-400 hover:text-white hover:bg-white/10"
+                          disabled={entry.page === 0}
+                          onClick={() => patchEntry(entry.file, { page: entry.page - 1 })}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 text-slate-400 hover:text-white hover:bg-white/10"
+                          disabled={entry.page >= totalPages - 1}
+                          onClick={() => patchEntry(entry.file, { page: entry.page + 1 })}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
-            ))}
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Unité puissance</label>
-              <Select value={unitePuissance} onValueChange={v => setUnitePuissance(v as 'W' | 'kW')}>
-                <SelectTrigger className="bg-white/5 border-white/10 text-slate-200 text-xs h-8"><SelectValue/></SelectTrigger>
-                <SelectContent><SelectItem value="W">W</SelectItem><SelectItem value="kW">kW</SelectItem></SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Unité énergie</label>
-              <Select value={uniteEnergie} onValueChange={v => setUniteEnergie(v as 'Wh' | 'kWh')}>
-                <SelectTrigger className="bg-white/5 border-white/10 text-slate-200 text-xs h-8"><SelectValue/></SelectTrigger>
-                <SelectContent><SelectItem value="Wh">Wh</SelectItem><SelectItem value="kWh">kWh</SelectItem></SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Facteur multiplicateur</label>
-              <input type="number" step="0.001" value={facteur} onChange={e => setFacteur(e.target.value)}
-                className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-200 h-8"/>
-            </div>
-          </div>
-          <Button onClick={handleMapping} disabled={!colTimestamp || loading} className="bg-blue-600 hover:bg-blue-700 text-white">
-            {loading ? <Loader2 size={14} className="animate-spin mr-2"/> : null} Normaliser → Étape 3
-          </Button>
+            );
+          })}
         </div>
       )}
 
-      {/* Étape 3 — Qualification */}
-      {step === 3 && (
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
-          <div className="text-sm font-medium text-slate-200">{lignes.length.toLocaleString()} lignes normalisées</div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Point de mesure</label>
-              <Select value={sourceCode} onValueChange={v => setSourceCode(v as SourceCode)}>
-                <SelectTrigger className="bg-white/5 border-white/10 text-slate-200"><SelectValue/></SelectTrigger>
-                <SelectContent>{SOURCE_CODES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Identifiant appareil</label>
-              <input value={deviceId} onChange={e => setDeviceId(e.target.value)}
-                className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200 font-mono"/>
-            </div>
-          </div>
-          <Button onClick={handleQualification} className="bg-blue-600 hover:bg-blue-700 text-white">
-            Valider → Étape 4
-          </Button>
-        </div>
-      )}
+      {/* Fichiers déjà importés (persistés) */}
+      {state.files.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-white font-semibold flex items-center gap-2">
+            <Database className="h-4 w-4 text-blue-400" />
+            Données importées ({state.files.length} fichier{state.files.length > 1 ? 's' : ''})
+          </h3>
+          {state.files.map(f => {
+            const linkedSource = f.sourceId ? state.sources.find(s => s.id === f.sourceId) : null;
+            const isExpanded = expandedId === f.id;
+            const page = expandedPage[f.id] ?? 0;
+            const totalPages = Math.ceil(f.rawData.length / ROWS_PER_PAGE);
+            const pageRows = f.rawData.slice(page * ROWS_PER_PAGE, (page + 1) * ROWS_PER_PAGE);
 
-      {/* Étape 4 — Validation */}
-      {step === 4 && rapport && (
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
-          <div className="text-sm font-medium text-slate-200">Rapport de validation</div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              { label: 'Lignes', val: rapport.nb_lignes.toLocaleString(), color: 'text-slate-200' },
-              { label: 'Aberrants', val: rapport.nb_aberrants, color: rapport.nb_aberrants > 0 ? 'text-red-400' : 'text-green-400' },
-              { label: 'Doublons', val: rapport.nb_doublons, color: rapport.nb_doublons > 0 ? 'text-amber-400' : 'text-green-400' },
-              { label: 'Trous', val: rapport.nb_trous, color: 'text-slate-300' },
-            ].map(({ label, val, color }) => (
-              <div key={label} className="rounded-lg border border-white/10 bg-white/5 p-3 text-center">
-                <div className={`text-xl font-bold ${color}`}>{val}</div>
-                <div className="text-xs text-slate-500 mt-0.5">{label}</div>
+            return (
+              <div key={f.id} className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
+                {/* En-tête */}
+                <div className="flex items-center gap-3 p-4">
+                  <FileSpreadsheet className="h-5 w-5 text-blue-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-medium truncate">{f.name}</p>
+                    <div className="flex items-center flex-wrap gap-2 mt-1">
+                      <Badge variant="outline" className="text-xs border-white/20 text-slate-300">
+                        {f.type === 'shelly' ? 'Shelly 3EM' : f.type === 'facturation' ? 'Facturation' : 'Autre'}
+                      </Badge>
+                      {linkedSource && (
+                        <Badge
+                          className="text-xs border-0"
+                          style={{ backgroundColor: linkedSource.couleur + '25', color: linkedSource.couleur }}
+                        >
+                          <div className="w-1.5 h-1.5 rounded-full mr-1 inline-block" style={{ backgroundColor: linkedSource.couleur }} />
+                          {linkedSource.nom}
+                        </Badge>
+                      )}
+                      <span className="text-slate-500 text-xs">
+                        {f.rowCount.toLocaleString('fr-FR')} lignes · {f.columns.length} colonnes
+                      </span>
+                      <span className="text-slate-600 text-xs">
+                        Importé le {f.uploadedAt instanceof Date
+                          ? f.uploadedAt.toLocaleDateString('fr-FR')
+                          : new Date(f.uploadedAt).toLocaleDateString('fr-FR')}
+                      </span>
+                    </div>
+                  </div>
+                  <CheckCircle className="h-5 w-5 text-green-400 shrink-0" />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={`h-8 gap-1.5 text-xs ${isExpanded ? 'text-blue-400 bg-blue-500/10' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                    onClick={() => {
+                      setExpandedId(isExpanded ? null : f.id);
+                      setExpandedPage(prev => ({ ...prev, [f.id]: 0 }));
+                    }}
+                  >
+                    {isExpanded ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {isExpanded ? 'Masquer' : 'Voir les données'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                    onClick={() => {
+                      if (isExpanded) setExpandedId(null);
+                      removeFile(f.id);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {/* Tableau de données */}
+                {isExpanded && f.rawData.length > 0 && (
+                  <>
+                    <div className="overflow-auto border-t border-white/10" style={{ maxHeight: '55vh' }}>
+                      <table className="min-w-full text-xs border-collapse">
+                        <thead className="sticky top-0 z-10" style={{ backgroundColor: '#1a1d2e' }}>
+                          <tr>
+                            <th className="w-10 px-2 py-2 text-slate-600 text-right border-b border-r border-white/10 font-normal select-none bg-white/5">
+                              #
+                            </th>
+                            {f.columns.map(col => {
+                              const colType = detectColType(col, f.rawData);
+                              return (
+                                <th key={col} className="px-3 py-2 text-left border-b border-r border-white/10 whitespace-nowrap font-medium bg-white/5">
+                                  <div className="flex items-center gap-1.5">
+                                    {COL_TYPE_ICON[colType]}
+                                    <span className={COL_TYPE_COLOR[colType]}>{col}</span>
+                                  </div>
+                                </th>
+                              );
+                            })}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pageRows.map((row, rowIdx) => {
+                            const absIdx = page * ROWS_PER_PAGE + rowIdx;
+                            return (
+                              <tr key={rowIdx} className={`hover:bg-blue-500/5 ${rowIdx % 2 === 0 ? '' : 'bg-white/[0.02]'}`}>
+                                <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none text-[10px] font-mono">
+                                  {absIdx + 1}
+                                </td>
+                                {f.columns.map(col => {
+                                  const val = String(row[col] ?? '');
+                                  const colType = detectColType(col, f.rawData);
+                                  return (
+                                    <td
+                                      key={col}
+                                      className={`px-3 py-1 border-r border-white/5 whitespace-nowrap max-w-[220px] truncate
+                                        ${colType === 'number' ? 'text-right font-mono text-emerald-300/80' :
+                                          colType === 'date' ? 'text-blue-300/80' : 'text-slate-400'}`}
+                                      title={val.length > 30 ? val : undefined}
+                                    >
+                                      {val}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination */}
+                    <div className="flex items-center justify-between px-4 py-2 border-t border-white/10 bg-white/3">
+                      <span className="text-slate-500 text-xs">
+                        Lignes {page * ROWS_PER_PAGE + 1}–{Math.min((page + 1) * ROWS_PER_PAGE, f.rawData.length)} / {f.rowCount.toLocaleString('fr-FR')}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-500 text-xs">Page {page + 1}/{Math.max(totalPages, 1)}</span>
+                        <Button
+                          size="sm" variant="ghost"
+                          className="h-7 w-7 p-0 text-slate-400 hover:text-white hover:bg-white/10"
+                          disabled={page === 0}
+                          onClick={() => setExpandedPage(prev => ({ ...prev, [f.id]: page - 1 }))}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm" variant="ghost"
+                          className="h-7 w-7 p-0 text-slate-400 hover:text-white hover:bg-white/10"
+                          disabled={page >= totalPages - 1}
+                          onClick={() => setExpandedPage(prev => ({ ...prev, [f.id]: page + 1 }))}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
-            ))}
-          </div>
-          {rapport.plage_dates && (
-            <div className="text-xs text-slate-400">
-              Période : <span className="text-slate-300">{rapport.plage_dates.debut.slice(0,10)}</span> → <span className="text-slate-300">{rapport.plage_dates.fin.slice(0,10)}</span>
-            </div>
-          )}
-          {rapport.alertes.map(a => (
-            <div key={a} className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-950/30 p-3 text-xs text-amber-300">
-              <AlertTriangle size={14}/> {a}
-            </div>
-          ))}
-          <Button onClick={handleStockage} disabled={loading} className="bg-green-700 hover:bg-green-600 text-white">
-            {loading ? <Loader2 size={14} className="animate-spin mr-2"/> : null} Importer dans Supabase → Étape 5
-          </Button>
+            );
+          })}
         </div>
       )}
 
-      {/* Étape 5 — Résultat */}
-      {step === 5 && resultat && (
-        <div className="rounded-xl border border-green-500/30 bg-green-950/20 p-6 text-center space-y-3">
-          <CheckCircle2 size={40} className="text-green-400 mx-auto"/>
-          <div className="text-lg font-semibold text-green-300">{resultat.inserted.toLocaleString()} lignes importées</div>
-          {resultat.skipped > 0 && <div className="text-sm text-slate-400">{resultat.skipped} ligne(s) ignorée(s) (doublons ou aberrants)</div>}
-          <div className="text-xs text-slate-400">Les données sont disponibles dans tous les onglets d'analyse.</div>
-          <Button onClick={reset} variant="outline" className="border-white/10 text-slate-300 hover:bg-white/10 mt-2">
-            Importer un autre fichier
-          </Button>
+      {/* État vide */}
+      {state.files.length === 0 && entries.length === 0 && (
+        <div className="text-center py-12 text-slate-500">
+          <FileSpreadsheet className="mx-auto h-12 w-12 opacity-20 mb-3" />
+          <p className="font-medium">Aucune donnée importée</p>
+          <p className="text-xs mt-1">Importez un fichier Shelly 3EM ou de facturation SENELEC</p>
+          <p className="text-xs mt-1 text-slate-600">Les données sont sauvegardées automatiquement</p>
         </div>
       )}
     </div>
