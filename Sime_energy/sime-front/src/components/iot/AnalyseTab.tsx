@@ -8,6 +8,7 @@ import {
 import {
   Filter, BarChart2, TrendingUp, Activity, Upload,
   FileSpreadsheet, X, ChevronDown, ChevronUp, Download,
+  Sheet as SheetIcon,
 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -19,6 +20,7 @@ import { parseShellyRow, calculerStats, detecterFormatShelly } from '@/lib/iot-p
 import { JOURS_SEMAINE } from './shared';
 import type { ShellyRow } from './shared';
 import { ExcelPivotTable } from './ExcelPivotTable';
+import { FortuneSheetView } from './FortuneSheetView';
 
 type AnalyseMode = 'tcd' | 'profil_semaine' | 'distribution' | 'correlation' | 'serie';
 
@@ -87,6 +89,7 @@ export function AnalyseTab() {
   // ---- Analyse ----
   const [mode, setMode] = useState<AnalyseMode>('serie');
   // tcdLigne replaced by ExcelPivotTable's own field-builder state
+  const [tcdView, setTcdView] = useState<'tableur' | 'pivot'>('tableur');
   const [showFeries, setShowFeries] = useState(true);
   const [showWeekends, setShowWeekends] = useState(true);
 
@@ -546,8 +549,40 @@ export function AnalyseTab() {
             </div>
           )}
 
-          {/* ---- TCD Excel-like pivot table ---- */}
-          {mode === 'tcd' && <ExcelPivotTable rows={filteredRows} />}
+          {/* ---- TCD : Tableur Excel + Tableau croisé ---- */}
+          {mode === 'tcd' && (
+            <div className="space-y-3">
+              {/* Sub-tab bar */}
+              <div className="flex gap-1 p-1 bg-white/5 rounded-lg border border-white/10 w-fit">
+                <button
+                  onClick={() => setTcdView('tableur')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all
+                    ${tcdView === 'tableur'
+                      ? 'text-white shadow'
+                      : 'text-slate-400 hover:text-white hover:bg-white/10'
+                    }`}
+                  style={tcdView === 'tableur' ? { backgroundColor: '#217346' } : {}}
+                >
+                  <SheetIcon className="h-3.5 w-3.5" />
+                  Tableur Excel
+                </button>
+                <button
+                  onClick={() => setTcdView('pivot')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all
+                    ${tcdView === 'pivot'
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white hover:bg-white/10'
+                    }`}
+                >
+                  <BarChart2 className="h-3.5 w-3.5" />
+                  Tableau croisé
+                </button>
+              </div>
+
+              {tcdView === 'tableur' && <FortuneSheetView rows={filteredRows} />}
+              {tcdView === 'pivot'   && <ExcelPivotTable rows={filteredRows} />}
+            </div>
+          )}
 
           {/* ---- Profil semaine ---- */}
           {mode === 'profil_semaine' && (
