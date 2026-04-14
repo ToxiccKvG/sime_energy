@@ -95,6 +95,7 @@ const DEFAULT_SOURCES: Source[] = [
     id: 'src-senelec',
     nom: 'SENELEC',
     type: 'SENELEC',
+    role: 'ARRIVEE',
     description: 'Réseau public SENELEC',
     couleur: '#3b82f6',
     capteur: 'Shelly',

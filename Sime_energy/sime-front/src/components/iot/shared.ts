@@ -9,6 +9,8 @@
 
 export type SourceType = 'SENELEC' | 'PV' | 'SECOURS' | 'CHARGE' | 'SELECTEUR';
 export type SensorType = 'Shelly' | 'SMA' | 'Voltcraft' | 'Fluke' | 'DENT' | 'Sentinel' | 'Manuel' | 'Autre';
+export type SourceRole = 'ARRIVEE' | 'GENERAL' | 'DEPART';
+export type UsageType = 'Éclairage' | 'CVC' | 'Force motrice' | 'Bureautique' | 'IT' | 'Froid' | 'Cuisson' | 'Autres';
 
 export const SOURCE_TYPE_COLORS: Record<SourceType, string> = {
   SENELEC:   '#3b82f6', // Bleu
@@ -26,6 +28,33 @@ export const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
   SELECTEUR: 'ATS / Inverseur réseau',
 };
 
+export const SOURCE_ROLE_COLORS: Record<SourceRole, string> = {
+  ARRIVEE: '#06b6d4',
+  GENERAL: '#22c55e',
+  DEPART:  '#f97316',
+};
+
+export const SOURCE_ROLE_LABELS: Record<SourceRole, string> = {
+  ARRIVEE: 'Arrivée',
+  GENERAL: 'Général',
+  DEPART:  'Départ',
+};
+
+export const USAGE_TYPES: UsageType[] = [
+  'Éclairage', 'CVC', 'Force motrice', 'Bureautique', 'IT', 'Froid', 'Cuisson', 'Autres',
+];
+
+export const USAGE_TYPE_COLORS: Record<UsageType, string> = {
+  'Éclairage':     '#eab308',
+  'CVC':           '#3b82f6',
+  'Force motrice': '#f97316',
+  'Bureautique':   '#8b5cf6',
+  'IT':            '#06b6d4',
+  'Froid':         '#60a5fa',
+  'Cuisson':       '#ef4444',
+  'Autres':        '#6b7280',
+};
+
 export interface Source {
   id: string;
   nom: string;
@@ -36,6 +65,11 @@ export interface Source {
   actif: boolean;
   ordre: number;          // pour le glisser-déposer
   siteId?: string;        // association audit
+  // Plan de comptage
+  role?: SourceRole;
+  usageType?: UsageType;
+  entite?: string;
+  puissanceInstallee?: number;
 }
 
 // ============================================================
