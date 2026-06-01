@@ -1,113 +1,40 @@
 import {
-  Upload, Zap, BarChart2, Settings2,
-  Database, Eraser,
+  Zap, BarChart2,
+  Database, Eraser, FolderOpen, LayoutDashboard,
 } from 'lucide-react';
 import { IOTProvider, useIOT } from '@/components/iot/IOTContext';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { DashboardTab }    from '@/components/iot/DashboardTab';
 import { SourcesTab }      from '@/components/iot/SourcesTab';
-import { UploadTab }       from '@/components/iot/UploadTab';
-import { ProfilChargeTab } from '@/components/iot/ProfilChargeTab';
+import { FichiersTab }     from '@/components/iot/FichiersTab';
 import { AnalyseTab }      from '@/components/iot/AnalyseTab';
 import { NettoyageTab }    from '@/components/iot/NettoyageTab';
 import { Badge }           from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label }           from '@/components/ui/label';
-import { Input }           from '@/components/ui/input';
-import type { CategorieTarifaire } from '@/components/iot/shared';
-import { useIOT as useIOTCtx }     from '@/components/iot/IOTContext';
 
 // ---- Définition des onglets ----
 const TABS = [
-  { id: 'sources',     label: 'Sources',         icon: Database,     description: 'Capteurs & sources' },
-  { id: 'upload',      label: 'Upload',           icon: Upload,       description: 'CSV / XLSX' },
-  { id: 'nettoyage',   label: 'Nettoyage',        icon: Eraser,       description: 'Tri · filtre · édition' },
-  { id: 'profil',      label: 'Courbe de charge', icon: Zap,          description: 'Multi-sources' },
-  { id: 'tcd',         label: 'TCD',              icon: BarChart2,    description: 'Tableaux croisés' },
+  { id: 'dashboard', label: 'Dashboard',  icon: LayoutDashboard, description: 'Vue temps réel multi-sites' },
+  { id: 'sources',   label: 'Sources',    icon: Database,        description: 'Capteurs & sources' },
+  { id: 'fichiers',  label: 'Fichiers',   icon: FolderOpen,      description: 'Import & bibliothèque' },
+  { id: 'nettoyage', label: 'Nettoyage',  icon: Eraser,          description: 'Tri · filtre · édition' },
+  { id: 'tcd',       label: 'Analyse',    icon: BarChart2,       description: 'Courbe · TCD · Heatmap · Distribution' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
-
-// ---- Panneau paramètres globaux ----
-function ParamsTarifPanel() {
-  const { state, updateParamsTarif, updateDonneesTechniques } = useIOTCtx();
-  const { paramsTarif, donneesTechniques } = state;
-
-  return (
-    <div className="bg-white/5 rounded-xl border border-white/10 p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <Settings2 className="h-4 w-4 text-slate-400" />
-        <h4 className="text-white font-medium text-sm">Paramètres globaux</h4>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div>
-          <Label className="text-slate-400 text-xs mb-1 block">Type tarif</Label>
-          <Select
-            value={paramsTarif.typeTarif}
-            onValueChange={(v) => updateParamsTarif({ typeTarif: v as 'MT' | 'BT' })}
-          >
-            <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm h-8">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[#1a1d2e] border-white/20">
-              <SelectItem value="MT">MT — Moyenne Tension</SelectItem>
-              <SelectItem value="BT">BT — Basse Tension</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label className="text-slate-400 text-xs mb-1 block">Tarif K1/HHP (FCFA/kWh)</Label>
-          <Input
-            type="number"
-            value={paramsTarif.tarifK1}
-            onChange={(e) => updateParamsTarif({ tarifK1: parseFloat(e.target.value) || 0 })}
-            className="bg-white/5 border-white/20 text-white text-sm h-8"
-          />
-        </div>
-        <div>
-          <Label className="text-slate-400 text-xs mb-1 block">Tarif K2/HP (FCFA/kWh)</Label>
-          <Input
-            type="number"
-            value={paramsTarif.tarifK2}
-            onChange={(e) => updateParamsTarif({ tarifK2: parseFloat(e.target.value) || 0 })}
-            className="bg-white/5 border-white/20 text-white text-sm h-8"
-          />
-        </div>
-        <div>
-          <Label className="text-slate-400 text-xs mb-1 block">Catégorie facturation</Label>
-          <Select
-            value={donneesTechniques.categorie}
-            onValueChange={(v) => updateDonneesTechniques({ categorie: v as CategorieTarifaire })}
-          >
-            <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm h-8">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[#1a1d2e] border-white/20">
-              {(['DPP','DMP','PPP','PMP','DGP','PGP','TCU','TG','TLU','TG_HT','TS'] as CategorieTarifaire[]).map(c => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ---- Page intérieure (accès au contexte) ----
 function IOTInner() {
   const { state, setActiveTab } = useIOT();
   const { activeTab, shellyRows, files, sources } = state;
 
-  const tabId = (activeTab as TabId) ?? 'sources';
+  const tabId = (activeTab as TabId) ?? 'dashboard';
 
+  // Badge Sources = nb sources actives (dynamique, masqué si 0)
+  const nbSourcesActives = sources.filter(s => s.actif).length;
   const badges: Partial<Record<TabId, number>> = {
-    sources:   sources.length > 0 ? sources.length : undefined,
-    upload:    files.length > 0 ? files.length : undefined,
-    nettoyage: shellyRows.length > 0 ? shellyRows.length : undefined,
-    profil:    shellyRows.length > 0 ? shellyRows.length : undefined,
+    sources:  nbSourcesActives > 0 ? nbSourcesActives : undefined,
+    fichiers: files.length > 0 ? files.length : undefined,
   };
-
-  // Onglets qui n'affichent pas le panneau paramètres
-  const hideParams: TabId[] = ['sources', 'upload', 'nettoyage'];
 
   return (
     <div className="space-y-6">
@@ -180,16 +107,13 @@ function IOTInner() {
         </div>
       </div>
 
-      {/* Paramètres globaux (compact) — hors onglets non concernés */}
-      {!hideParams.includes(tabId) && <ParamsTarifPanel />}
-
       {/* Contenu onglet */}
       <div className="min-h-[400px]">
-        {tabId === 'sources'     && <SourcesTab />}
-        {tabId === 'upload'      && <UploadTab />}
-        {tabId === 'nettoyage'   && <NettoyageTab />}
-        {tabId === 'profil'      && <ProfilChargeTab />}
-        {tabId === 'tcd'         && <AnalyseTab />}
+        {tabId === 'dashboard' && <DashboardTab />}
+        {tabId === 'sources'   && <SourcesTab />}
+        {tabId === 'fichiers'  && <FichiersTab />}
+        {tabId === 'nettoyage' && <NettoyageTab />}
+        {tabId === 'tcd'       && <AnalyseTab />}
       </div>
     </div>
   );
@@ -199,7 +123,9 @@ function IOTInner() {
 export default function IOT() {
   return (
     <IOTProvider>
-      <IOTInner />
+      <ErrorBoundary title="Erreur Module IOT">
+        <IOTInner />
+      </ErrorBoundary>
     </IOTProvider>
   );
 }

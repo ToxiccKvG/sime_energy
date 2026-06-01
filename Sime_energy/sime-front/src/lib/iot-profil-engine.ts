@@ -8,37 +8,9 @@ import type { ShellyRow, ShellyAnalyse, JourFerie } from '@/components/iot/share
 import { JOURS_SEMAINE_LONG, MOIS_FR, JOURS_FERIES_FIXES } from '@/components/iot/shared';
 
 // ============================================================
-// PARAMÈTRES TARIFICATION (depuis Données d'entrées)
+// HELPERS CLASSIFICATION (jours d'activité, saisons, périodes climatiques)
+// La couche tarification SENELEC a été retirée (sera réintroduite au merge).
 // ============================================================
-
-export interface ParamsTarif {
-  typeTarif: 'MT' | 'BT';
-  tarifK1: number;   // Heures Hors Pointe (HHP) — FCFA/kWh
-  tarifK2: number;   // Heures de Pointe (HP)    — FCFA/kWh
-  tarifTranche1: number;
-  tarifTranche2: number;
-  tarifTranche3: number;
-  tarifMoyenBT: number;
-}
-
-export const PARAMS_TARIF_DEFAUT: ParamsTarif = {
-  typeTarif: 'MT',
-  tarifK1: 140.74,
-  tarifK2: 232.23,
-  tarifTranche1: 82,
-  tarifTranche2: 136.49,
-  tarifTranche3: 159.36,
-  tarifMoyenBT: 125.95,
-};
-
-// ============================================================
-// HELPERS CLASSIFICATION
-// ============================================================
-
-/** Heure de pointe SENELEC : 19h ≤ h < 23h */
-function isTranchePointe(heure: number): boolean {
-  return heure >= 19 && heure < 23;
-}
 
 /** Heures d'ensoleillement : 8h ≤ h < 19h */
 function isEnsoleillement(heure: number): boolean {
@@ -53,7 +25,6 @@ function isHeureActivite(heure: number): boolean {
 /**
  * Période de la journée
  * Nuit : 0h-5h59 | Matin : 6h-11h59 | Après-midi : 12h-17h59 | Soir : 18h-23h59
- * Pour données journalières (00h), on utilise 'Nuit' (valeur Excel pour lignes journalières)
  */
 function getPeriode(heure: number): ShellyRow['periode'] {
   if (heure < 6)  return 'Nuit';
@@ -73,14 +44,6 @@ function getPeriodeClimatique(mois: number): ShellyRow['periodeclimatique'] {
   return fraicheur ? 'Période de fraîcheur' : 'Période chaude';
 }
 
-/** Montant énergie FCFA pour une ligne journalière (tarif simplifié) */
-function calcMontantEnergie(kwh: number, heure: number, params: ParamsTarif): number {
-  if (params.typeTarif === 'MT') {
-    return kwh * (isTranchePointe(heure) ? params.tarifK2 : params.tarifK1);
-  }
-  return kwh * params.tarifMoyenBT;
-}
-
 // ============================================================
 // PARSE UNE LIGNE SHELLY depuis données brutes
 // Format attendu: Temps | Wh_Phase A | Wh_Phase B | Wh_Phase C | Wh_Total |
@@ -90,7 +53,6 @@ function calcMontantEnergie(kwh: number, heure: number, params: ParamsTarif): nu
 export function parseShellyRow(
   raw: Record<string, unknown>,
   joursFerier: JourFerie[] = [],
-  params: ParamsTarif = PARAMS_TARIF_DEFAUT,
 ): ShellyRow | null {
   const parseNum = (v: unknown): number => {
     if (v === null || v === undefined || v === '') return 0;
@@ -98,10 +60,24 @@ export function parseShellyRow(
     return isNaN(n) ? 0 : n;
   };
 
-  // Trouver la colonne date/temps
-  const dateRaw =
-    raw['Temps'] ?? raw['temps'] ?? raw['Date'] ?? raw['date'] ??
-    raw[' Temps'] ?? raw['timestamp'] ?? raw['Timestamp'];
+  // Trouver la colonne date/temps (recherche insensible à la casse)
+  const DATE_KEYS = [
+    'Temps', 'temps', 'TEMPS', 'Date', 'date', 'DATE',
+    ' Temps', 'Time', 'time', 'TIME', 'DateTime', 'datetime', 'DATETIME',
+    'timestamp', 'Timestamp', 'TIMESTAMP',
+  ];
+  let dateRaw: unknown =
+    DATE_KEYS.reduce<unknown>((found, k) => found ?? raw[k], undefined);
+  // Fallback : chercher toute clé contenant 'temps', 'date' ou 'time'
+  if (dateRaw === undefined || dateRaw === null) {
+    const key = Object.keys(raw).find(k => {
+      const l = k.toLowerCase().replace(/[\uFEFF\u200B]/g, '').trim();
+      return l === 'temps' || l === 'date' || l === 'time'
+        || l.includes('timestamp') || l.includes('datetime')
+        || l.includes('temps') || l.startsWith('time');
+    });
+    if (key) dateRaw = raw[key];
+  }
 
   if (!dateRaw) return null;
 
@@ -109,7 +85,16 @@ export function parseShellyRow(
   if (dateRaw instanceof Date) {
     date = dateRaw;
   } else {
-    date = new Date(String(dateRaw));
+    const s = String(dateRaw).trim();
+    // Essayer DD/MM/YYYY ou DD-MM-YYYY (format français/africain)
+    const ddmm = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (ddmm) {
+      const [, dd, mm, yy, hh = '0', min = '0', ss = '0'] = ddmm;
+      const year = yy.length === 2 ? 2000 + parseInt(yy) : parseInt(yy);
+      date = new Date(year, parseInt(mm) - 1, parseInt(dd), parseInt(hh), parseInt(min), parseInt(ss));
+    } else {
+      date = new Date(s);
+    }
     if (isNaN(date.getTime())) return null;
   }
 
@@ -146,15 +131,15 @@ export function parseShellyRow(
   // ---- Consommation nette ----
   const kwhNet = Math.max(0, kwhTotal - kwhRetourTotal);
 
-  // ---- Puissances moyennes kW = kWh × 1000 / 24 (données journalières) ----
-  const puissKwA = kwhA * 1000 / 24;
-  const puissKwB = kwhB * 1000 / 24;
-  const puissKwC = kwhC * 1000 / 24;
-  const puissKwTotal = kwhTotal * 1000 / 24;
-  const puissKwRetourA = kwhRetourA * 1000 / 24;
-  const puissKwRetourB = kwhRetourB * 1000 / 24;
-  const puissKwRetourC = kwhRetourC * 1000 / 24;
-  const puissKwRetourTotal = kwhRetourTotal * 1000 / 24;
+  // ---- Puissances moyennes kW = kWh / 24 h (données journalières) ----
+  const puissKwA = kwhA / 24;
+  const puissKwB = kwhB / 24;
+  const puissKwC = kwhC / 24;
+  const puissKwTotal = kwhTotal / 24;
+  const puissKwRetourA = kwhRetourA / 24;
+  const puissKwRetourB = kwhRetourB / 24;
+  const puissKwRetourC = kwhRetourC / 24;
+  const puissKwRetourTotal = kwhRetourTotal / 24;
 
   // ---- Qualificatifs date ----
   const dayOfWeek = date.getDay(); // 0=Dim, 6=Sam
@@ -174,13 +159,6 @@ export function parseShellyRow(
 
   const jourActivites: ShellyRow['jourActivites'] =
     isJourFerie ? 'Jour férié' : isWeekend ? 'Weekend' : 'Jour ouvré';
-
-  // ---- Classifieurs ----
-  const trancheTarification: ShellyRow['trancheTarification'] =
-    isTranchePointe(heure) ? 'Heure de pointe' : 'Heure creuse';
-
-  const montantEnergie = calcMontantEnergie(kwhTotal, heure, params);
-  const montantEnergieRetour = calcMontantEnergie(kwhRetourTotal, heure, params);
 
   const heuresEnsoleillement: ShellyRow['heuresEnsoleillement'] =
     isEnsoleillement(heure) ? 'En ensoleillement' : 'Hors ensoleillement';
@@ -209,9 +187,6 @@ export function parseShellyRow(
     mois: MOIS_FR[date.getMonth()],
     annee: date.getFullYear(),
     jourActivites,
-    trancheTarification,
-    montantEnergie,
-    montantEnergieRetour,
     heuresEnsoleillement,
     heuresTravail,
     periodeclimatique,
@@ -223,6 +198,10 @@ export function parseShellyRow(
     isWeekend,
     isJourFerie,
     jourSemaine,
+    // Identité appareil (préservée si présente dans la source)
+    nomAppareil:    (raw['Appareil'] ?? raw['Nom'] ?? raw['name'] ?? raw['nomAppareil'] ?? raw['device_name']) as string | undefined,
+    deviceLocation: (raw['Emplacement'] ?? raw['Site'] ?? raw['site'] ?? raw['deviceLocation']) as string | undefined,
+    deviceRoom:     (raw['Piece'] ?? raw['Pièce'] ?? raw['Room'] ?? raw['room'] ?? raw['deviceRoom']) as string | undefined,
   };
 }
 
@@ -230,9 +209,15 @@ export function parseShellyRow(
 // POST-TRAITEMENT — Calcul des cumuls après tri par date
 // ============================================================
 
+function toDateSafe(v: unknown): Date {
+  if (v instanceof Date) return v;
+  const d = new Date(v as string);
+  return isNaN(d.getTime()) ? new Date(0) : d;
+}
+
 export function ajouterCumulatifs(rows: ShellyRow[]): ShellyRow[] {
   // Trier par date croissante
-  const sorted = [...rows].sort((a, b) => a.date.getTime() - b.date.getTime());
+  const sorted = [...rows].sort((a, b) => toDateSafe(a.date).getTime() - toDateSafe(b.date).getTime());
   let cumA = 0, cumB = 0, cumC = 0, cumTotal = 0;
   let cumRA = 0, cumRB = 0, cumRC = 0, cumRTotal = 0;
 
@@ -286,19 +271,18 @@ export function analyserDonneesShelly(rows: ShellyRow[]): ShellyAnalyse {
   const totalKwhNet      = rowsAvecCumuls.reduce((s, r) => s + r.kwhNet, 0);
   const nbJours = rowsAvecCumuls.length;
   const moyenneJournaliere = totalKwhNet / nbJours;
-  const maxJournalier = Math.max(...rowsAvecCumuls.map(r => r.kwhNet));
-  const minJournalier = Math.min(...rowsAvecCumuls.map(r => r.kwhNet));
+  const maxJournalier = rowsAvecCumuls.reduce((a, r) => Math.max(a, r.kwhNet), -Infinity);
+  const minJournalier = rowsAvecCumuls.reduce((a, r) => Math.min(a, r.kwhNet), Infinity);
 
   // Par mois
   const parMois: ShellyAnalyse['parMois'] = {};
   for (const r of rowsAvecCumuls) {
     const key = `${r.mois} ${r.annee}`;
-    if (!parMois[key]) parMois[key] = { kwhTotal: 0, kwhNet: 0, kwhRetour: 0, nbJours: 0, montantEnergie: 0 };
-    parMois[key].kwhTotal     += r.kwhTotal;
-    parMois[key].kwhNet       += r.kwhNet;
-    parMois[key].kwhRetour    += r.kwhRetourTotal;
+    if (!parMois[key]) parMois[key] = { kwhTotal: 0, kwhNet: 0, kwhRetour: 0, nbJours: 0 };
+    parMois[key].kwhTotal  += r.kwhTotal;
+    parMois[key].kwhNet    += r.kwhNet;
+    parMois[key].kwhRetour += r.kwhRetourTotal;
     parMois[key].nbJours++;
-    parMois[key].montantEnergie += r.montantEnergie;
   }
 
   // Par type de jour
@@ -321,53 +305,6 @@ export function analyserDonneesShelly(rows: ShellyRow[]): ShellyAnalyse {
 }
 
 // ============================================================
-// CALCUL FACTURATION MENSUELLE sur données Shelly
-// ============================================================
-
-export interface FactureShelly {
-  mois: string;
-  kwhNet: number;
-  kwhRetour: number;
-  kwhHHP: number;  // kWh Hors Heures de Pointe
-  kwhHP: number;   // kWh Heures de Pointe
-  montantEnergie: number;
-  nbJours: number;
-  coutMoyen: number;
-}
-
-export function calculerFacturationShelly(
-  rows: ShellyRow[],
-  params: ParamsTarif = PARAMS_TARIF_DEFAUT
-): FactureShelly[] {
-  const groupes: Record<string, ShellyRow[]> = {};
-  for (const r of rows) {
-    const key = `${r.mois} ${r.annee}`;
-    if (!groupes[key]) groupes[key] = [];
-    groupes[key].push(r);
-  }
-
-  return Object.entries(groupes).map(([mois, lignes]) => {
-    const kwhNet    = lignes.reduce((s, r) => s + r.kwhNet, 0);
-    const kwhRetour = lignes.reduce((s, r) => s + r.kwhRetourTotal, 0);
-    const kwhHHP    = lignes.filter(r => r.trancheTarification === 'Heure creuse')
-                            .reduce((s, r) => s + r.kwhTotal, 0);
-    const kwhHP     = lignes.filter(r => r.trancheTarification === 'Heure de pointe')
-                            .reduce((s, r) => s + r.kwhTotal, 0);
-    const montantEnergie = lignes.reduce((s, r) => s + r.montantEnergie, 0);
-    const nbJours   = lignes.length;
-
-    const tarifK1 = params.typeTarif === 'MT' ? params.tarifK1 : params.tarifMoyenBT;
-    const tarifK2 = params.typeTarif === 'MT' ? params.tarifK2 : params.tarifMoyenBT;
-    const totalKwh = kwhHHP + kwhHP;
-    const coutMoyen = totalKwh > 0
-      ? (kwhHHP * tarifK1 + kwhHP * tarifK2) / totalKwh
-      : tarifK1;
-
-    return { mois, kwhNet, kwhRetour, kwhHHP, kwhHP, montantEnergie, nbJours, coutMoyen };
-  });
-}
-
-// ============================================================
 // PROFIL JOURNALIER (agrégé sur tous les jours)
 // ============================================================
 
@@ -379,55 +316,256 @@ export interface ProfilHoraire {
   isHP: boolean;
 }
 
+// Profil type normalisé (Sénégal) — somme ≈ 24, redistribution réaliste sur la journée
+const PROFIL_TYPE_JOURNALIER = [
+  0.25, 0.25, 0.20, 0.20, 0.20, 0.30, // 0h–5h  : nuit
+  0.55, 0.85, 1.15, 1.20, 1.20, 1.10, // 6h–11h : matin
+  1.00, 1.10, 1.20, 1.10, 1.00, 0.90, // 12h–17h: après-midi
+  0.80, 1.30, 1.40, 1.30, 1.00, 0.55, // 18h–23h: soir / pointe
+];
+const SOMME_PROFIL_TYPE = PROFIL_TYPE_JOURNALIER.reduce((s, v) => s + v, 0);
+
 export function calculerProfilHoraire(rows: ShellyRow[]): ProfilHoraire[] {
   const profil: ProfilHoraire[] = Array.from({ length: 24 }, (_, h) => ({
     heure: h,
     kwhMoyen: 0,
     kwhMax: 0,
-    kwhMin: Infinity,
+    kwhMin: 0,
     isHP: h >= 19 && h < 23,
   }));
 
   if (rows.length === 0) return profil;
 
-  const kwhParHeure = rows.map(r => r.kwhNet / 24);
-  const moyenneHoraire = kwhParHeure.reduce((s, v) => s + v, 0) / rows.length;
-  const maxHoraire = Math.max(...kwhParHeure);
-  const minHoraire = Math.min(...kwhParHeure);
+  // Détecte si les données sont horaires (plusieurs heures distinctes)
+  const heuresDistinctes = new Set(rows.map(r => toDateSafe(r.date).getHours()));
+  const isHourly = heuresDistinctes.size > 2;
 
-  for (let h = 0; h < 24; h++) {
-    profil[h].kwhMoyen = moyenneHoraire;
-    profil[h].kwhMax   = maxHoraire;
-    profil[h].kwhMin   = minHoraire === Infinity ? 0 : minHoraire;
+  if (isHourly) {
+    // Données horaires : grouper par heure et calculer moy/min/max réels
+    const parHeure: number[][] = Array.from({ length: 24 }, () => []);
+    for (const r of rows) {
+      const h = toDateSafe(r.date).getHours();
+      if (h >= 0 && h < 24) parHeure[h].push(r.kwhNet);
+    }
+    for (let h = 0; h < 24; h++) {
+      const vals = parHeure[h];
+      if (vals.length === 0) continue;
+      profil[h].kwhMoyen = +(vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(4);
+      profil[h].kwhMax   = +Math.max(...vals).toFixed(4);
+      profil[h].kwhMin   = +Math.min(...vals).toFixed(4);
+    }
+  } else {
+    // Données journalières : distribuer via profil type Sénégal
+    const kwhNets = rows.map(r => r.kwhNet).filter(v => v > 0);
+    if (kwhNets.length === 0) return profil;
+    const moyJour = kwhNets.reduce((s, v) => s + v, 0) / kwhNets.length;
+    const maxJour = Math.max(...kwhNets);
+    const minJour = Math.min(...kwhNets);
+    for (let h = 0; h < 24; h++) {
+      const coef = PROFIL_TYPE_JOURNALIER[h] / SOMME_PROFIL_TYPE;
+      profil[h].kwhMoyen = +(moyJour * coef).toFixed(4);
+      profil[h].kwhMax   = +(maxJour * coef).toFixed(4);
+      profil[h].kwhMin   = +(minJour * coef).toFixed(4);
+    }
   }
 
   return profil;
 }
 
 // ============================================================
-// DÉTECTION FORMAT SHELLY
+// CONVERTISSEUR PROFIL Mi → ShellyRow
+// Remédie au mismatch de noms entre la sortie de transformRowsToProfilMi
+// (Wh_PhA, Wh_RetourA…) et les noms attendus par parseShellyRow (Wh_Phase A…)
 // ============================================================
 
+export function profilMiToShellyRow(
+  r: Record<string, unknown>,
+  joursFerier: JourFerie[] = [],
+): ShellyRow | null {
+  // Convertit kWh → Wh quand les colonnes Wh brutes sont absentes (export partiel)
+  const toWh = (whKey: string, kwhKey: string, fallback = 0): number => {
+    const wh = Number(r[whKey] ?? NaN);
+    if (!isNaN(wh)) return wh;
+    const kwh = Number(r[kwhKey] ?? NaN);
+    if (!isNaN(kwh)) return kwh * 1000;
+    return fallback;
+  };
+
+  const remapped: Record<string, unknown> = {
+    ...r,
+    'Wh_Phase A':      toWh('Wh_PhA',       'kWh_PhA')   || toWh('Wh_Total', 'kWh_Total'),
+    'Wh_Phase B':      toWh('Wh_PhB',       'kWh_PhB'),
+    'Wh_Phase C':      toWh('Wh_PhC',       'kWh_PhC'),
+    'Wh_Total':        toWh('Wh_Total',     'kWh_Total'),
+    'Wh_Retour Ph. A': toWh('Wh_RetourA',   'kWh_RetourA'),
+    'Wh_Retour Ph. B': toWh('Wh_RetourB',   'kWh_RetourB'),
+    'Wh_Retour Ph. C': toWh('Wh_RetourC',   'kWh_RetourC'),
+    'Wh_Retour Total': toWh('Wh_RetourTotal','kWh_RetourTotal'),
+    // Identité appareil (préservée si présente dans les colonnes PROFIL Mi)
+    Appareil:    r['Appareil']    ?? r['Nom']         ?? r['name']       ?? '',
+    Emplacement: r['Emplacement'] ?? r['Site']        ?? r['site']       ?? '',
+    Piece:       r['Piece']       ?? r['Pièce']       ?? r['room']       ?? r['Room'] ?? '',
+  };
+
+  const row = parseShellyRow(remapped, joursFerier);
+  if (!row) return null;
+
+  // Si les colonnes kW_PhX sont présentes (export Supabase horaire/minute),
+  // on les utilise directement au lieu de recalculer kWh÷24 (qui suppose des données journalières).
+  const kW_A    = Number(r['kW_PhA']        ?? NaN);
+  const kW_B    = Number(r['kW_PhB']        ?? NaN);
+  const kW_C    = Number(r['kW_PhC']        ?? NaN);
+  const kW_Tot  = Number(r['kW_Total']      ?? NaN);
+  const kW_RA   = Number(r['kW_RetourA']    ?? NaN);
+  const kW_RB   = Number(r['kW_RetourB']    ?? NaN);
+  const kW_RC   = Number(r['kW_RetourC']    ?? NaN);
+  const kW_RTot = Number(r['kW_RetourTotal'] ?? NaN);
+
+  return {
+    ...row,
+    puissKwA:           isNaN(kW_A)    ? row.puissKwA           : kW_A,
+    puissKwB:           isNaN(kW_B)    ? row.puissKwB           : kW_B,
+    puissKwC:           isNaN(kW_C)    ? row.puissKwC           : kW_C,
+    puissKwTotal:       isNaN(kW_Tot)  ? row.puissKwTotal       : kW_Tot,
+    puissKwRetourA:     isNaN(kW_RA)   ? row.puissKwRetourA     : kW_RA,
+    puissKwRetourB:     isNaN(kW_RB)   ? row.puissKwRetourB     : kW_RB,
+    puissKwRetourC:     isNaN(kW_RC)   ? row.puissKwRetourC     : kW_RC,
+    puissKwRetourTotal: isNaN(kW_RTot) ? row.puissKwRetourTotal : kW_RTot,
+  };
+}
+
+// ============================================================
+// DÉTECTION FORMAT SHELLY / SUPABASE
+// ============================================================
+
+export type FormatShelly =
+  | 'shelly_excel'      // Excel Shelly 3EM d'origine (Wh_Phase A, Temps…)
+  | 'supabase_cl'       // Export CSV de shelly_cl (device_id, ts, p_a, wh_tot…)
+  | 'supabase_horaire'  // Export CSV de shelly_cl_horaire (device_id, ts_heure, wh_conso…)
+  | 'profil_mi'         // Format PROFIL Mi déjà transformé (Temps, Wh_PhA, kWh_Total…)
+  | 'shelly_section'    // Shelly Cloud export multi-section (Phase A / Phase B / …)
+  | 'generic';          // Format inconnu → mapping manuel
+
 export function detecterFormatShelly(colonnes: string[]): {
+  format: FormatShelly;
   isShelly: boolean;
   hasPhases: boolean;
   hasRetour: boolean;
   colonneDate: string | null;
 } {
-  const cols = colonnes.map(c => c.toLowerCase().trim());
+  const cols    = colonnes.map(c => c.replace(/[﻿​]/g, "").toLowerCase().trim());
+  const colsSet = new Set(cols);
 
-  const colonneDate = colonnes.find(c =>
-    c.toLowerCase().includes('temps') ||
-    c.toLowerCase().includes('date') ||
-    c.toLowerCase().includes('time') ||
-    c.toLowerCase().includes('timestamp')
-  ) ?? null;
+  // ── 0. Shelly Cloud multi-section : 1ère colonne = "Phase A", "Phase B", "Total"… ──
+  const firstColLower = cols[0] ?? '';
+  if (
+    firstColLower.startsWith('phase') ||
+    firstColLower === 'total' ||
+    (cols.length <= 3 && cols.some(c => c.startsWith('phase')))
+  ) {
+    return {
+      format: 'shelly_section', isShelly: true,
+      hasPhases: true, hasRetour: true,
+      colonneDate: colonnes[0],
+    };
+  }
 
+  // ── 1. shelly_cl_horaire : device_id + ts_heure + wh_conso ──
+  if (colsSet.has('device_id') && colsSet.has('ts_heure') && colsSet.has('wh_conso')) {
+    return {
+      format: 'supabase_horaire', isShelly: true,
+      hasPhases: true, hasRetour: colsSet.has('wh_inj'),
+      colonneDate: colonnes.find(c => c.toLowerCase() === 'ts_heure') ?? 'ts_heure',
+    };
+  }
+
+  // ── 2. shelly_cl : device_id + ts (ou timestamp) ─────────────
+  if (colsSet.has('device_id') && (colsSet.has('ts') || colsSet.has('timestamp'))) {
+    return {
+      format: 'supabase_cl', isShelly: true,
+      hasPhases: cols.some(c => c === 'p_a' || c === 'wh_tot' || c === 'power_w'),
+      hasRetour: colsSet.has('wh_ra'),
+      colonneDate: colonnes.find(c => c.toLowerCase() === 'ts' || c.toLowerCase() === 'timestamp') ?? 'ts',
+    };
+  }
+
+  // ── 3. PROFIL Mi déjà transformé : Wh_PhA / kWh_Total + Temps ─
+  // Note: wh_total seul est ambigu (présent aussi dans Shelly Excel) — exiger wh_pha ou kwh_total
+  const hasProfilMiCols = cols.some(c => c === 'wh_pha' || c === 'kwh_total');
+  const hasTemps        = cols.some(c => c === 'temps' || c === 'date');
+  if (hasProfilMiCols && hasTemps) {
+    return {
+      format: 'profil_mi', isShelly: true,
+      hasPhases: true, hasRetour: cols.some(c => c.includes('retour')),
+      colonneDate: colonnes.find(c => c.toLowerCase() === 'temps' || c.toLowerCase() === 'date') ?? null,
+    };
+  }
+
+  // ── 4. Excel Shelly d'origine (Wh_Phase A, Temps…) ──────────
+  const colonneDate = colonnes.find(c => {
+    const l = c.toLowerCase();
+    return l.includes('temps') || l.includes('date') || l.includes('time') || l.includes('timestamp');
+  }) ?? null;
   const hasPhases = cols.some(c => c.includes('phase') || c.includes('wh_'));
   const hasRetour = cols.some(c => c.includes('retour') || c.includes('return'));
   const isShelly  = hasPhases && colonneDate !== null;
 
-  return { isShelly, hasPhases, hasRetour, colonneDate };
+  return {
+    format: isShelly ? 'shelly_excel' : 'generic',
+    isShelly, hasPhases, hasRetour, colonneDate,
+  };
+}
+
+// ============================================================
+// PARSER FORMAT SHELLY CLOUD MULTI-SECTION
+// ============================================================
+
+const SHELLY_SECTION_MAP: Record<string, string> = {
+  'phase a':       'Wh_Phase A',
+  'phase b':       'Wh_Phase B',
+  'phase c':       'Wh_Phase C',
+  'total':         'Wh_Total',
+  'retour phase a':'Wh_Retour Ph. A',
+  'retour phase b':'Wh_Retour Ph. B',
+  'retour phase c':'Wh_Retour Ph. C',
+  'retour total':  'Wh_Retour Total',
+};
+const SHELLY_SECTION_NAMES = new Set(Object.keys(SHELLY_SECTION_MAP));
+
+export function parseShellySectionCSV(
+  rawData: Record<string, unknown>[],
+  joursFerier: JourFerie[] = [],
+): ShellyRow[] {
+  if (!rawData.length) return [];
+  const [col0, col1] = Object.keys(rawData[0]);
+
+  const mergedRows = new Map<string, Record<string, unknown>>();
+
+  // Section initiale dérivée du nom de la première colonne
+  const firstColName = col0.toLowerCase().replace(/[\uFEFF\u200B]/g, '').trim();
+  let currentWHKey: string = SHELLY_SECTION_MAP[firstColName] ?? 'Wh_Phase A';
+
+  for (const row of rawData) {
+    const v0 = String(row[col0] ?? '').replace(/[\uFEFF\u200B]/g, '').trim();
+    const v1 = row[col1];
+
+    if (!v0 || v0 === 'Temps') continue;
+
+    const v0Lower = v0.toLowerCase();
+    if (SHELLY_SECTION_NAMES.has(v0Lower)) {
+      currentWHKey = SHELLY_SECTION_MAP[v0Lower];
+      continue;
+    }
+
+    if (!mergedRows.has(v0)) {
+      mergedRows.set(v0, { Temps: v0 });
+    }
+    mergedRows.get(v0)![currentWHKey] = v1;
+  }
+
+  return Array.from(mergedRows.values())
+    .map(r => parseShellyRow(r, joursFerier))
+    .filter((r): r is ShellyRow => r !== null);
 }
 
 // ============================================================

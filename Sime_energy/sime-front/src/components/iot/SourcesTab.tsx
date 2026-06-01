@@ -1,435 +1,323 @@
 // ============================================================
-// IOT MODULE — Onglet 1 : Sources (Plan de comptage & bilan)
-// Architecture : ARRIVÉES → GÉNÉRAL → DÉPARTS
-// Règle : Σ ARRIVÉES = GÉNÉRAL = Σ DÉPARTS
+// IOT MODULE — Onglet 1 : Sources
+// Chaque source peut être liée à d'autres sources ("SENELEC + PV")
 // ============================================================
 
-import { useState, useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Plus, Edit2, Trash2, Zap, Sun, Fuel, Activity, GitBranch,
-  GripVertical, Check, X, ArrowRight, AlertTriangle,
-  CheckCircle2, Info, BarChart2,
+  Check, X, Battery, ChevronDown, ChevronUp, Info,
 } from 'lucide-react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useIOT } from './IOTContext';
-import type { Source, SourceType, SensorType, SourceRole, UsageType, TimeSeriesRow } from './shared';
-import {
-  SOURCE_TYPE_COLORS, SOURCE_TYPE_LABELS,
-  SOURCE_ROLE_COLORS, SOURCE_ROLE_LABELS,
-  USAGE_TYPE_COLORS, USAGE_TYPES,
+import type {
+  Source, SourceType, SensorType,
+  ModeSource, TransfertEnergie, TypeTableau, ChargeId, ProfilMi, ModeGrid,
 } from './shared';
+import { SOURCE_TYPE_COLORS, SOURCE_TYPE_LABELS, PROFIL_MI_LABELS } from './shared';
 
-// ── Backward-compat helper ────────────────────────────────
-function resolveRole(source: Source): SourceRole {
-  if (source.role) return source.role;
-  if (source.type === 'CHARGE') return 'DEPART';
-  if (source.type === 'SELECTEUR') return 'GENERAL';
-  return 'ARRIVEE';
-}
-
-// ── Icons per type ────────────────────────────────────────
-const TYPE_ICONS: Record<SourceType, React.ComponentType<{ className?: string }>> = {
+// ---- Icônes ----
+const TYPE_ICONS: Record<SourceType, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
   SENELEC:   Zap,
   PV:        Sun,
+  BESS:      Battery,
+  GROUPE:    Fuel,
   SECOURS:   Fuel,
   CHARGE:    Activity,
   SELECTEUR: GitBranch,
 };
 
-// ── Dropdown lists ────────────────────────────────────────
-const SENSOR_TYPES: SensorType[] = ['Shelly', 'SMA', 'Voltcraft', 'Fluke', 'DENT', 'Sentinel', 'Manuel', 'Autre'];
-const ALL_SOURCE_TYPES: SourceType[] = ['SENELEC', 'PV', 'SECOURS', 'CHARGE', 'SELECTEUR'];
-const ARRIVEE_TYPES: SourceType[] = ['SENELEC', 'PV', 'SECOURS'];
-const ROLES: SourceRole[] = ['ARRIVEE', 'GENERAL', 'DEPART'];
+const SOURCE_TYPES: SourceType[]     = ['SENELEC', 'PV', 'BESS', 'GROUPE', 'SECOURS', 'CHARGE', 'SELECTEUR'];
+const SENSOR_TYPES: SensorType[]     = ['Shelly', 'SMA', 'Voltcraft', 'Fluke', 'DENT', 'Sentinel', 'Manuel', 'Autre'];
+const MODES: ModeSource[]            = ['A', 'B', 'C', 'D', 'E', 'F'];
+const TRANSFERTS: TransfertEnergie[] = ['Selecteur', 'Inverseur', 'Direct'];
+const TABLEAUX: TypeTableau[]        = ['TGBT', 'TD1', 'TD2', 'TD3', 'Autre'];
+const CHARGES: { value: ChargeId; label: string }[] = [
+  { value: 'CH1_TGBT', label: 'CH1 — TGBT' },
+  { value: 'CH2_TGBT', label: 'CH2 — TGBT' },
+  { value: 'CH3_TD1',  label: 'CH3 — TD1'  },
+  { value: 'CH4_TD2',  label: 'CH4 — TD2'  },
+  { value: 'Autre',    label: 'Autre'       },
+  { value: '',         label: '—'           },
+];
+const PROFILS_MI: ProfilMi[] = ['M1_SENELEC', 'M2_SELECTEUR', 'M3_CHARGE', 'M4_GROUPE', 'M5_PV'];
+const MODES_GRID: ModeGrid[] = ['ON-GRID', 'OFF-GRID'];
 
-const ROLE_DESCRIPTIONS: Record<SourceRole, string> = {
-  ARRIVEE: 'Source d\'énergie entrante (SENELEC, PV, GE)',
-  GENERAL: 'Compteur global — mesure la totalité du site',
-  DEPART:  'Circuit de consommation — usage ou zone',
+const MODE_COLORS: Record<ModeSource, string> = {
+  A: '#22c55e', B: '#3b82f6', C: '#f97316', D: '#ef4444',
+  E: '#a855f7', F: '#06b6d4',
+};
+const MODE_LABELS: Record<ModeSource, string> = {
+  A: 'Réseau seul',
+  B: 'Hybride réseau+PV',
+  C: 'PV+BESS',
+  D: 'GROUPE',
+  E: 'SENELEC & GE',
+  F: 'PV + GE',
+};
+const PROFIL_MI_COLORS: Record<ProfilMi, string> = {
+  M1_SENELEC: '#3b82f6', M2_SELECTEUR: '#a855f7',
+  M3_CHARGE: '#ef4444', M4_GROUPE: '#f97316', M5_PV: '#eab308',
 };
 
-// ── kWh sum helper ────────────────────────────────────────
-function sumKwh(rows: TimeSeriesRow[] | undefined): number | null {
-  if (!rows || rows.length === 0) return null;
-  return rows.reduce((s, r) => s + r.energieKwh, 0);
-}
-
-// ═══════════════════════════════════════════════════════════
-// SOURCE FORM
-// ═══════════════════════════════════════════════════════════
-
-interface FormState {
-  nom: string;
-  role: SourceRole;
-  type: SourceType;
-  description: string;
-  couleur: string;
-  capteur: SensorType;
-  usageType: UsageType | '';
-  entite: string;
-  puissanceInstallee: string;
-}
-
-const DEFAULT_FORM: FormState = {
-  nom: '', role: 'ARRIVEE', type: 'SENELEC',
-  description: '', couleur: SOURCE_TYPE_COLORS.SENELEC,
-  capteur: 'Shelly', usageType: '', entite: '', puissanceInstallee: '',
+// Mapping des images pour chaque mode
+const MODE_IMAGES: Record<ModeSource, string> = {
+  A: '/images/modes/mode-a.png',
+  B: '/images/modes/mode-b.png',
+  C: '/images/modes/mode-c.png',
+  D: '/images/modes/mode-d.png',
+  E: '/images/modes/mode-e.png',
+  F: '/images/modes/mode-f.png',
 };
 
-function formFromSource(s: Source): FormState {
-  return {
-    nom: s.nom,
-    role: resolveRole(s),
-    type: s.type,
-    description: s.description,
-    couleur: s.couleur,
-    capteur: s.capteur,
-    usageType: s.usageType ?? '',
-    entite: s.entite ?? '',
-    puissanceInstallee: s.puissanceInstallee != null ? String(s.puissanceInstallee) : '',
-  };
-}
+const DEFAULT_SOURCE: Omit<Source, 'id' | 'ordre'> = {
+  nom: '', type: 'SENELEC', description: '',
+  couleur: SOURCE_TYPE_COLORS.SENELEC, capteur: 'Shelly', actif: true,
+  modes: [], linkedSourceIds: [],
+  transfert: 'Direct', tableau: 'TGBT', chargeId: 'CH1_TGBT',
+  profilMi: 'M1_SENELEC', modeGrid: 'ON-GRID',
+};
 
-function SourceForm({
-  initial, onSave, onCancel,
+// ---- Select générique compact ----
+function CellSelect<T extends string>({
+  value, options, onChange, placeholder = '—', renderOption,
 }: {
-  initial: FormState;
-  onSave: (f: FormState) => void;
-  onCancel: () => void;
+  value: T | undefined; options: T[]; onChange: (v: T) => void;
+  placeholder?: string; renderOption?: (v: T) => React.ReactNode;
 }) {
-  const [form, setForm] = useState<FormState>(initial);
-  const upd = <K extends keyof FormState>(k: K, v: FormState[K]) =>
-    setForm(p => ({ ...p, [k]: v }));
+  return (
+    <Select value={value ?? ''} onValueChange={v => onChange(v as T)}>
+      <SelectTrigger className="h-8 text-xs bg-white/5 border-white/15 text-white px-2">
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent className="bg-[#1a1d2e] border-white/20">
+        {options.map(o => (
+          <SelectItem key={o} value={o} className="text-white text-xs">
+            {renderOption ? renderOption(o) : o}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
-  const handleRoleChange = (role: SourceRole) => {
-    setForm(p => ({
-      ...p,
-      role,
-      type: role === 'DEPART' ? 'CHARGE' : p.type === 'CHARGE' ? 'SENELEC' : p.type,
-      couleur: SOURCE_ROLE_COLORS[role],
-    }));
-  };
+// ---- Dropdown flottant pour lier une source ----
+function LinkPicker({
+  candidates,
+  onPick,
+  onClose,
+}: {
+  candidates: Source[];
+  onPick: (id: string) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
 
-  const availableTypes =
-    form.role === 'ARRIVEE' ? ARRIVEE_TYPES :
-    form.role === 'DEPART'  ? (['CHARGE'] as SourceType[]) :
-    ALL_SOURCE_TYPES;
-
-  const Icon = TYPE_ICONS[form.type];
+  if (candidates.length === 0) {
+    return (
+      <div ref={ref} className="absolute left-0 top-full mt-1 z-30 bg-[#1a1d2e] border border-white/20 rounded-xl shadow-xl p-3 min-w-[200px]">
+        <p className="text-slate-500 text-xs italic">Aucune autre source disponible</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-white/5 rounded-xl border border-white/20 p-5 space-y-5">
-      <h3 className="text-white font-semibold">
-        {initial.nom ? 'Modifier la source' : 'Nouvelle source'}
-      </h3>
-
-      {/* Rôle */}
-      <div>
-        <Label className="text-slate-400 text-xs mb-2 block">Rôle dans le plan de comptage *</Label>
-        <div className="grid grid-cols-3 gap-2">
-          {ROLES.map(role => (
-            <button
-              key={role}
-              type="button"
-              onClick={() => handleRoleChange(role)}
-              className="rounded-lg border p-3 text-left transition-all"
-              style={form.role === role ? {
-                borderColor: SOURCE_ROLE_COLORS[role],
-                backgroundColor: SOURCE_ROLE_COLORS[role] + '18',
-              } : { borderColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.03)' }}
-            >
-              <div className="font-semibold text-sm" style={{ color: form.role === role ? SOURCE_ROLE_COLORS[role] : '#94a3b8' }}>
-                {SOURCE_ROLE_LABELS[role]}
-              </div>
-              <div className="text-slate-500 text-xs mt-0.5 leading-tight">{ROLE_DESCRIPTIONS[role]}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        {/* Nom */}
-        <div>
-          <Label className="text-slate-400 text-xs mb-1 block">Nom *</Label>
-          <Input
-            value={form.nom}
-            onChange={e => upd('nom', e.target.value)}
-            placeholder="ex : Compteur SENELEC principal"
-            className="bg-white/5 border-white/20 text-white"
-          />
-        </div>
-
-        {/* Type */}
-        <div>
-          <Label className="text-slate-400 text-xs mb-1 block">Type de source</Label>
-          <Select
-            value={form.type}
-            onValueChange={v => upd('type', v as SourceType)}
-            disabled={form.role === 'DEPART'}
+    <div ref={ref} className="absolute left-0 top-full mt-1 z-30 bg-[#1a1d2e] border border-white/20 rounded-xl shadow-xl py-1 min-w-[220px]">
+      {candidates.map(src => {
+        const Icon = TYPE_ICONS[src.type];
+        return (
+          <button
+            key={src.id}
+            onClick={() => { onPick(src.id); onClose(); }}
+            className="flex items-center gap-2.5 w-full px-3 py-2.5 hover:bg-white/10 transition-colors text-left"
           >
-            <SelectTrigger className="bg-white/5 border-white/20 text-white">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[#1a1d2e] border-white/20">
-              {availableTypes.map(t => (
-                <SelectItem key={t} value={t} className="text-white">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: SOURCE_TYPE_COLORS[t] }} />
-                    {t} — {SOURCE_TYPE_LABELS[t]}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Capteur */}
-        <div>
-          <Label className="text-slate-400 text-xs mb-1 block">Capteur / Appareil</Label>
-          <Select value={form.capteur} onValueChange={v => upd('capteur', v as SensorType)}>
-            <SelectTrigger className="bg-white/5 border-white/20 text-white">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[#1a1d2e] border-white/20">
-              {SENSOR_TYPES.map(s => (
-                <SelectItem key={s} value={s} className="text-white">{s}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Puissance installée */}
-        <div>
-          <Label className="text-slate-400 text-xs mb-1 block">Puissance installée (kW)</Label>
-          <Input
-            type="number"
-            value={form.puissanceInstallee}
-            onChange={e => upd('puissanceInstallee', e.target.value)}
-            placeholder="ex : 45"
-            className="bg-white/5 border-white/20 text-white"
-          />
-        </div>
-
-        {/* Couleur */}
-        <div>
-          <Label className="text-slate-400 text-xs mb-1 block">Couleur de courbe</Label>
-          <div className="flex items-center gap-2">
-            <input
-              type="color"
-              value={form.couleur}
-              onChange={e => upd('couleur', e.target.value)}
-              className="w-10 h-9 rounded border border-white/20 bg-transparent cursor-pointer p-0.5"
-            />
-            <span className="text-slate-400 text-sm font-mono">{form.couleur}</span>
-            <div className="w-6 h-6 rounded" style={{ backgroundColor: form.couleur }} />
-          </div>
-        </div>
-
-        {/* DEPART — Type d'usage */}
-        {form.role === 'DEPART' && (
-          <div>
-            <Label className="text-slate-400 text-xs mb-1 block">Type d'usage</Label>
-            <Select value={form.usageType} onValueChange={v => upd('usageType', v as UsageType | '')}>
-              <SelectTrigger className="bg-white/5 border-white/20 text-white">
-                <SelectValue placeholder="Sélectionner..." />
-              </SelectTrigger>
-              <SelectContent className="bg-[#1a1d2e] border-white/20">
-                {USAGE_TYPES.map(u => (
-                  <SelectItem key={u} value={u} className="text-white">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: USAGE_TYPE_COLORS[u] }} />
-                      {u}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-
-        {/* Description */}
-        <div className={form.role === 'DEPART' ? '' : 'col-span-2'}>
-          <Label className="text-slate-400 text-xs mb-1 block">Description</Label>
-          <Input
-            value={form.description}
-            onChange={e => upd('description', e.target.value)}
-            placeholder="ex : Circuit éclairage bâtiment A"
-            className="bg-white/5 border-white/20 text-white"
-          />
-        </div>
-
-        {/* DEPART — Entité / Zone */}
-        {form.role === 'DEPART' && (
-          <div>
-            <Label className="text-slate-400 text-xs mb-1 block">Entité / Zone</Label>
-            <Input
-              value={form.entite}
-              onChange={e => upd('entite', e.target.value)}
-              placeholder="ex : Atelier 1, Bâtiment B"
-              className="bg-white/5 border-white/20 text-white"
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Prévisualisation */}
-      <div
-        className="rounded-lg border p-3 flex items-center gap-3"
-        style={{ borderColor: form.couleur + '60', backgroundColor: form.couleur + '10' }}
-      >
-        <Icon className="h-5 w-5 shrink-0" style={{ color: form.couleur }} />
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-white font-medium text-sm">{form.nom || '(nom)'}</p>
-            <Badge
-              className="text-xs border-0 px-1.5 py-0"
-              style={{ backgroundColor: SOURCE_ROLE_COLORS[form.role] + '30', color: SOURCE_ROLE_COLORS[form.role] }}
-            >
-              {SOURCE_ROLE_LABELS[form.role]}
-            </Badge>
-          </div>
-          <p className="text-slate-400 text-xs mt-0.5">
-            {form.type} · {form.capteur}
-            {form.usageType && ` · ${form.usageType}`}
-            {form.entite && ` · ${form.entite}`}
-            {form.puissanceInstallee && ` · ${form.puissanceInstallee} kW`}
-          </p>
-        </div>
-      </div>
-
-      <div className="flex gap-2 justify-end">
-        <Button variant="ghost" size="sm" className="text-slate-400 hover:text-white" onClick={onCancel}>
-          <X className="h-4 w-4 mr-1" /> Annuler
-        </Button>
-        <Button
-          size="sm"
-          className="bg-blue-600 hover:bg-blue-500 text-white"
-          onClick={() => onSave(form)}
-          disabled={!form.nom.trim()}
-        >
-          <Check className="h-4 w-4 mr-1" /> Enregistrer
-        </Button>
-      </div>
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+              style={{ backgroundColor: src.couleur + '25' }}>
+              <Icon className="h-3.5 w-3.5" style={{ color: src.couleur }} />
+            </div>
+            <div>
+              <p className="text-white text-xs font-semibold">{src.nom}</p>
+              <p className="text-slate-500 text-[10px]">{src.type}</p>
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// SOURCE CARD
-// ═══════════════════════════════════════════════════════════
-
-function SourceCard({
-  source, onEdit, onToggle, onDelete, kwh,
+// ============================================================
+// Ligne source principale avec sources liées inline
+// ============================================================
+function SourceRow({
+  source,
+  allSources,
+  onEdit,
+  onSetActif,
+  onDelete,
+  onUnlink,
+  onAddClone,
 }: {
   source: Source;
-  onEdit: (s: Source) => void;
-  onToggle: (id: string) => void;
-  onDelete: (id: string) => void;
-  kwh: number | null;
+  allSources: Source[];
+  onEdit: (src: Source) => void;
+  onSetActif: (id: string, actif: boolean) => void;
+  onDelete: () => void;
+  onUnlink: (targetId: string) => void;
+  onAddClone: (baseId: string) => void;
 }) {
   const Icon = TYPE_ICONS[source.type];
-  const role = resolveRole(source);
-  const roleColor = SOURCE_ROLE_COLORS[role];
+  const linked = (source.linkedSourceIds ?? [])
+    .map(id => allSources.find(s => s.id === id))
+    .filter(Boolean) as Source[];
+
+  const basePrefix = source.nom.replace(/\d+$/, '');
+  const basePrefixEscaped = basePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const nextCloneIndex = (() => {
+    const indices = allSources
+      .map(s => {
+        const m = s.nom.match(new RegExp(`^${basePrefixEscaped}(\\d+)$`));
+        return m ? parseInt(m[1], 10) : null;
+      })
+      .filter((v): v is number => typeof v === 'number' && !isNaN(v));
+    return indices.length ? Math.max(...indices) + 1 : 1;
+  })();
+
+  const modes = source.modes ?? [];
 
   return (
-    <div
-      className={`relative rounded-xl border p-4 transition-all ${
-        source.actif ? 'border-white/20 bg-white/5' : 'border-white/10 bg-white/[0.02] opacity-50'
-      }`}
-      style={{ borderLeftColor: source.couleur, borderLeftWidth: 3 }}
-    >
-      <div className="absolute top-3 right-3 text-slate-600 cursor-grab">
-        <GripVertical className="h-4 w-4" />
-      </div>
+    <div className={`rounded-xl border border-white/10 transition-all ${!source.actif ? 'opacity-40' : 'hover:border-white/20'}`}>
+      <div className="flex items-center gap-2 px-4 py-3 flex-wrap">
 
-      <div className="flex items-start gap-3">
+        {/* ── Source principale ── */}
         <div
-          className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-          style={{ backgroundColor: source.couleur + '20', border: `1px solid ${source.couleur}40` }}
+          className="flex items-center gap-2 px-3 py-2 rounded-xl border"
+          style={{ backgroundColor: source.couleur + '12', borderColor: source.couleur + '40' }}
         >
-          <Icon className="h-5 w-5" style={{ color: source.couleur }} />
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+            style={{ backgroundColor: source.couleur + '25' }}>
+            <Icon className="h-4 w-4" style={{ color: source.couleur }} />
+          </div>
+          <span className="text-white text-sm font-bold whitespace-nowrap">{source.nom}</span>
+          <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+            style={{ color: source.couleur, backgroundColor: source.couleur + '20' }}>
+            {source.type}
+          </span>
         </div>
 
-        <div className="flex-1 min-w-0 pr-6">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-white font-semibold text-sm">{source.nom}</h3>
-            <Badge
-              className="text-xs border-0 px-1.5 py-0"
-              style={{ backgroundColor: roleColor + '25', color: roleColor }}
-            >
-              {SOURCE_ROLE_LABELS[role]}
-            </Badge>
-            {source.usageType && (
-              <Badge
-                className="text-xs border-0 px-1.5 py-0"
-                style={{
-                  backgroundColor: USAGE_TYPE_COLORS[source.usageType] + '25',
-                  color: USAGE_TYPE_COLORS[source.usageType],
-                }}
+        {/* ── Sources liées (+ PV, + BESS…) ── */}
+        {linked.map(lsrc => {
+          const LIcon = TYPE_ICONS[lsrc.type];
+          return (
+            <div key={lsrc.id} className="flex items-center gap-2">
+              {/* Séparateur + */}
+              <span className="text-2xl font-bold text-slate-500 select-none leading-none">+</span>
+              {/* Chip source liée */}
+              <div
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl border group ${!lsrc.actif ? 'opacity-60' : ''}`}
+                style={{ backgroundColor: lsrc.couleur + '12', borderColor: lsrc.couleur + '40' }}
               >
-                {source.usageType}
-              </Badge>
-            )}
-            {source.entite && (
-              <Badge className="text-xs bg-transparent border-white/15 text-slate-400 px-1.5 py-0">
-                {source.entite}
-              </Badge>
-            )}
-          </div>
-
-          <div className="text-slate-500 text-xs mt-1">
-            {source.type} · {source.capteur}
-            {source.puissanceInstallee != null && ` · ${source.puissanceInstallee} kW`}
-          </div>
-
-          {source.description && (
-            <p className="text-slate-600 text-xs mt-0.5 truncate">{source.description}</p>
-          )}
-
-          {kwh !== null && (
-            <div className="mt-2">
-              <span
-                className="text-xs font-mono font-semibold px-2 py-0.5 rounded"
-                style={{ backgroundColor: source.couleur + '20', color: source.couleur }}
-              >
-                {kwh.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} kWh
-              </span>
+                <Switch
+                  checked={lsrc.actif}
+                  onCheckedChange={(v) => onSetActif(lsrc.id, v)}
+                  className="data-[state=checked]:bg-green-500 scale-75"
+                  aria-label={`Activer/désactiver ${lsrc.nom}`}
+                />
+                <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: lsrc.couleur + '25' }}>
+                  <LIcon className="h-4 w-4" style={{ color: lsrc.couleur }} />
+                </div>
+                <span className="text-white text-sm font-bold whitespace-nowrap">{lsrc.nom}</span>
+                <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+                  style={{ color: lsrc.couleur, backgroundColor: lsrc.couleur + '20' }}>
+                  {lsrc.type}
+                </span>
+                {/* Bouton modifier */}
+                <button
+                  onClick={() => onEdit(lsrc)}
+                  className="ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity text-slate-500 hover:text-blue-400"
+                  title="Modifier cette source"
+                >
+                  <Edit2 className="h-3.5 w-3.5" />
+                </button>
+                {/* Bouton retirer */}
+                <button
+                  onClick={() => onUnlink(lsrc.id)}
+                  className="ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity text-slate-500 hover:text-red-400"
+                  title="Retirer cette source"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
-          )}
-        </div>
-      </div>
+          );
+        })}
 
-      <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/10">
-        <Switch
-          checked={source.actif}
-          onCheckedChange={() => onToggle(source.id)}
-          className="data-[state=checked]:bg-green-500"
-        />
-        <Label
-          className="text-slate-400 text-xs cursor-pointer"
-          onClick={() => onToggle(source.id)}
-        >
-          {source.actif ? 'Active' : 'Inactive'}
-        </Label>
-        <div className="ml-auto flex gap-2">
-          <Button
-            size="sm" variant="ghost"
-            className="h-7 px-2 text-slate-400 hover:text-white hover:bg-white/10"
-            onClick={() => onEdit(source)}
+        {/* ── Bouton + : ajoute automatiquement PV1/PV2… (même logique pour SENELEC/GE) ── */}
+        <div className="relative">
+          <button
+            onClick={() => onAddClone(source.id)}
+            className="flex items-center gap-1 px-2.5 py-2 rounded-xl border border-dashed border-white/25 text-slate-500 hover:text-white hover:border-white/50 transition-all text-xs"
+            title={`Ajouter ${basePrefix}${nextCloneIndex}`}
           >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* ── Spacer ── */}
+        <div className="flex-1" />
+
+        {/* ── Badges modes ── */}
+        {modes.length > 0 && (
+          <div className="flex gap-1">
+            {modes.map(m => (
+              <span key={m} className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: MODE_COLORS[m] + '25', color: MODE_COLORS[m] }}
+                title={MODE_LABELS[m]}>
+                {m}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* ── Badge profil Mi ── */}
+        {source.profilMi && (
+          <Badge className="text-[10px] border-0 px-1.5 py-0.5"
+            style={{ backgroundColor: PROFIL_MI_COLORS[source.profilMi] + '25', color: PROFIL_MI_COLORS[source.profilMi] }}>
+            {source.profilMi.split('_')[0]}
+          </Badge>
+        )}
+
+        {/* ── Badge réseau ── */}
+        {source.modeGrid && (
+          <Badge className={`text-[10px] border-0 px-1.5 py-0.5 ${source.modeGrid === 'ON-GRID' ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
+            {source.modeGrid}
+          </Badge>
+        )}
+
+        {/* ── Contrôles ── */}
+        <div className="flex items-center gap-1 shrink-0">
+          <Switch checked={source.actif} onCheckedChange={(v) => onSetActif(source.id, v)}
+            className="data-[state=checked]:bg-green-500 scale-75" />
+          <Button size="sm" variant="ghost"
+            className="h-7 w-7 p-0 text-slate-400 hover:text-white hover:bg-white/10"
+            onClick={() => onEdit(source)}>
             <Edit2 className="h-3.5 w-3.5" />
           </Button>
-          <Button
-            size="sm" variant="ghost"
-            className="h-7 px-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10"
-            onClick={() => onDelete(source.id)}
-          >
+          <Button size="sm" variant="ghost"
+            className="h-7 w-7 p-0 text-slate-400 hover:text-red-400 hover:bg-red-500/10"
+            onClick={onDelete}>
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -438,467 +326,565 @@ function SourceCard({
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// PLAN DE COMPTAGE — schéma visuel
-// ═══════════════════════════════════════════════════════════
+// ============================================================
+// Formulaire création / édition source
+// ============================================================
+function SourceForm({
+  draft, onChange, onSave, onCancel,
+}: {
+  draft: Partial<Source>;
+  onChange: (d: Partial<Source>) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const f = <K extends keyof Source>(key: K, val: Source[K]) => onChange({ ...draft, [key]: val });
 
-function PlanDeComptageSchema({ sources }: { sources: Source[] }) {
-  const byRole = {
-    ARRIVEE: sources.filter(s => resolveRole(s) === 'ARRIVEE'),
-    GENERAL: sources.filter(s => resolveRole(s) === 'GENERAL'),
-    DEPART:  sources.filter(s => resolveRole(s) === 'DEPART'),
+  const toggleMode = (m: ModeSource) => {
+    const cur = draft.modes ?? [];
+    f('modes', cur.includes(m) ? cur.filter(x => x !== m) : [...cur, m]);
   };
 
-  const Column = ({ role, list }: { role: SourceRole; list: Source[] }) => {
-    const color = SOURCE_ROLE_COLORS[role];
-    return (
-      <div className="flex-1 min-w-0">
-        <div
-          className="rounded-t-lg px-3 py-2 border border-b-0 text-center"
-          style={{ borderColor: color + '50', backgroundColor: color + '15' }}
-        >
-          <div className="font-bold text-xs tracking-wide" style={{ color }}>
-            {SOURCE_ROLE_LABELS[role].toUpperCase()}S
-          </div>
-          <div className="text-slate-500 text-xs">
-            {list.length} source{list.length !== 1 ? 's' : ''}
+  return (
+    <div className="bg-blue-600/10 border border-blue-500/30 rounded-xl p-4 space-y-3">
+      <p className="text-blue-300 text-sm font-semibold">
+        {draft.id ? 'Modifier la source' : 'Nouvelle source'}
+      </p>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+        {/* Nom */}
+        <div className="col-span-2 md:col-span-1">
+          <label className="text-xs text-slate-400 mb-1 block">Nom *</label>
+          <Input value={draft.nom ?? ''} onChange={e => f('nom', e.target.value)}
+            placeholder="ex: M1_SENELEC"
+            className="h-8 text-xs bg-white/5 border-white/20 text-white" />
+        </div>
+        {/* Type */}
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Type</label>
+          <CellSelect value={draft.type} options={SOURCE_TYPES}
+            onChange={v => onChange({ ...draft, type: v, couleur: SOURCE_TYPE_COLORS[v] })}
+            renderOption={v => (
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: SOURCE_TYPE_COLORS[v] }} />
+                {v}
+              </span>
+            )} />
+        </div>
+        {/* Capteur */}
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Capteur</label>
+          <CellSelect value={draft.capteur} options={SENSOR_TYPES} onChange={v => f('capteur', v)} />
+        </div>
+        {/* Profil Mi */}
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Profil Mi</label>
+          <CellSelect value={draft.profilMi} options={PROFILS_MI} onChange={v => f('profilMi', v)}
+            renderOption={v => (
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: PROFIL_MI_COLORS[v] }} />
+                {v.split('_')[0]}
+              </span>
+            )} />
+        </div>
+        {/* Transfert */}
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Transfert</label>
+          <CellSelect value={draft.transfert} options={TRANSFERTS} onChange={v => f('transfert', v)} />
+        </div>
+        {/* Tableau */}
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Tableau</label>
+          <CellSelect value={draft.tableau} options={TABLEAUX} onChange={v => f('tableau', v)} />
+        </div>
+        {/* Charge */}
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Charge</label>
+          <Select value={draft.chargeId ?? ''} onValueChange={v => f('chargeId', v as ChargeId)}>
+            <SelectTrigger className="h-8 text-xs bg-white/5 border-white/15 text-white px-2">
+              <SelectValue placeholder="—" />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1a1d2e] border-white/20">
+              {CHARGES.map(c => (
+                <SelectItem key={c.value || 'none'} value={c.value || 'none'} className="text-white text-xs">
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {/* Couleur */}
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Couleur</label>
+          <div className="flex items-center gap-2">
+            <input type="color" value={draft.couleur ?? '#3b82f6'}
+              onChange={e => f('couleur', e.target.value)}
+              className="w-8 h-8 rounded border border-white/20 bg-transparent cursor-pointer p-0.5" />
+            <span className="text-slate-500 text-xs font-mono">{draft.couleur}</span>
           </div>
         </div>
-        <div
-          className="rounded-b-lg border border-t-0 p-2 min-h-[72px] space-y-1"
-          style={{ borderColor: color + '40', backgroundColor: color + '06' }}
-        >
-          {list.length === 0 ? (
-            <p className="text-slate-700 text-xs text-center py-4 italic">vide</p>
-          ) : list.map(s => {
-            const Icon = TYPE_ICONS[s.type];
+      </div>
+
+      {/* Modes de fonctionnement */}
+      <div>
+        <label className="text-xs text-slate-400 mb-2 block">Modes de fonctionnement</label>
+        <div className="flex gap-2">
+          {MODES.map(m => {
+            const active = (draft.modes ?? []).includes(m);
             return (
-              <div key={s.id} className="flex items-center gap-1.5 px-1 py-0.5">
-                <Icon className="h-3 w-3 shrink-0" style={{ color: s.couleur }} />
-                <span className="text-slate-300 text-xs truncate">{s.nom}</span>
-                {!s.actif && <span className="text-slate-600 text-xs ml-auto">off</span>}
-              </div>
+              <button key={m} type="button" onClick={() => toggleMode(m)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
+                style={active
+                  ? { backgroundColor: MODE_COLORS[m] + '25', borderColor: MODE_COLORS[m], color: MODE_COLORS[m] }
+                  : { backgroundColor: 'transparent', borderColor: 'rgba(255,255,255,0.15)', color: '#64748b' }
+                }>
+                <span className="font-bold">{m}</span>
+                <span className="hidden sm:inline font-normal">{MODE_LABELS[m]}</span>
+              </button>
             );
           })}
         </div>
       </div>
-    );
-  };
 
-  return (
-    <div className="bg-white/[0.03] rounded-xl border border-white/10 p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <BarChart2 className="h-4 w-4 text-slate-400" />
-        <h4 className="text-slate-300 font-medium text-sm">Schéma du plan de comptage</h4>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <Column role="ARRIVEE" list={byRole.ARRIVEE} />
-        <ArrowRight className="h-5 w-5 text-slate-600 shrink-0 mt-4" />
-        <Column role="GENERAL" list={byRole.GENERAL} />
-        <ArrowRight className="h-5 w-5 text-slate-600 shrink-0 mt-4" />
-        <Column role="DEPART"  list={byRole.DEPART} />
-      </div>
-      <p className="text-slate-700 text-xs mt-2 text-center font-mono">
-        Σ Arrivées = Général = Σ Départs
-      </p>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-// BILAN DE COHÉRENCE
-// ═══════════════════════════════════════════════════════════
-
-function CoherencePanel({
-  sources, sourceData,
-}: {
-  sources: Source[];
-  sourceData: Record<string, TimeSeriesRow[]>;
-}) {
-  const actives  = sources.filter(s => s.actif);
-  const arrivees = actives.filter(s => resolveRole(s) === 'ARRIVEE');
-  const generaux = actives.filter(s => resolveRole(s) === 'GENERAL');
-  const departs  = actives.filter(s => resolveRole(s) === 'DEPART');
-
-  const kwhOf = (id: string) => sumKwh(sourceData[id]);
-
-  const hasA = arrivees.some(s => kwhOf(s.id) !== null);
-  const hasG = generaux.some(s => kwhOf(s.id) !== null);
-  const hasD = departs.some(s => kwhOf(s.id) !== null);
-
-  const sumA = arrivees.reduce((acc, s) => { const v = kwhOf(s.id); return v !== null ? acc + v : acc; }, 0);
-  const sumG = generaux.reduce((acc, s) => { const v = kwhOf(s.id); return v !== null ? acc + v : acc; }, 0);
-  const sumD = departs.reduce((acc, s)  => { const v = kwhOf(s.id); return v !== null ? acc + v : acc; }, 0);
-
-  if (!hasA && !hasG && !hasD) {
-    return (
-      <div className="flex items-center gap-3 bg-white/[0.03] rounded-xl border border-white/10 px-4 py-3">
-        <Info className="h-4 w-4 text-slate-600 shrink-0" />
-        <p className="text-slate-600 text-xs">
-          Chargez des données via l'onglet <strong className="text-slate-400">Upload</strong> pour afficher le bilan de cohérence
-        </p>
-      </div>
-    );
-  }
-
-  const ecartAG = (hasA && hasG && sumG > 0) ? Math.abs(sumA - sumG) / sumG * 100 : null;
-  const ref     = hasG ? sumG : sumA;
-  const ecartGD = (hasD && ref > 0) ? Math.abs(ref - sumD) / ref * 100 : null;
-
-  const statusColor = (pct: number | null) =>
-    pct === null ? '#4b5563' : pct < 2 ? '#22c55e' : pct < 5 ? '#f59e0b' : '#ef4444';
-
-  const EcartBadge = ({ pct, label }: { pct: number | null; label: string }) => {
-    if (pct === null) return <span className="text-slate-600 text-xs">{label} : —</span>;
-    const color = statusColor(pct);
-    return (
-      <div className="flex items-center gap-1">
-        {pct < 2
-          ? <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
-          : <AlertTriangle className="h-3.5 w-3.5" style={{ color }} />
-        }
-        <span className="text-xs font-medium" style={{ color }}>
-          {label} : {pct.toFixed(1)}%{pct < 2 ? ' ✓' : ''}
-        </span>
-      </div>
-    );
-  };
-
-  const Metric = ({ label, value, hasData, color }: {
-    label: string; value: number; hasData: boolean; color: string;
-  }) => (
-    <div className="flex-1 text-center">
-      <div className="text-slate-500 text-xs mb-1">{label}</div>
-      {hasData
-        ? <div className="text-xl font-bold tabular-nums" style={{ color }}>
-            {value.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}
-            <span className="text-xs font-normal text-slate-500 ml-1">kWh</span>
+      {/* Réseau + Actif + Actions */}
+      <div className="flex items-center justify-between flex-wrap gap-3 pt-1">
+        <div className="flex items-center gap-4">
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Réseau</label>
+            <CellSelect value={draft.modeGrid} options={MODES_GRID} onChange={v => f('modeGrid', v)} />
           </div>
-        : <div className="text-slate-600 text-base">—</div>
-      }
-    </div>
-  );
-
-  return (
-    <div className="bg-white/[0.03] rounded-xl border border-white/10 p-4 space-y-3">
-      <h4 className="text-slate-300 font-medium text-sm">Bilan de cohérence</h4>
-      <div className="flex gap-3 items-center">
-        <Metric label="Σ Arrivées" value={sumA} hasData={hasA} color={SOURCE_ROLE_COLORS.ARRIVEE} />
-        <div className="w-px h-10 bg-white/10" />
-        <Metric label="Général"    value={sumG} hasData={hasG} color={SOURCE_ROLE_COLORS.GENERAL} />
-        <div className="w-px h-10 bg-white/10" />
-        <Metric label="Σ Départs"  value={sumD} hasData={hasD} color={SOURCE_ROLE_COLORS.DEPART}  />
-      </div>
-      <div className="flex gap-5 pt-1 border-t border-white/10">
-        <EcartBadge pct={ecartAG} label="Écart Arr./Gén." />
-        <EcartBadge pct={ecartGD} label="Écart Gén./Dép." />
+          <div className="flex items-center gap-2 mt-4">
+            <Switch checked={draft.actif ?? true} onCheckedChange={v => f('actif', v)}
+              className="data-[state=checked]:bg-green-500" />
+            <span className="text-xs text-slate-400">Active</span>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost"
+            className="text-slate-400 hover:text-white hover:bg-white/10" onClick={onCancel}>
+            <X className="h-3.5 w-3.5 mr-1" /> Annuler
+          </Button>
+          <Button size="sm" className="bg-blue-600 hover:bg-blue-500 text-white"
+            onClick={onSave} disabled={!draft.nom?.trim()}>
+            <Check className="h-3.5 w-3.5 mr-1" /> Enregistrer
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
+// ============================================================
+// Composant pour afficher l'image au survol d'un mode
+// ============================================================
+function ModeImageTooltip({ mode, children }: { mode: ModeSource; children: React.ReactNode }) {
+  const [showImage, setShowImage] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imageUrl = MODE_IMAGES[mode];
 
-// ═══════════════════════════════════════════════════════════
-// BILAN PAR RÉPARTITION
-// ═══════════════════════════════════════════════════════════
+  const handleMouseEnter = () => {
+    timerRef.current = setTimeout(() => {
+      setShowImage(true);
+    }, 400);
+  };
 
-function BilanRepartition({
-  sources, sourceData,
-}: {
-  sources: Source[];
-  sourceData: Record<string, TimeSeriesRow[]>;
-}) {
-  const departs  = sources.filter(s => s.actif && resolveRole(s) === 'DEPART');
-  const generaux = sources.filter(s => s.actif && resolveRole(s) === 'GENERAL');
-  const arrivees = sources.filter(s => s.actif && resolveRole(s) === 'ARRIVEE');
+  const handleMouseLeave = () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setShowImage(false);
+  };
 
-  const departData = departs
-    .map(s => ({ source: s, kwh: sumKwh(sourceData[s.id]) }))
-    .filter((d): d is { source: Source; kwh: number } => d.kwh !== null);
-
-  if (departData.length === 0) return null;
-
-  const sumG = generaux.reduce((acc, s) => { const v = sumKwh(sourceData[s.id]); return v ? acc + v : acc; }, 0);
-  const sumA = arrivees.reduce((acc, s) => { const v = sumKwh(sourceData[s.id]); return v ? acc + v : acc; }, 0);
-  const hasG = generaux.some(s => sumKwh(sourceData[s.id]) !== null);
-  const ref  = hasG ? sumG : sumA || departData.reduce((acc, d) => acc + d.kwh, 0);
-  const nonMesure = Math.max(0, ref - departData.reduce((acc, d) => acc + d.kwh, 0));
-
-  const pieData = [
-    ...departData.map(d => ({ name: d.source.nom, value: d.kwh, color: d.source.couleur })),
-    ...(nonMesure > 0.5 ? [{ name: 'Non mesuré', value: nonMesure, color: '#374151' }] : []),
-  ];
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   return (
-    <div className="bg-white/[0.03] rounded-xl border border-white/10 p-4">
-      <div className="flex items-center gap-2 mb-4">
-        <h4 className="text-slate-300 font-medium text-sm">Bilan par répartition</h4>
-        <span className="text-slate-600 text-xs">
-          — réf. {ref.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} kWh
-        </span>
-      </div>
-
-      <div className="flex gap-4">
-        {/* Donut */}
-        <div className="w-44 h-44 shrink-0">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={pieData} cx="50%" cy="50%"
-                innerRadius={38} outerRadius={66}
-                dataKey="value" paddingAngle={2}
-              >
-                {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-              </Pie>
-              <Tooltip
-                formatter={(v: number) => [
-                  `${v.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} kWh`, '',
-                ]}
-                contentStyle={{
-                  backgroundColor: '#1a1d2e',
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  borderRadius: 8, fontSize: 12,
-                }}
-                labelStyle={{ color: '#94a3b8' }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+    <div
+      ref={containerRef}
+      className="relative"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      {children}
+      {showImage && imageUrl && (
+        <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 w-[75vw] h-[75vh] flex flex-col">
+            <img
+              src={imageUrl}
+              alt={`Mode ${mode}`}
+              className="flex-1 w-full object-contain min-h-0"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            />
+            <div className="text-lg text-center mt-4 text-slate-800 font-bold shrink-0">
+              {MODE_LABELS[mode]}
+            </div>
+          </div>
         </div>
+      )}
+    </div>
+  );
+}
 
-        {/* Table détail */}
-        <div className="flex-1 min-w-0">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-white/10">
-                <th className="text-left text-slate-500 font-normal pb-2 text-xs">Source</th>
-                <th className="text-right text-slate-500 font-normal pb-2 text-xs">kWh</th>
-                <th className="text-right text-slate-500 font-normal pb-2 text-xs pr-1">Répartition</th>
-              </tr>
-            </thead>
-            <tbody>
-              {departData.map(({ source, kwh }) => {
-                const pct = ref > 0 ? kwh / ref * 100 : 0;
+
+// ============================================================
+// Légende
+// ============================================================
+function LegendPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
+      <button className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors text-left"
+        onClick={onToggle}>
+        <div className="flex items-center gap-2">
+          <Info className="h-4 w-4 text-slate-400" />
+          <span className="text-slate-300 font-medium text-sm">Légende — modèle LEGENDE</span>
+        </div>
+        {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+      {open && (
+        <div className="border-t border-white/10 p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 text-xs">
+          <div>
+            <p className="text-slate-300 font-semibold mb-2">Modes</p>
+            <div className="space-y-2">
+              {MODES.map(m => (
+                <ModeImageTooltip key={m} mode={m}>
+                  <div className="flex items-center gap-2 cursor-help hover:bg-white/5 p-1 rounded transition-colors">
+                    <span className="w-6 h-6 rounded flex items-center justify-center text-xs font-bold"
+                      style={{ backgroundColor: MODE_COLORS[m] + '25', color: MODE_COLORS[m] }}>{m}</span>
+                    <span className="text-slate-400">{MODE_LABELS[m]}</span>
+                  </div>
+                </ModeImageTooltip>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-slate-300 font-semibold mb-2">Types de sources</p>
+            <div className="space-y-1">
+              {SOURCE_TYPES.map(t => {
+                const Icon = TYPE_ICONS[t];
                 return (
-                  <tr key={source.id} className="border-b border-white/5">
-                    <td className="py-1.5">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: source.couleur }} />
-                        <span className="text-slate-300 text-xs">{source.nom}</span>
-                        {source.usageType && (
-                          <Badge
-                            className="text-xs border-0 px-1 py-0"
-                            style={{
-                              backgroundColor: USAGE_TYPE_COLORS[source.usageType] + '25',
-                              color: USAGE_TYPE_COLORS[source.usageType],
-                            }}
-                          >
-                            {source.usageType}
-                          </Badge>
-                        )}
-                        {source.entite && (
-                          <span className="text-slate-600 text-xs">{source.entite}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="text-right text-slate-300 text-xs py-1.5 tabular-nums">
-                      {kwh.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}
-                    </td>
-                    <td className="py-1.5 pl-3">
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full"
-                            style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: source.couleur }}
-                          />
-                        </div>
-                        <span className="text-slate-300 text-xs tabular-nums w-10 text-right">
-                          {pct.toFixed(1)}%
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
+                  <div key={t} className="flex items-center gap-2 text-slate-400">
+                    <Icon className="h-3 w-3" style={{ color: SOURCE_TYPE_COLORS[t] }} />
+                    <span style={{ color: SOURCE_TYPE_COLORS[t] }} className="font-medium">{t}</span>
+                    <span className="text-slate-600 text-[10px]">— {SOURCE_TYPE_LABELS[t]}</span>
+                  </div>
                 );
               })}
-              {nonMesure > 0.5 && (
-                <tr>
-                  <td className="py-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2.5 h-2.5 rounded-full shrink-0 bg-slate-700" />
-                      <span className="text-slate-600 text-xs italic">Non mesuré</span>
-                    </div>
-                  </td>
-                  <td className="text-right text-slate-600 text-xs py-1.5 tabular-nums">
-                    {nonMesure.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}
-                  </td>
-                  <td className="py-1.5 pl-3 text-right">
-                    <span className="text-slate-600 text-xs tabular-nums">
-                      {(nonMesure / ref * 100).toFixed(1)}%
-                    </span>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            </div>
+          </div>
+          <div>
+            <p className="text-slate-300 font-semibold mb-2">Profils Mi (TCD)</p>
+            <div className="space-y-1">
+              {PROFILS_MI.map(p => (
+                <div key={p} className="flex items-center gap-2 text-slate-400">
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: PROFIL_MI_COLORS[p] }} />
+                  <span style={{ color: PROFIL_MI_COLORS[p] }} className="font-medium">{p.split('_')[0]}</span>
+                  <span className="text-slate-600 text-[10px]">— {PROFIL_MI_LABELS[p]}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-slate-300 font-semibold mb-2">Transfert / Charges</p>
+            <div className="space-y-1 text-slate-400">
+              <p><span className="text-white">Selecteur</span> — ATS</p>
+              <p><span className="text-white">Inverseur</span> — Onduleur</p>
+              <p><span className="text-white">Direct</span> — Direct</p>
+            </div>
+            <div className="space-y-1 text-slate-400 mt-2">
+              {['CH1_TGBT', 'CH2_TGBT', 'CH3_TD1', 'CH4_TD2'].map(c => (
+                <p key={c}><span className="text-white">{c}</span> — Circuit {c.split('_')[0].replace('CH', '')}</p>
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// MAIN COMPONENT
-// ═══════════════════════════════════════════════════════════
-
+// ============================================================
+// Onglet principal
+// ============================================================
 export function SourcesTab() {
   const { state, addSource, updateSource, removeSource } = useIOT();
-  const [showForm, setShowForm]       = useState(false);
-  const [editingSource, setEditingSource] = useState<Source | null>(null);
+  const [editingId, setEditingId]     = useState<string | null>(null);
+  const [editDraft, setEditDraft]     = useState<Partial<Source>>({});
+  const [addDraft, setAddDraft]       = useState<Partial<Source>>({ ...DEFAULT_SOURCE });
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [showLegend, setShowLegend]   = useState(false);
+  const [cloneForm, setCloneForm]     = useState<{ baseId: string; nom: string } | null>(null);
 
-  const sorted = useMemo(
-    () => [...state.sources].sort((a, b) => a.ordre - b.ordre),
-    [state.sources],
+  const sortedSources = [...state.sources].sort((a, b) => a.ordre - b.ordre);
+  // Les "sources liées" (PV1/PV2..., SENELEC1/...) doivent rester affichées uniquement en chips inline.
+  // On cache donc les sources qui sont référencées comme linkedSourceIds par une autre source.
+  const parentedIds = new Set<string>(
+    state.sources.flatMap(s => (s.linkedSourceIds ?? []))
   );
+  const visibleSources = sortedSources.filter(s => !parentedIds.has(s.id));
 
-  const byRole = useMemo(() => ({
-    ARRIVEE: sorted.filter(s => resolveRole(s) === 'ARRIVEE'),
-    GENERAL: sorted.filter(s => resolveRole(s) === 'GENERAL'),
-    DEPART:  sorted.filter(s => resolveRole(s) === 'DEPART'),
-  }), [sorted]);
+  const actives = visibleSources.filter(s => s.actif).length;
+  const avecData = visibleSources.filter(s => state.sourceData[s.id]?.length > 0).length;
 
-  const handleToggle = (id: string) => {
+  const handleSetActif = (id: string, actif: boolean) => {
     const src = state.sources.find(s => s.id === id);
-    if (src) updateSource(id, { actif: !src.actif });
+    if (src) updateSource(id, { actif });
   };
 
   const handleDelete = (id: string) => {
     if (window.confirm('Supprimer cette source ?')) removeSource(id);
   };
 
-  const handleSave = (form: FormState) => {
-    const patch: Partial<Source> = {
-      nom: form.nom,
-      role: form.role,
-      type: form.type,
-      description: form.description,
-      couleur: form.couleur,
-      capteur: form.capteur,
-      usageType: form.usageType || undefined,
-      entite: form.entite || undefined,
-      puissanceInstallee: form.puissanceInstallee ? parseFloat(form.puissanceInstallee) : undefined,
-    };
-    if (editingSource) {
-      updateSource(editingSource.id, patch);
-      setEditingSource(null);
-    } else {
-      addSource({ id: `src-${Date.now()}`, actif: true, ordre: state.sources.length, ...patch } as Source);
-      setShowForm(false);
-    }
-  };
-
   const handleEdit = (src: Source) => {
-    setEditingSource(src);
-    setShowForm(false);
+    setEditingId(src.id);
+    setEditDraft({ ...src });
+    setShowAddForm(false);
+    setCloneForm(null); // Fermer le formulaire de clone si ouvert
   };
 
-  const actives  = sorted.filter(s => s.actif).length;
-  const avecData = sorted.filter(s => (state.sourceData[s.id]?.length ?? 0) > 0).length;
+  const handleSaveEdit = () => {
+    if (!editingId || !editDraft.nom?.trim()) return;
+    updateSource(editingId, editDraft);
+    setEditingId(null);
+    setEditDraft({});
+  };
 
-  const RoleSection = ({ role, list }: { role: SourceRole; list: Source[] }) => {
-    if (list.length === 0) return null;
-    const color = SOURCE_ROLE_COLORS[role];
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-3">
-          <div className="h-px flex-1 bg-white/10" />
-          <div
-            className="px-3 py-0.5 rounded-full text-xs font-semibold border tracking-wide"
-            style={{ borderColor: color + '50', backgroundColor: color + '15', color }}
-          >
-            {SOURCE_ROLE_LABELS[role].toUpperCase()}S ({list.length})
-          </div>
-          <div className="h-px flex-1 bg-white/10" />
-        </div>
+  const handleSaveNew = () => {
+    if (!addDraft.nom?.trim()) return;
+    addSource({
+      id: `src-${Date.now()}`,
+      ordre: state.sources.length,
+      nom:             addDraft.nom ?? '',
+      type:            addDraft.type ?? 'SENELEC',
+      description:     addDraft.description ?? '',
+      couleur:         addDraft.couleur ?? SOURCE_TYPE_COLORS.SENELEC,
+      capteur:         addDraft.capteur ?? 'Shelly',
+      actif:           addDraft.actif ?? true,
+      modes:           addDraft.modes ?? [],
+      linkedSourceIds: [],
+      transfert:       addDraft.transfert,
+      tableau:         addDraft.tableau,
+      chargeId:        addDraft.chargeId,
+      profilMi:        addDraft.profilMi,
+      modeGrid:        addDraft.modeGrid,
+    });
+    setShowAddForm(false);
+    setAddDraft({ ...DEFAULT_SOURCE });
+  };
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {list.map(src =>
-            editingSource?.id === src.id ? (
-              <div key={src.id} className="md:col-span-2 xl:col-span-3">
-                <SourceForm
-                  initial={formFromSource(src)}
-                  onSave={handleSave}
-                  onCancel={() => setEditingSource(null)}
-                />
-              </div>
-            ) : (
-              <SourceCard
-                key={src.id}
-                source={src}
-                kwh={sumKwh(state.sourceData[src.id])}
-                onEdit={handleEdit}
-                onToggle={handleToggle}
-                onDelete={handleDelete}
-              />
-            )
-          )}
-        </div>
-      </div>
-    );
+  // Source groupée : PV+ -> ajoute PV1/PV2..., SENELEC+ -> SENELEC1/...
+  const handleAddClone = (baseId: string) => {
+    const base = state.sources.find(s => s.id === baseId);
+    if (!base) return;
+
+    const prefix = base.nom.replace(/\d+$/, '');
+    const prefixEscaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // "Racine" : PV (sans suffixe numérique) pour que PV1+ n'ajoute pas sous PV1.
+    const root = state.sources.find(s => s.nom === prefix && s.type === base.type) ?? base;
+
+    const allFamilyClones = state.sources.filter(s => s.type === base.type && s.nom.match(new RegExp(`^${prefixEscaped}(\\d+)$`)));
+    const indices = allFamilyClones
+      .map(s => {
+        const m = s.nom.match(new RegExp(`^${prefixEscaped}(\\d+)$`));
+        return m ? parseInt(m[1], 10) : null;
+      })
+      .filter((v): v is number => typeof v === 'number' && !isNaN(v));
+
+    let nextIndex = indices.length ? Math.max(...indices) + 1 : 1;
+    let cloneNom = `${prefix}${nextIndex}`;
+    while (state.sources.some(s => s.nom === cloneNom)) {
+      nextIndex += 1;
+      cloneNom = `${prefix}${nextIndex}`;
+    }
+
+    // Ouvrir le formulaire de modification du nom
+    setCloneForm({ baseId: root.id, nom: cloneNom });
+  };
+
+  // Créer la source clonée avec le nom modifié
+  const handleCreateClone = () => {
+    if (!cloneForm) return;
+
+    const base = state.sources.find(s => s.id === cloneForm.baseId);
+    if (!base) return;
+
+    const cloneId = `src-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    addSource({
+      id: cloneId,
+      ordre: state.sources.length,
+      nom: cloneForm.nom,
+      type: base.type,
+      description: base.description ?? '',
+      couleur: base.couleur,
+      capteur: base.capteur,
+      actif: true,
+      modes: base.modes ?? [],
+      linkedSourceIds: [],
+      transfert: base.transfert,
+      tableau: base.tableau,
+      chargeId: base.chargeId,
+      profilMi: base.profilMi,
+      modeGrid: base.modeGrid,
+      siteId: base.siteId,
+    });
+
+    updateSource(base.id, {
+      linkedSourceIds: [...(base.linkedSourceIds ?? []), cloneId],
+    });
+
+    setCloneForm(null);
+  };
+
+  // Supprimer une source liée
+  const handleUnlink = (sourceId: string, targetId: string) => {
+    const src = state.sources.find(s => s.id === sourceId);
+    if (!src) return;
+    
+    // Retirer la source des liens de la source parente
+    updateSource(sourceId, { linkedSourceIds: (src.linkedSourceIds ?? []).filter(id => id !== targetId) });
+    
+    // Supprimer complètement la source liée
+    removeSource(targetId);
   };
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      {/* En-tête */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex gap-4 text-sm text-slate-400">
-          <span><span className="text-white font-bold">{sorted.length}</span> source(s)</span>
+          <span><span className="text-white font-bold">{visibleSources.length}</span> source(s)</span>
           <span><span className="text-green-400 font-bold">{actives}</span> active(s)</span>
-          {avecData > 0 && (
-            <span><span className="text-blue-400 font-bold">{avecData}</span> avec données</span>
-          )}
+          <span><span className="text-blue-400 font-bold">{avecData}</span> avec données</span>
         </div>
-        <Button
-          size="sm"
-          className="bg-blue-600 hover:bg-blue-500 text-white"
-          onClick={() => { setShowForm(true); setEditingSource(null); }}
-        >
+        <Button size="sm" className="bg-blue-600 hover:bg-blue-500 text-white"
+          onClick={() => { setShowAddForm(true); setEditingId(null); }}
+          disabled={showAddForm}>
           <Plus className="h-4 w-4 mr-1" /> Nouvelle source
         </Button>
       </div>
 
-      {/* Schéma plan de comptage */}
-      <PlanDeComptageSchema sources={sorted} />
-
-      {/* Cohérence */}
-      <CoherencePanel sources={sorted} sourceData={state.sourceData} />
-
       {/* Formulaire ajout */}
-      {showForm && (
+      {showAddForm && (
         <SourceForm
-          initial={DEFAULT_FORM}
-          onSave={handleSave}
-          onCancel={() => setShowForm(false)}
+          draft={addDraft}
+          onChange={setAddDraft}
+          onSave={handleSaveNew}
+          onCancel={() => { setShowAddForm(false); setAddDraft({ ...DEFAULT_SOURCE }); }}
         />
       )}
 
-      {/* Sources vides */}
-      {sorted.length === 0 && !showForm ? (
-        <div className="flex flex-col items-center justify-center py-24 text-slate-500">
-          <Zap className="h-16 w-16 opacity-20 mb-4" />
-          <p className="text-lg font-medium">Aucune source définie</p>
-          <p className="text-sm mt-1">Créez des sources pour établir votre plan de comptage</p>
-          <Button className="mt-4 bg-blue-600 hover:bg-blue-500 text-white" onClick={() => setShowForm(true)}>
-            <Plus className="h-4 w-4 mr-2" /> Créer une source
-          </Button>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {(['ARRIVEE', 'GENERAL', 'DEPART'] as SourceRole[]).map(role => (
-            <RoleSection key={role} role={role} list={byRole[role]} />
-          ))}
+      {/* Formulaire de modification du nom pour les sources clonées */}
+      {cloneForm && (
+        <div className="bg-green-600/10 border border-green-500/30 rounded-xl p-4 space-y-3">
+          <p className="text-green-300 text-sm font-semibold">
+            Personnaliser le nom de la nouvelle source
+          </p>
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <label className="text-xs text-slate-400 mb-1 block">Nom de la source</label>
+              <Input 
+                value={cloneForm.nom} 
+                onChange={e => setCloneForm({ ...cloneForm, nom: e.target.value })}
+                placeholder="ex: SENELEC1, PV2, etc."
+                className="h-8 text-xs bg-white/5 border-white/20 text-white" 
+              />
+            </div>
+            <div className="flex gap-2 items-end">
+              <Button size="sm" variant="ghost"
+                className="text-slate-400 hover:text-white hover:bg-white/10" 
+                onClick={() => setCloneForm(null)}>
+                <X className="h-3.5 w-3.5 mr-1" /> Annuler
+              </Button>
+              <Button size="sm" className="bg-green-600 hover:bg-green-500 text-white"
+                onClick={handleCreateClone} disabled={!cloneForm.nom?.trim()}>
+                <Check className="h-3.5 w-3.5 mr-1" /> Créer
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Bilan répartition */}
-      <BilanRepartition sources={sorted} sourceData={state.sourceData} />
+      {/* Liste des sources */}
+      <div className="space-y-2">
+        {visibleSources.length === 0 && !showAddForm ? (
+          <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+            <Zap className="h-14 w-14 opacity-20 mb-4" />
+            <p className="text-base font-medium">Aucune source configurée</p>
+            <p className="text-sm mt-1 text-slate-600">Créez une source puis liez-en d'autres avec le bouton +</p>
+            <Button className="mt-4 bg-blue-600 hover:bg-blue-500 text-white" size="sm"
+              onClick={() => setShowAddForm(true)}>
+              <Plus className="h-4 w-4 mr-1" /> Créer une source
+            </Button>
+          </div>
+        ) : (
+          visibleSources.map(src =>
+            editingId === src.id ? (
+              <SourceForm
+                key={src.id}
+                draft={editDraft}
+                onChange={setEditDraft}
+                onSave={handleSaveEdit}
+                onCancel={() => { setEditingId(null); setEditDraft({}); }}
+              />
+            ) : (
+              <SourceRow
+                key={src.id}
+                source={src}
+                allSources={state.sources}
+                onEdit={handleEdit}
+                onSetActif={handleSetActif}
+                onDelete={() => handleDelete(src.id)}
+                onUnlink={targetId => handleUnlink(src.id, targetId)}
+                onAddClone={handleAddClone}
+              />
+            )
+          )
+        )}
+        
+        {/* Formulaire d'édition pour les sources liées */}
+        {editingId && !visibleSources.some(s => s.id === editingId) && (
+          <div className="bg-orange-600/10 border border-orange-500/30 rounded-xl p-4 space-y-3">
+            <p className="text-orange-300 text-sm font-semibold">
+              Modifier une source liée
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Nom</label>
+                <Input 
+                  value={editDraft.nom ?? ''} 
+                  onChange={e => setEditDraft({ ...editDraft, nom: e.target.value })}
+                  className="h-8 text-xs bg-white/5 border-white/20 text-white" 
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Description</label>
+                <Input 
+                  value={editDraft.description ?? ''} 
+                  onChange={e => setEditDraft({ ...editDraft, description: e.target.value })}
+                  className="h-8 text-xs bg-white/5 border-white/20 text-white" 
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="ghost"
+                className="text-slate-400 hover:text-white hover:bg-white/10" 
+                onClick={() => { setEditingId(null); setEditDraft({}); }}>
+                <X className="h-3.5 w-3.5 mr-1" /> Annuler
+              </Button>
+              <Button size="sm" className="bg-orange-600 hover:bg-orange-500 text-white"
+                onClick={handleSaveEdit} disabled={!editDraft.nom?.trim()}>
+                <Check className="h-3.5 w-3.5 mr-1" /> Enregistrer
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Légende */}
+      <LegendPanel open={showLegend} onToggle={() => setShowLegend(v => !v)} />
     </div>
   );
 }

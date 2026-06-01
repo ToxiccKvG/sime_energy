@@ -1,58 +1,51 @@
 // ============================================================
 // IOT MODULE — Shared Types
-// Spec : IOT_MODULE_SPECS.md v1.0 — 7 onglets
+// Note : la couche facturation/tarification SENELEC a été retirée
+// (sera réintroduite par le merge avec le code du dev billing).
+// Conservé ici : sources, mesures énergie, capteurs, calendrier, jours d'activité.
 // ============================================================
 
 // ============================================================
-// SOURCES — Onglet 1
+// SOURCES — Onglet Sources
 // ============================================================
 
-export type SourceType = 'SENELEC' | 'PV' | 'SECOURS' | 'CHARGE' | 'SELECTEUR';
+export type SourceType = 'SENELEC' | 'PV' | 'BESS' | 'GROUPE' | 'SECOURS' | 'CHARGE' | 'SELECTEUR';
 export type SensorType = 'Shelly' | 'SMA' | 'Voltcraft' | 'Fluke' | 'DENT' | 'Sentinel' | 'Manuel' | 'Autre';
-export type SourceRole = 'ARRIVEE' | 'GENERAL' | 'DEPART';
-export type UsageType = 'Éclairage' | 'CVC' | 'Force motrice' | 'Bureautique' | 'IT' | 'Froid' | 'Cuisson' | 'Autres';
+
+// ---- Configuration avancée (matrice LEGENDE) ----
+export type ModeSource = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+export type TransfertEnergie = 'Selecteur' | 'Inverseur' | 'Direct';
+export type TypeTableau = 'TGBT' | 'TD1' | 'TD2' | 'TD3' | 'Autre';
+export type ChargeId = 'CH1_TGBT' | 'CH2_TGBT' | 'CH3_TD1' | 'CH4_TD2' | 'Autre' | '';
+export type ProfilMi = 'M1_SENELEC' | 'M2_SELECTEUR' | 'M3_CHARGE' | 'M4_GROUPE' | 'M5_PV';
+export type ModeGrid = 'ON-GRID' | 'OFF-GRID';
+
+export const PROFIL_MI_LABELS: Record<ProfilMi, string> = {
+  M1_SENELEC:   'M1 — SENELEC',
+  M2_SELECTEUR: 'M2 — Sélecteur PV/SENELEC',
+  M3_CHARGE:    'M3 — Charge totale',
+  M4_GROUPE:    'M4 — Groupe électrogène',
+  M5_PV:        'M5 — Production PV',
+};
 
 export const SOURCE_TYPE_COLORS: Record<SourceType, string> = {
-  SENELEC:   '#3b82f6', // Bleu
-  PV:        '#eab308', // Jaune
-  SECOURS:   '#f97316', // Orange
-  CHARGE:    '#ef4444', // Rouge
-  SELECTEUR: '#a855f7', // Violet
+  SENELEC:   '#3b82f6',
+  PV:        '#eab308',
+  BESS:      '#22c55e',
+  GROUPE:    '#f97316',
+  SECOURS:   '#f97316',
+  CHARGE:    '#ef4444',
+  SELECTEUR: '#a855f7',
 };
 
 export const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
   SENELEC:   'Réseau SENELEC',
   PV:        'Production solaire (PV)',
-  SECOURS:   'Groupe électrogène',
+  BESS:      'Batterie (BESS)',
+  GROUPE:    'Groupe électrogène',
+  SECOURS:   'Groupe électrogène (secours)',
   CHARGE:    'Circuit de consommation',
   SELECTEUR: 'ATS / Inverseur réseau',
-};
-
-export const SOURCE_ROLE_COLORS: Record<SourceRole, string> = {
-  ARRIVEE: '#06b6d4',
-  GENERAL: '#22c55e',
-  DEPART:  '#f97316',
-};
-
-export const SOURCE_ROLE_LABELS: Record<SourceRole, string> = {
-  ARRIVEE: 'Arrivée',
-  GENERAL: 'Général',
-  DEPART:  'Départ',
-};
-
-export const USAGE_TYPES: UsageType[] = [
-  'Éclairage', 'CVC', 'Force motrice', 'Bureautique', 'IT', 'Froid', 'Cuisson', 'Autres',
-];
-
-export const USAGE_TYPE_COLORS: Record<UsageType, string> = {
-  'Éclairage':     '#eab308',
-  'CVC':           '#3b82f6',
-  'Force motrice': '#f97316',
-  'Bureautique':   '#8b5cf6',
-  'IT':            '#06b6d4',
-  'Froid':         '#60a5fa',
-  'Cuisson':       '#ef4444',
-  'Autres':        '#6b7280',
 };
 
 export interface Source {
@@ -60,17 +53,86 @@ export interface Source {
   nom: string;
   type: SourceType;
   description: string;
-  couleur: string;        // hex — hérite de SOURCE_TYPE_COLORS, modifiable
+  couleur: string;
   capteur: SensorType;
   actif: boolean;
-  ordre: number;          // pour le glisser-déposer
-  siteId?: string;        // association audit
-  // Plan de comptage
-  role?: SourceRole;
-  usageType?: UsageType;
-  entite?: string;
-  puissanceInstallee?: number;
+  ordre: number;
+  siteId?: string;
+  modes?: ModeSource[];
+  linkedSourceIds?: string[];
+  transfert?: TransfertEnergie;
+  tableau?: TypeTableau;
+  chargeId?: ChargeId;
+  profilMi?: ProfilMi;
+  modeGrid?: ModeGrid;
 }
+
+// ---- Colonnes disponibles pour export Supabase / TCD ----
+export interface ColonneProfilShelly {
+  key: string;
+  label: string;
+  groupe: 'entree' | 'calcule' | 'classifieur';
+  unite?: string;
+}
+
+export const COLONNES_PROFIL_SHELLY: ColonneProfilShelly[] = [
+  // --- Données d'entrée ---
+  { key: 'Temps',             label: 'Temps',                     groupe: 'entree' },
+  { key: 'Wh_PhA',            label: 'Wh Phase A',                groupe: 'entree', unite: 'Wh' },
+  { key: 'Wh_PhB',            label: 'Wh Phase B',                groupe: 'entree', unite: 'Wh' },
+  { key: 'Wh_PhC',            label: 'Wh Phase C',                groupe: 'entree', unite: 'Wh' },
+  { key: 'Wh_Total',          label: 'Wh Total',                  groupe: 'entree', unite: 'Wh' },
+  { key: 'Wh_RetourA',        label: 'Wh Retour Ph. A',           groupe: 'entree', unite: 'Wh' },
+  { key: 'Wh_RetourB',        label: 'Wh Retour Ph. B',           groupe: 'entree', unite: 'Wh' },
+  { key: 'Wh_RetourC',        label: 'Wh Retour Ph. C',           groupe: 'entree', unite: 'Wh' },
+  { key: 'Wh_RetourTotal',    label: 'Wh Retour Total',           groupe: 'entree', unite: 'Wh' },
+  // --- Données calculées ---
+  { key: 'kWh_PhA',           label: 'Cons.(kWh) Phase A',        groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWh_PhB',           label: 'Cons.(kWh) Phase B',        groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWh_PhC',           label: 'Cons.(kWh) Phase C',        groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWh_Total',         label: 'Cons.(kWh) Total',          groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWh_RetourA',       label: 'Cons.(kWh) Retour Ph.A',    groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWh_RetourB',       label: 'Cons.(kWh) Retour Ph.B',    groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWh_RetourC',       label: 'Cons.(kWh) Retour Ph.C',    groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWh_RetourTotal',   label: 'Cons.(kWh) Retour Total',   groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWhCum_PhA',        label: 'Cons.Cum.(kWh) Phase A',    groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWhCum_PhB',        label: 'Cons.Cum.(kWh) Phase B',    groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWhCum_PhC',        label: 'Cons.Cum.(kWh) Phase C',    groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWhCum_Total',      label: 'Cons.Cum.(kWh) Total',      groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWhCum_RetourA',    label: 'Cons.Cum.(kWh) Ret. Ph.A',  groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWhCum_RetourB',    label: 'Cons.Cum.(kWh) Ret. Ph.B',  groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWhCum_RetourC',    label: 'Cons.Cum.(kWh) Ret. Ph.C',  groupe: 'calcule', unite: 'kWh' },
+  { key: 'kWhCum_RetourTotal',label: 'Cons.Cum.(kWh) Ret. Total', groupe: 'calcule', unite: 'kWh' },
+  { key: 'kW_PhA',            label: 'Puiss.(kW) Phase A',        groupe: 'calcule', unite: 'kW' },
+  { key: 'kW_PhB',            label: 'Puiss.(kW) Phase B',        groupe: 'calcule', unite: 'kW' },
+  { key: 'kW_PhC',            label: 'Puiss.(kW) Phase C',        groupe: 'calcule', unite: 'kW' },
+  { key: 'kW_Total',          label: 'Puiss.(kW) Total',          groupe: 'calcule', unite: 'kW' },
+  { key: 'kW_RetourA',        label: 'Puiss.(kW) Retour Ph.A',    groupe: 'calcule', unite: 'kW' },
+  { key: 'kW_RetourB',        label: 'Puiss.(kW) Retour Ph.B',    groupe: 'calcule', unite: 'kW' },
+  { key: 'kW_RetourC',        label: 'Puiss.(kW) Retour Ph.C',    groupe: 'calcule', unite: 'kW' },
+  { key: 'kW_RetourTotal',    label: 'Puiss.(kW) Retour Total',   groupe: 'calcule', unite: 'kW' },
+  // --- Classifieurs (jours d'activité + dates uniquement) ---
+  { key: 'Date',              label: 'Date',                      groupe: 'classifieur' },
+  { key: 'Date_longue',       label: 'Date longue',               groupe: 'classifieur' },
+  { key: 'Jour',              label: 'Jour',                      groupe: 'classifieur' },
+  { key: 'Mois',              label: 'Mois',                      groupe: 'classifieur' },
+  { key: 'Annee',             label: 'Année',                     groupe: 'classifieur' },
+  { key: 'Heure_complete',    label: 'Heure complète',            groupe: 'classifieur' },
+  { key: 'Heure',             label: 'Heure',                     groupe: 'classifieur' },
+  { key: 'Jour_activites',    label: "Jour d'activités",          groupe: 'classifieur' },
+  { key: 'Heures_ensol',      label: "Heures d'ensoleillement",   groupe: 'classifieur' },
+  { key: 'Heures_travail',    label: 'Heures travail',            groupe: 'classifieur' },
+  { key: 'Periode_clim',      label: 'Période climatique',        groupe: 'classifieur' },
+  { key: 'Saison',            label: 'Saison',                    groupe: 'classifieur' },
+  { key: 'Periode',           label: 'Période',                   groupe: 'classifieur' },
+  { key: 'Nom',               label: 'Nom',                       groupe: 'classifieur' },
+  { key: 'Profil',            label: 'Profil',                    groupe: 'classifieur' },
+  { key: 'Jour_sem_mesure',   label: 'Jour semaine mesure',       groupe: 'classifieur' },
+  { key: 'Semaine_mesures',   label: 'Semaine mesures',           groupe: 'classifieur' },
+  { key: 'Appareil',          label: 'Appareil',                  groupe: 'classifieur' },
+  { key: 'Emplacement',       label: 'Emplacement',               groupe: 'classifieur' },
+  { key: 'Piece',             label: 'Pièce / Zone',              groupe: 'classifieur' },
+];
 
 // ============================================================
 // SÉRIES TEMPORELLES — données multi-sources normalisées
@@ -79,22 +141,19 @@ export interface Source {
 export interface TimeSeriesRow {
   timestamp: Date;
   sourceId: string;
-  puissanceKw: number;    // kW instantané
-  energieKwh: number;     // kWh de la période
-  energieCumKwh: number;  // kWh cumulés depuis début fichier
-  // Optionnel selon capteur
+  puissanceKw: number;
+  energieKwh: number;
+  energieCumKwh: number;
   facteurPuissance?: number;
   tensionV?: number;
   courantA?: number;
-  // Classifieurs (calculés)
   jourActivites?: ShellyRow['jourActivites'];
-  trancheTarification?: ShellyRow['trancheTarification'];
   saison?: ShellyRow['saison'];
   periodeclimatique?: ShellyRow['periodeclimatique'];
 }
 
 // ============================================================
-// CALENDRIER — Onglet 5
+// CALENDRIER — jours d'activité, horaires, jours fériés
 // ============================================================
 
 export interface PlageHoraire {
@@ -110,73 +169,28 @@ export interface JourConfig {
 export interface CalendrierSite {
   id: string;
   nom: string;
-  // Lun=1 ... Dim=0
-  semaine: Record<number, JourConfig>;
+  semaine: Record<number, JourConfig>; // 0=Dim, 1=Lun, ..., 6=Sam
   exceptions: { dateDebut: Date; dateFin: Date; description: string; plages: PlageHoraire[] }[];
 }
 
-// ============================================================
-// BILAN M1/M2/M3 — Onglet 6
-// ============================================================
-
-export interface ReleveCompteur {
-  id: string;
+export interface JourFerie {
   date: Date;
-  indexKwh: number;
-  sourceId: string;  // source SENELEC
-  note?: string;
-}
-
-export interface BilanPeriode {
-  dateDebut: Date;
-  dateFin: Date;
-  m2Kwh: number;          // SENELEC acheté
-  m1Kwh: number;          // PV autoconsommé = M3 - M2
-  m3Kwh: number;          // total site consommé
-  pvTotalKwh: number;     // production PV totale
-  injecteKwh: number;     // injection réseau = PV - M1
-  tauxAutoconso: number;  // M1/M3 %
-  tauxCouverturePV: number; // M1/PVtotal %
-  coutEvite: number;      // M1 × tarif FCFA
-  tarifSenelec: number;   // FCFA/kWh
-}
-
-// ============================================================
-// SIMULATIONS — Onglet 7
-// ============================================================
-
-export type ConditionOperateur = 'gt' | 'lt' | 'eq' | 'between' | 'outside';
-export type ConditionChamp = 'puissanceKw' | 'energieKwh' | 'heure' | 'jourSemaine' | 'typeJour' | 'date';
-
-export interface SimulationCondition {
-  id: string;
-  champ: ConditionChamp;
-  operateur: ConditionOperateur;
-  valeur: number | string;
-  valeur2?: number | string;  // pour 'between'
-  sourceId?: string;          // null = toutes les sources
-  actif: boolean;
-  description: string;
-}
-
-export interface Simulation {
-  id: string;
   nom: string;
-  description: string;
-  conditions: SimulationCondition[];
+  type: 'férie' | 'fête' | 'événement';
   actif: boolean;
-  createdAt: Date;
-  // Résultats calculés après application
-  resultats?: {
-    pointsExclus: number;
-    pointsTotal: number;
-    energieOriginaleKwh: number;
-    energieFiltreeKwh: number;
-    reductionPct: number;
-  };
 }
 
-// ---- Shelly 3EM — Profil de Charge (50 colonnes exactes) ----
+// ============================================================
+// DONNÉES TECHNIQUES (paramètres généraux — non-facturation)
+// ============================================================
+
+export interface DonneesTechniques {
+  nJours: number;   // longueur de la période d'analyse (utilisé pour moyennes)
+}
+
+// ============================================================
+// PROFIL DE CHARGE Shelly 3EM (sans facturation)
+// ============================================================
 
 export interface ShellyRow {
   // ---- Données d'entrée ----
@@ -207,7 +221,7 @@ export interface ShellyRow {
   kwhCumRetourB: number;
   kwhCumRetourC: number;
   kwhCumRetourTotal: number;
-  // ---- Puissances moyennes (kW) = kWh × 1000 / 24 ----
+  // ---- Puissances moyennes (kW) ----
   puissKwA: number;
   puissKwB: number;
   puissKwC: number;
@@ -216,25 +230,26 @@ export interface ShellyRow {
   puissKwRetourB: number;
   puissKwRetourC: number;
   puissKwRetourTotal: number;
-  // ---- Classifieurs ----
-  jour: string;         // "lundi", "mardi"...
-  mois: string;         // "janv", "févr"...
+  // ---- Classifieurs (jours d'activité + temps) ----
+  jour: string;
+  mois: string;
   annee: number;
   jourActivites: 'Jour ouvré' | 'Weekend' | 'Jour férié';
-  trancheTarification: 'Heure creuse' | 'Heure de pointe';
-  montantEnergie: number;       // FCFA
-  montantEnergieRetour: number; // FCFA
   heuresEnsoleillement: 'En ensoleillement' | 'Hors ensoleillement';
-  heuresTravail: 'Heures d\'activités' | 'Heures hors activités';
+  heuresTravail: "Heures d'activités" | 'Heures hors activités';
   periodeclimatique: 'Période de fraîcheur' | 'Période chaude';
   saison: 'Sèche' | 'Hivernage';
   periode: 'Nuit' | 'Matin' | 'Après-midi' | 'Soir';
   profil: 'CHARGE' | 'SOUTIRAGE';
-  // ---- Helpers (rétrocompatibilité) ----
+  // ---- Identification appareil ----
+  nomAppareil?: string;
+  deviceLocation?: string;
+  deviceRoom?: string;
+  // ---- Helpers ----
   kwhNet: number; // = kwhTotal - kwhRetourTotal
   isWeekend: boolean;
   isJourFerie: boolean;
-  jourSemaine: string; // "Lun", "Mar"...
+  jourSemaine: string;
 }
 
 export interface ShellyAnalyse {
@@ -246,201 +261,36 @@ export interface ShellyAnalyse {
   maxJournalier: number;
   minJournalier: number;
   nbJours: number;
-  parMois: Record<string, { kwhTotal: number; kwhNet: number; kwhRetour: number; nbJours: number; montantEnergie: number }>;
+  parMois: Record<string, { kwhTotal: number; kwhNet: number; kwhRetour: number; nbJours: number }>;
   jourOuvre: { kwhMoyen: number; nbJours: number };
   weekend: { kwhMoyen: number; nbJours: number };
   ferieOuDimanche: { kwhMoyen: number; nbJours: number };
 }
 
-// ---- SENELEC — Tarification ----
-
-export type NiveauTension = 'BT' | 'MT' | 'HT';
-export type CategoriesTarifairesBT = 'DPP' | 'DMP' | 'PPP' | 'PMP' | 'DGP' | 'PGP';
-export type CategoriesTarifairesMT = 'TCU' | 'TG' | 'TLU';
-export type CategoriesTarifairesHT = 'TG_HT' | 'TS';
-export type CategorieTarifaire = CategoriesTarifairesBT | CategoriesTarifairesMT | CategoriesTarifairesHT;
-
-export interface TarifBTTranche {
-  type: 'tranche';
-  t1: number; t2: number; t3: number;
-  seuil1: number; seuil2: number;
-  primeMensuelle: number;
-  redevance: number;
-}
-
-export interface TarifGP {
-  type: 'gp';
-  hhp: number; hp: number;
-  primeFixe: number;
-  redevance30: number; redevance31: number;
-}
-
-export interface TarifMT {
-  type: 'mt';
-  hhp: number; hp: number;
-  primeFixe: number;
-}
-
-export interface TarifHT {
-  type: 'ht';
-  hhp: number; hp: number;
-  primeFixe: number;
-}
-
-export type TarifDetail = TarifBTTranche | TarifGP | TarifMT | TarifHT;
-
-// ---- Données techniques (paramètres de la facture) ----
-
-export interface DonneesTechniques {
-  nJours: number;
-  nJoursDepassement: number;
-  puissanceSouscrite: number;
-  puissanceMaxRelevee: number;
-  puissanceTransfo: number;
-  taxeCommunale: number;
-  categorie: CategorieTarifaire;
-  // Coefficients de correction (rapport TC/TP)
-  alphaA: number;   // αa — coefficient majoration active K1
-  betaA: number;    // βa — coefficient majoration active K2
-  alphaR: number;   // αr — coefficient majoration réactive
-  betaR: number;    // βr — coefficient majoration réactive H1
-  h1: number;       // Heures transformateur H1
-  h2: number;       // Heures condensateurs H2
-  redevance: number;
-}
-
-export interface DonneesEnergieBT {
-  consommationTotale: number;
-}
-
-export interface DonneesEnergieGP {
-  consomActiveK1: number;  // kWh HHP (sans majo)
-  consomActiveK2: number;  // kWh HP (sans majo)
-  consomReactiveWr: number; // kVARh (sans majo)
-}
-
-export type DonneesEnergie = DonneesEnergieBT | DonneesEnergieGP;
-
-// ---- Résultat facturation complet ----
-
-export interface ResultatFacturation {
-  // Majoration (αa/βa/αr/βr)
-  majoK1: number;      // kWh
-  majoK2: number;      // kWh
-  majoWr: number;      // kVARh
-  k1Facture: number;   // K1 + MajoK1 kWh
-  k2Facture: number;   // K2 + MajoK2 kWh
-  // Énergie
-  coutK1: number;
-  coutK2: number;
-  coutEnergie: number;
-  // Tranches BT
-  consomTranche1?: number; consomTranche2?: number; consomTranche3?: number;
-  coutTranche1?: number; coutTranche2?: number; coutTranche3?: number;
-  // CosPhi
-  cosPhi: number;
-  bonusCosphi: number;
-  // Prime fixe
-  primeFixeMensuelle: number;
-  majDepassement: number;
-  primeFixe: number;   // total = primeFixeMensuelle + majDepassement
-  // Taxes
-  redevance: number;
-  taxeCommunale: number;
-  montantHT: number;
-  tva: number;
-  montantTTC: number;
-  // Indicateurs
-  consomJournaliere: number;
-  tauxChargeTransfo: number;
-  ipr: number;   // Indicateur de Performance de Référence (FCFA/kWh TTC)
-  tarifMoyen: number; // Coût moyen pondéré HT (FCFA/kWh)
-  // Décomposition pour poids
-  surcoût: number; // prime fixe + majo dép + pénalité cosφ
-  taxes: number;   // TVA + TCO + redevance
-}
-
-// ---- Scénario d'optimisation ----
-
-export interface ScenarioOptimisation {
-  nom: string;
-  description: string;
-  resultat: ResultatFacturation;
-  economieVsBase: number;   // FCFA (positif = économie)
-  economieAnnuelle: number;
-  ipr: number;
-}
-
-// ---- Ligne facturation historique (Tab_Facturation) ----
-
-export interface LigneFacturation {
-  id: string;
-  date: Date;
-  periode: string;
-  nomClient?: string;
-  adresse?: string;
-  police?: string;
-  factureNum?: string;
-  dateFacture?: Date;
-  nJours?: number;
-  puissanceSouscrite?: number;
-  puissanceMaxRelevee?: number;
-  depassement?: number;
-  // Indices
-  ancienIndexK1?: number; nouvelIndexK1?: number;
-  ancienIndexK2?: number; nouvelIndexK2?: number;
-  ancienIndexWr?: number; nouvelIndexWr?: number;
-  // Consommations facturées
-  consomActiveK1: number;
-  consomActiveK2: number;
-  totEnergieActive?: number;
-  consomReactiveWr: number;
-  majoK1?: number;
-  majoK2?: number;
-  majoReact?: number;
-  cosPhi?: number;
-  // Montants
-  montantK1?: number;
-  montantK2?: number;
-  montantPrimeFixe?: number;
-  montantHT?: number;
-  redevance?: number;
-  montantTVA?: number;
-  montantTTC?: number;
-  prixTarifK1?: number;
-  prixTarifK2?: number;
-  tauxChargeTransfo?: number;
-  facteurUtilisation?: number;
-  nHeuresUtilisation?: number;
-  ipr?: number;
-  // Résultat calculé
-  resultat?: ResultatFacturation;
-}
-
-// ---- Jours fériés ----
-
-export interface JourFerie {
-  date: Date;
-  nom: string;
-  type: 'férie' | 'fête' | 'événement';
-  actif: boolean;
-}
-
-// ---- Import file ----
+// ============================================================
+// FICHIERS IMPORTÉS
+// ============================================================
 
 export interface ImportedFile {
   id: string;
   name: string;
-  type: 'shelly' | 'facturation' | 'autre';
+  type: 'shelly' | 'autre' | 'facture';
   sourceId?: string;
   uploadedAt: Date;
   rowCount: number;
   columns: string[];
   preview: Record<string, unknown>[];
   rawData: Record<string, unknown>[];
+  statut?: 'original' | 'nettoyé' | 'analysé';
+  taille?: number;
+  parentId?: string;
+  deviceLocation?: string;
+  deviceRoom?: string;
 }
 
-// ---- Constants ----
+// ============================================================
+// CONSTANTES
+// ============================================================
 
 export const JOURS_SEMAINE_COURT = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
 export const JOURS_SEMAINE = JOURS_SEMAINE_COURT;
@@ -453,8 +303,6 @@ export const MOIS_FR = [
   'janv', 'févr', 'mars', 'avr', 'mai', 'juin',
   'juil', 'août', 'sept', 'oct', 'nov', 'déc',
 ];
-
-export const TAUX_TVA = 0.18;
 
 export const JOURS_FERIES_FIXES: { mois: number; jour: number; nom: string }[] = [
   { mois: 1, jour: 1, nom: "Jour de l'An" },
