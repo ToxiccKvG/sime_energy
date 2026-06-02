@@ -30,9 +30,6 @@ import {
 } from '@/types/annotation-dictionary';
 import { toast } from 'sonner';
 
-const LOCAL_STORAGE_KEY = 'annotation_dictionaries';
-const LOCAL_SETTINGS_KEY = 'annotation_settings';
-
 interface FormField {
   Key: string;
   Value: string;
@@ -97,8 +94,14 @@ function generateId(prefix: string): string {
 }
 
 function normalizeString(str: string): string {
-  // Comparaison stricte : on ignore seulement la casse et les espaces en bord
-  return str.toLowerCase().trim();
+  return str
+    .toLowerCase()
+    .trim()
+    .replace(/\s*:\s*$/, '')           // trailing colon: "DATE :" → "date"
+    .replace(/[°º()[\],.%²¹³'"`/]/g, ' ')  // units/parens/quotes → space: "TVA (18%)" → "tva 18"
+    .replace(/_/g, ' ')                // snake_case → spaces: "NUMERO_FACTURE" → "numero facture"
+    .replace(/\s+/g, ' ')              // collapse multiple spaces
+    .trim();
 }
 
 function stringsMatch(str1: string, str2: string): boolean {
@@ -107,7 +110,10 @@ function stringsMatch(str1: string, str2: string): boolean {
 }
 
 function keysMatch(fieldKey: string, dictionaryField: AnnotationField): boolean {
-  return normalizeString(fieldKey) === normalizeString(dictionaryField.key);
+  const normalized = normalizeString(fieldKey);
+  if (normalized === normalizeString(dictionaryField.key)) return true;
+  // Check aliases (raw Textract keys + Mistral UPPER_SNAKE_CASE variants)
+  return (dictionaryField.aliases ?? []).some((alias) => normalizeString(alias) === normalized);
 }
 
 function extractFirstRowTexts(table: TableData): string[] {
@@ -219,7 +225,7 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
     );
   }, [collection.dictionaries, collection.displaySettings.selectedDictionaryId]);
 
-  // Charger depuis Supabase ou localStorage
+  // Charger depuis Supabase (source de vérité unique)
   useEffect(() => {
     const loadCollection = async () => {
       setIsLoading(true);
@@ -228,33 +234,18 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
           const data = await getAnnotationCollection(organization.id);
           setCollection(data);
         } else {
-          // Fallback localStorage
-          const storedDicts = localStorage.getItem(LOCAL_STORAGE_KEY);
-          const storedSettings = localStorage.getItem(LOCAL_SETTINGS_KEY);
-          
-          const dictionaries = storedDicts
-            ? JSON.parse(storedDicts)
-            : [DEFAULT_ANNOTATION_DICTIONARY];
-          const displaySettings = storedSettings
-            ? JSON.parse(storedSettings)
-            : DEFAULT_DISPLAY_SETTINGS;
-
-          setCollection({ dictionaries, displaySettings });
+          // Pas d'organisation connue : afficher les valeurs par défaut
+          setCollection({
+            dictionaries: [DEFAULT_ANNOTATION_DICTIONARY],
+            displaySettings: DEFAULT_DISPLAY_SETTINGS,
+          });
         }
       } catch (error) {
         console.error('Error loading dictionaries:', error);
-        // Fallback localStorage
-        try {
-          const storedDicts = localStorage.getItem(LOCAL_STORAGE_KEY);
-          const storedSettings = localStorage.getItem(LOCAL_SETTINGS_KEY);
-          
-          setCollection({
-            dictionaries: storedDicts ? JSON.parse(storedDicts) : [DEFAULT_ANNOTATION_DICTIONARY],
-            displaySettings: storedSettings ? JSON.parse(storedSettings) : DEFAULT_DISPLAY_SETTINGS,
-          });
-        } catch (e) {
-          console.error('localStorage fallback error:', e);
-        }
+        setCollection({
+          dictionaries: [DEFAULT_ANNOTATION_DICTIONARY],
+          displaySettings: DEFAULT_DISPLAY_SETTINGS,
+        });
       } finally {
         setIsLoading(false);
       }
@@ -263,23 +254,15 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
     loadCollection();
   }, [organization?.id]);
 
-  // Sauvegarder en localStorage
-  const saveToLocalStorage = useCallback((col: AnnotationDictionaryCollection) => {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(col.dictionaries));
-    localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(col.displaySettings));
-  }, []);
-
   // Sélectionner un dictionnaire
   const selectDictionary = useCallback(
     async (id: string | null) => {
       const newSettings = { ...collection.displaySettings, selectedDictionaryId: id };
-      
+
       setCollection((prev) => ({
         ...prev,
         displaySettings: newSettings,
       }));
-
-      saveToLocalStorage({ ...collection, displaySettings: newSettings });
 
       if (organization?.id) {
         try {
@@ -289,7 +272,7 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
         }
       }
     },
-    [collection, organization?.id, saveToLocalStorage]
+    [collection, organization?.id]
   );
 
   // Créer un nouveau dictionnaire
@@ -315,11 +298,6 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
           dictionaries: [...prev.dictionaries, newDict],
         }));
 
-        saveToLocalStorage({
-          ...collection,
-          dictionaries: [...collection.dictionaries, newDict],
-        });
-
         toast.success(`Dictionnaire "${dict.name}" créé`);
         return newDict;
       } catch (error) {
@@ -330,7 +308,7 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
         setIsSaving(false);
       }
     },
-    [collection, organization?.id, saveToLocalStorage]
+    [collection, organization?.id]
   );
 
   // Mettre à jour un dictionnaire
@@ -347,8 +325,6 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
           dictionaries: updatedDicts,
         }));
 
-        saveToLocalStorage({ ...collection, dictionaries: updatedDicts });
-
         if (organization?.id && id !== 'default') {
           await updateDictionary(id, updates);
         }
@@ -359,7 +335,7 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
         setIsSaving(false);
       }
     },
-    [collection, organization?.id, saveToLocalStorage]
+    [collection, organization?.id]
   );
 
   // Supprimer un dictionnaire
@@ -386,8 +362,6 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
           displaySettings: newSettings,
         });
 
-        saveToLocalStorage({ dictionaries: updatedDicts, displaySettings: newSettings });
-
         if (organization?.id && id !== 'default') {
           await deleteDictionary(id);
         }
@@ -400,7 +374,7 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
         setIsSaving(false);
       }
     },
-    [collection, organization?.id, saveToLocalStorage]
+    [collection, organization?.id]
   );
 
   // === Gestion des champs du dictionnaire courant ===
@@ -489,8 +463,6 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
       displaySettings: newSettings,
     }));
 
-    saveToLocalStorage({ ...collection, displaySettings: newSettings });
-
     if (organization?.id) {
       try {
         await updateAnnotationSettings(organization.id, { showLabels: newSettings.showLabels });
@@ -498,7 +470,7 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
         console.error('Error saving settings:', error);
       }
     }
-  }, [collection, organization?.id, saveToLocalStorage]);
+  }, [collection, organization?.id]);
 
   const updateDisplaySettings = useCallback(
     async (settings: Partial<AnnotationDisplaySettings>) => {
@@ -509,8 +481,6 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
         displaySettings: newSettings,
       }));
 
-      saveToLocalStorage({ ...collection, displaySettings: newSettings });
-
       if (organization?.id) {
         try {
           await updateAnnotationSettings(organization.id, settings);
@@ -519,7 +489,7 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
         }
       }
     },
-    [collection, organization?.id, saveToLocalStorage]
+    [collection, organization?.id]
   );
 
   // Réinitialiser tout
@@ -530,8 +500,9 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
         await resetAllDictionaries(organization.id);
       }
 
-      localStorage.removeItem(LOCAL_STORAGE_KEY);
-      localStorage.removeItem(LOCAL_SETTINGS_KEY);
+      // Clean up any residual data from before the localStorage-free refactor
+      localStorage.removeItem('annotation_dictionaries');
+      localStorage.removeItem('annotation_settings');
 
       setCollection({
         dictionaries: [DEFAULT_ANNOTATION_DICTIONARY],
@@ -674,12 +645,14 @@ export function useAnnotationDictionary(): UseAnnotationDictionaryReturn {
 
       const extraFields = fieldResults.filter((r) => r.status === 'extra').map((r) => r.fieldKey);
 
-      // Les tableaux non reconnus ou incomplets empêchent la validation (même si optionnels)
+      // Un tableau "Non reconnu" (sans template dans le dictionnaire) est un avertissement,
+      // pas une erreur — il ne bloque pas la validation.
+      // Seuls les tableaux RECONNUS mais structurellement incomplets (colonnes/lignes
+      // manquantes) bloquent isValid, ainsi que les templates requis absents.
       const allTablesValid = tableRecognition.every(
         (t) =>
-          t.isRecognized &&
-          t.missingColumnHeaders.length === 0 &&
-          t.missingRowHeaders.length === 0
+          !t.isRecognized || // non reconnu = avertissement seulement
+          (t.missingColumnHeaders.length === 0 && t.missingRowHeaders.length === 0)
       );
       const isValid =
         missingRequiredFields.length === 0 &&

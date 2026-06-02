@@ -1,9 +1,13 @@
-import { MeasurementWorkflow } from '@/components/invoices/MeasurementWorkflow';
+import { useSearchParams } from 'react-router-dom';
+import { MeasurementWorkflow } from '@/components/mesures/MeasurementWorkflow';
 
 const Mesures = () => {
+  const [searchParams] = useSearchParams();
+  const auditId = searchParams.get('auditId') || undefined;
+
   return (
     <div className="space-y-6">
-      <MeasurementWorkflow />
+      <MeasurementWorkflow auditId={auditId} />
     </div>
   );
 };

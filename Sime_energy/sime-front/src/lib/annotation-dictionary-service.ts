@@ -12,11 +12,40 @@ import type {
 import {
   DEFAULT_ANNOTATION_DICTIONARY,
   DEFAULT_DISPLAY_SETTINGS,
+  DEFAULT_DICTIONARY_COLLECTION,
 } from '@/types/annotation-dictionary';
+import type { AnnotationField } from '@/types/annotation-dictionary';
+
+/**
+ * All hardcoded dictionary fields indexed by field ID for fast alias lookup.
+ * Used to retroactively augment Supabase-stored fields that were saved
+ * before the `aliases` field was introduced.
+ */
+const HARDCODED_FIELD_ALIASES: Map<string, string[]> = new Map(
+  DEFAULT_DICTIONARY_COLLECTION.dictionaries.flatMap((dict) =>
+    dict.fields
+      .filter((f) => f.aliases && f.aliases.length > 0)
+      .map((f) => [f.id, f.aliases!] as [string, string[]])
+  )
+);
+
+/**
+ * Merges hardcoded aliases into a field that was loaded from Supabase.
+ * Hardcoded aliases always win (most up-to-date), but existing custom
+ * aliases are preserved if the field has no hardcoded counterpart.
+ */
+function augmentFieldAliases(field: AnnotationField): AnnotationField {
+  const hardcoded = HARDCODED_FIELD_ALIASES.get(field.id);
+  if (!hardcoded) return field;
+  // Merge: hardcoded + any extra aliases the user may have added manually
+  const existing = field.aliases ?? [];
+  const merged = [...new Set([...hardcoded, ...existing])];
+  return { ...field, aliases: merged };
+}
 
 export interface AnnotationDictionaryDB {
   id: string;
-  organization_id: string;
+  organization_id: string | null;
   name: string;
   description?: string;
   color?: string;
@@ -41,38 +70,65 @@ export interface AnnotationSettingsDB {
 export async function getAnnotationDictionaries(
   organizationId: string
 ): Promise<AnnotationDictionary[]> {
-  const { data, error } = await supabase
-    .from('annotation_dictionaries')
-    .select('*')
-    .eq('organization_id', organizationId)
-    .order('created_at', { ascending: true });
+  // Fetch org-specific dicts + platform dicts (organization_id IS NULL) in parallel
+  const [orgResult, platformResult] = await Promise.all([
+    supabase
+      .from('annotation_dictionaries')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('annotation_dictionaries')
+      .select('*')
+      .is('organization_id', null)
+      .order('created_at', { ascending: true }),
+  ]);
 
-  if (error) {
-    console.error('Error fetching dictionaries:', error);
-    throw error;
+  if (orgResult.error) {
+    console.error('Error fetching org dictionaries:', orgResult.error);
+    throw orgResult.error;
+  }
+  if (platformResult.error) {
+    console.error('Error fetching platform dictionaries:', platformResult.error);
+    throw platformResult.error;
   }
 
-  if (!data || data.length === 0) {
-    // Retourner le dictionnaire par défaut
-    return [
-      {
-        ...DEFAULT_ANNOTATION_DICTIONARY,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ];
+  // Platform dicts first, then org-specific on top
+  const combined = [...(platformResult.data ?? []), ...(orgResult.data ?? [])];
+
+  if (combined.length === 0) {
+    // Seed all hardcoded dictionaries (Général + SENELEC + …) as in-memory defaults.
+    // They are NOT written to Supabase here — the user can save them explicitly.
+    return DEFAULT_DICTIONARY_COLLECTION.dictionaries.map((d) => ({
+      ...d,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
   }
 
-  return data.map((d) => ({
+  const dbDicts = combined.map((d) => ({
     id: d.id,
     name: d.name,
     description: d.description,
     color: d.color,
-    fields: d.fields || [],
+    // Augment each field with hardcoded aliases in case the row was stored
+    // before the `aliases` property was introduced.
+    fields: (d.fields || []).map(augmentFieldAliases),
     tableTemplates: d.table_templates || [],
     createdAt: d.created_at,
     updatedAt: d.updated_at,
   }));
+
+  // Always include hardcoded dicts (e.g. SENELEC) that aren't already in DB
+  const inMemoryFallbacks = DEFAULT_DICTIONARY_COLLECTION.dictionaries
+    .filter((hardcoded) => !dbDicts.some((db) => db.name === hardcoded.name))
+    .map((d) => ({
+      ...d,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+
+  return [...inMemoryFallbacks, ...dbDicts];
 }
 
 /**

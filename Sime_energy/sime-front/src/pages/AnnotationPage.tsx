@@ -213,6 +213,25 @@ export function AnnotationPage() {
     return validateFields(forms, tables);
   }, [extractedData, currentIndex, validateFields]);
 
+  // Auto-verify: when all required fields are found, silently set status → verified
+  useEffect(() => {
+    const invoice = invoices[currentIndex];
+    // Fire for any non-verified status (handles both 'pending' and 'processing')
+    if (!invoice || !currentValidation || invoice.status === 'verified') return;
+    if (!currentValidation.isValid) return;
+
+    updateInvoice(invoice.id, { status: 'verified' })
+      .then(() => {
+        setInvoices((prev) =>
+          prev.map((inv, i) => (i === currentIndex ? { ...inv, status: 'verified' } : inv))
+        );
+        toast.success('Facture vérifiée automatiquement — tous les champs requis détectés');
+      })
+      .catch(console.error);
+  // Include status in deps so the effect re-runs when pending → processing
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentValidation?.isValid, currentIndex, invoices[currentIndex]?.id, invoices[currentIndex]?.status]);
+
   const handleFieldUpdate = async (pageIndex: number, fieldKey: string, newValue: string) => {
     if (!invoices[pageIndex]) return;
 

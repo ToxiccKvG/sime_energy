@@ -59,6 +59,7 @@ export async function createAudit(audit: Partial<Audit>, organizationId: string,
         end_date: audit.endDate,
         completion_percentage: audit.completionPercentage || 0,
         responsable: audit.responsable,
+        client_type: audit.clientType,
         general_info: audit.generalInfo || {},
         personnel: audit.personnel || {},
         created_at: new Date().toISOString(),
@@ -107,6 +108,7 @@ export async function updateAudit(auditId: string, updates: Partial<Audit>) {
       end_date: updates.endDate,
       completion_percentage: updates.completionPercentage,
       responsable: updates.responsable,
+      client_type: updates.clientType,
       general_info: updates.generalInfo,
       personnel: updates.personnel,
       updated_at: new Date().toISOString(),
@@ -159,13 +161,14 @@ export async function getAuditSites(auditId: string) {
 export async function createAuditBuilding(
   siteId: string,
   auditId: string,
-  building: Partial<AuditBuildingDB>
+  building: Partial<AuditBuildingDB> & { zone_id?: string }
 ) {
   const { data, error } = await supabase
     .from('audit_buildings')
     .insert([
       {
         site_id: siteId,
+        zone_id: building.zone_id ?? null,
         audit_id: auditId,
         building_name: building.building_name,
         building_type: building.building_type,
@@ -182,6 +185,31 @@ export async function createAuditBuilding(
   return data?.[0];
 }
 
+// Mettre à jour un bâtiment
+export async function updateAuditBuilding(buildingId: string, updates: Partial<AuditBuildingDB>) {
+  const { data, error } = await supabase
+    .from('audit_buildings')
+    .update({
+      building_name: updates.building_name,
+      building_type: updates.building_type,
+      surface_terrain: updates.surface_terrain,
+      surface_batie: updates.surface_batie,
+      surface_toiture: updates.surface_toiture,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', buildingId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// Supprimer un bâtiment
+export async function deleteAuditBuilding(buildingId: string) {
+  const { error } = await supabase.from('audit_buildings').delete().eq('id', buildingId);
+  if (error) throw error;
+}
+
 // Récupérer les bâtiments d'un site
 export async function getAuditBuildings(siteId: string) {
   const { data, error } = await supabase
@@ -192,4 +220,129 @@ export async function getAuditBuildings(siteId: string) {
 
   if (error) throw error;
   return data;
+}
+
+// Supprimer un audit (cascade sur les données liées)
+export async function deleteAudit(auditId: string) {
+  // Delete buildings first (audit_buildings may not have cascade from audits)
+  const sites = await getAuditSites(auditId);
+  if (sites && sites.length > 0) {
+    for (const site of sites) {
+      const buildings = await getAuditBuildings(site.id);
+      if (buildings && buildings.length > 0) {
+        for (const b of buildings) {
+          await deleteAuditBuilding(b.id);
+        }
+      }
+    }
+    // Delete sites
+    const { error: sitesErr } = await supabase
+      .from('audit_sites')
+      .delete()
+      .eq('audit_id', auditId);
+    if (sitesErr) throw sitesErr;
+  }
+  const { error } = await supabase.from('audits').delete().eq('id', auditId);
+  if (error) throw error;
+}
+
+// Mettre à jour un site
+export async function updateAuditSite(siteId: string, updates: Partial<AuditSiteDB>) {
+  const { data, error } = await supabase
+    .from('audit_sites')
+    .update({
+      name: updates.name,
+      address: updates.address,
+      latitude: updates.latitude,
+      longitude: updates.longitude,
+      status: updates.status,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', siteId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// Supprimer un site et ses bâtiments
+export async function deleteAuditSite(siteId: string) {
+  const buildings = await getAuditBuildings(siteId);
+  if (buildings && buildings.length > 0) {
+    for (const b of buildings) {
+      await deleteAuditBuilding(b.id);
+    }
+  }
+  const { error } = await supabase.from('audit_sites').delete().eq('id', siteId);
+  if (error) throw error;
+}
+
+// ─── Dashboard helpers ──────────────────────────────────────────────────────
+
+export interface ActivityItem {
+  id: string;
+  action?: string;
+  description?: string;
+  entity_type?: string;
+  created_at: string;
+}
+
+export async function getDashboardSiteCount(auditIds: string[]): Promise<number> {
+  const { data, error } = await supabase.from('audit_sites').select('id').in('audit_id', auditIds);
+  if (error) throw error;
+  return data?.length ?? 0;
+}
+
+export async function getDashboardInvoiceCount(auditIds: string[]): Promise<number> {
+  const { data, error } = await supabase.from('audit_invoices').select('id').in('audit_id', auditIds);
+  if (error) throw error;
+  return data?.length ?? 0;
+}
+
+export async function getDashboardActivity(auditIds: string[]): Promise<ActivityItem[]> {
+  const { data, error } = await supabase
+    .from('audit_activity')
+    .select('id, action, description, entity_type, created_at')
+    .in('audit_id', auditIds)
+    .order('created_at', { ascending: false })
+    .limit(15);
+  if (error) throw error;
+  return data ?? [];
+}
+
+// Calculer le taux de complétion d'un audit
+export function computeAuditCompletion(
+  audit: any,
+  opts?: { totalSites?: number; totalBuildings?: number; totalEquipment?: number }
+): number {
+  const gi = audit.general_info || {};
+  const pers = audit.personnel || {};
+  const hasPersonnel = Object.values(pers).some((v: any) => v && typeof v === 'object' && (v as any).nom?.trim());
+
+  const checks = [
+    // Infos de base (4 × 5 = 20%)
+    !!audit.name?.trim(),
+    !!audit.responsable?.trim(),
+    !!audit.start_date,
+    !!audit.end_date,
+    // Infos générales (4 × 5 = 20%)
+    !!gi.nomEtablissement?.trim(),
+    !!(gi.secteur?.trim() || gi.typeClient?.trim()),
+    !!(gi.ville?.trim() || gi.adresseSiege?.trim()),
+    !!(gi.effectifs || gi.macs),
+    // Personnel (2 × 5 = 10%)
+    hasPersonnel,
+    Object.keys(pers).length > 1,
+    // Statut (2 × 5 = 10%)
+    audit.status === 'in_progress' || audit.status === 'completed',
+    audit.status === 'completed',
+    // Données structurelles (4 × 10 = 40%)
+    (opts?.totalSites ?? 0) > 0,
+    (opts?.totalBuildings ?? 0) > 0,
+    (opts?.totalEquipment ?? 0) > 0,
+    (opts?.totalEquipment ?? 0) > 5,
+  ];
+
+  const score = checks.filter(Boolean).length;
+  return Math.round((score / checks.length) * 100);
 }

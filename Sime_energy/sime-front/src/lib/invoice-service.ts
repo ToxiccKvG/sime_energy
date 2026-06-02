@@ -18,6 +18,10 @@ export interface AuditInvoice {
   notes?: string;
   created_at: string;
   updated_at: string;
+  // Simulateur quarantine
+  is_quarantined?: boolean;
+  quarantine_reason?: string | null;
+  quarantine_delta_pct?: number | null;
 }
 
 export async function getAuditInvoices(auditId: string) {
@@ -119,6 +123,36 @@ export async function deleteInvoice(invoiceId: string) {
     .delete()
     .eq('id', invoiceId);
 
+  if (error) throw error;
+}
+
+export async function quarantineInvoice(
+  id: string,
+  reason: string,
+  delta_pct: number,
+): Promise<void> {
+  const { error } = await supabase
+    .from('audit_invoices')
+    .update({
+      is_quarantined: true,
+      quarantine_reason: reason,
+      quarantine_delta_pct: delta_pct,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+export async function unquarantineInvoice(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('audit_invoices')
+    .update({
+      is_quarantined: false,
+      quarantine_reason: null,
+      quarantine_delta_pct: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
   if (error) throw error;
 }
 

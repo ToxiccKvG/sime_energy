@@ -1,111 +1,93 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '@/context/AuthContext';
+import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useOrganization } from '@/context/OrganizationContext';
+import { useQueryClient } from '@tanstack/react-query';
 import { Audit } from '@/types/audit';
 import { AuditList } from '@/components/audits/AuditList';
 import { AuditForm } from '@/components/audits/AuditForm';
-import { getAudits } from '@/lib/audit-service';
+import { AuditDB, computeAuditCompletion } from '@/lib/audit-service';
+import { useAudits, useDeleteAudit } from '@/hooks/useAudits';
 import { Button } from '@/components/ui/button';
-import { Plus, Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Plus, Loader2, Search, X } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
+function transformAudit(audit: AuditDB): Audit {
+  return {
+    id: audit.id,
+    name: audit.name,
+    color: audit.color,
+    status: audit.status,
+    startDate: audit.start_date,
+    endDate: audit.end_date,
+    completionPercentage: computeAuditCompletion(audit),
+    responsable: audit.responsable,
+    generalInfo: audit.general_info,
+    personnel: audit.personnel,
+    capacites: { usines: [] },
+    createdAt: audit.created_at,
+    updatedAt: audit.updated_at,
+    createdBy: audit.created_by,
+  };
+}
 
 const Audits = () => {
-  const { user } = useAuth();
+  const navigate = useNavigate();
   const { organization } = useOrganization();
-  const [audits, setAudits] = useState<Audit[]>([]);
+  const queryClient = useQueryClient();
+
   const [editingAudit, setEditingAudit] = useState<Audit | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const { toast } = useToast();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const loadAudits = async () => {
-      if (!organization?.id) {
-        setLoading(false);
-        return;
-      }
+  const { data: rawAudits, isPending: loading } = useAudits(organization?.id);
+  const deleteMutation = useDeleteAudit();
 
-      try {
-        const data = await getAudits(organization.id);
-        if (data) {
-          // Transform database format to Audit type
-          const transformedAudits = data.map((audit: any) => ({
-            id: audit.id,
-            name: audit.name,
-            color: audit.color,
-            status: audit.status,
-            startDate: audit.start_date,
-            endDate: audit.end_date,
-            completionPercentage: audit.completion_percentage,
-            responsable: audit.responsable,
-            generalInfo: audit.general_info,
-            personnel: audit.personnel,
-            capacites: { usines: [] },
-            createdAt: audit.created_at,
-            updatedAt: audit.updated_at,
-            createdBy: audit.created_by,
-          }));
-          setAudits(transformedAudits);
-        }
-      } catch (error) {
-        console.error('Error loading audits:', error);
-        toast({
-          title: 'Erreur',
-          description: 'Impossible de charger les audits',
-          variant: 'destructive',
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
+  const audits = useMemo(() => (rawAudits ?? []).map(transformAudit), [rawAudits]);
 
-    loadAudits();
-  }, [organization?.id, toast]);
-
-  const handleSave = async (auditData: Partial<Audit>) => {
-    // The AuditForm component handles saving to Supabase directly
-    // This just refreshes the list after save
-    if (organization?.id) {
-      try {
-        const data = await getAudits(organization.id);
-        if (data) {
-          const transformedAudits = data.map((audit: any) => ({
-            id: audit.id,
-            name: audit.name,
-            color: audit.color,
-            status: audit.status,
-            startDate: audit.start_date,
-            endDate: audit.end_date,
-            completionPercentage: audit.completion_percentage,
-            responsable: audit.responsable,
-            generalInfo: audit.general_info,
-            personnel: audit.personnel,
-            capacites: { usines: [] },
-            createdAt: audit.created_at,
-            updatedAt: audit.updated_at,
-            createdBy: audit.created_by,
-          }));
-          setAudits(transformedAudits);
-        }
-      } catch (error) {
-        console.error('Error refreshing audits:', error);
-      }
-    }
+  const handleSave = () => {
     setEditingAudit(null);
     setIsCreating(false);
+    queryClient.invalidateQueries({ queryKey: ['audits'] });
   };
 
-  const handleDelete = (auditId: string) => {
-    setAudits(prev => prev.filter(a => a.id !== auditId));
-    toast({
-      title: 'Audit supprimé',
-      description: 'L\'audit a été supprimé avec succès',
+  const handleDeleteConfirm = () => {
+    if (!pendingDeleteId) return;
+    deleteMutation.mutate(pendingDeleteId, {
+      onSuccess: () => {
+        toast.success('Projet supprimé');
+        setPendingDeleteId(null);
+      },
+      onError: (err: unknown) => {
+        const message = err instanceof Error ? err.message : 'Erreur lors de la suppression';
+        toast.error(message);
+        setPendingDeleteId(null);
+      },
     });
   };
 
-  const handleView = (audit: Audit) => {
-    window.location.href = `/audits/${audit.id}`;
-  };
+  const filteredAudits = useMemo(() => {
+    if (!searchQuery.trim()) return audits;
+    const q = searchQuery.toLowerCase();
+    return audits.filter(a =>
+      a.name.toLowerCase().includes(q) ||
+      a.generalInfo?.nomEtablissement?.toLowerCase().includes(q) ||
+      a.generalInfo?.secteur?.toLowerCase().includes(q) ||
+      a.responsable?.toLowerCase().includes(q)
+    );
+  }, [audits, searchQuery]);
 
   if (isCreating || editingAudit) {
     return (
@@ -122,38 +104,101 @@ const Audits = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-10 w-48" />
+          <Skeleton className="h-10 w-36" />
+        </div>
+        <Skeleton className="h-10 w-72" />
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 rounded-2xl" />
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 text-slate-50">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 text-foreground">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-semibold text-white">Audits</h1>
-          <p className="mt-1 text-slate-400">
+          <h1 className="text-2xl sm:text-3xl font-semibold text-foreground">Projets</h1>
+          <p className="mt-1 text-muted-foreground">
             Création et suivi de vos audits énergétiques
           </p>
         </div>
         <Button
           onClick={() => setIsCreating(true)}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
+          className="bg-primary text-primary-foreground hover:bg-primary/90 w-full sm:w-auto"
         >
           <Plus className="mr-2 h-4 w-4" />
-          Créer un audit
+          Nouveau projet
         </Button>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-[#0b0d14] p-6 shadow-2xl backdrop-blur">
-        <AuditList
-          audits={audits}
-          onEdit={setEditingAudit}
-          onDelete={handleDelete}
-          onView={handleView}
+      {/* Search bar */}
+      <div className="relative max-w-sm w-full">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+        <Input
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Rechercher un projet…"
+          className="pl-9 pr-8 bg-background border-border text-foreground placeholder:text-muted-foreground focus:border-primary/60"
         />
+        {searchQuery && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setSearchQuery('')}
+            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
+          >
+            <X className="w-3.5 h-3.5" />
+          </Button>
+        )}
       </div>
+
+      <div className="rounded-2xl border border-white/10 bg-background p-6 shadow-2xl backdrop-blur">
+        <AuditList
+          audits={filteredAudits}
+          onEdit={setEditingAudit}
+          onDelete={setPendingDeleteId}
+          onView={audit => navigate(`/audits/${audit.id}`)}
+        />
+        {searchQuery && filteredAudits.length === 0 && (
+          <p className="text-center text-sm text-muted-foreground py-8">
+            Aucun résultat pour «&nbsp;{searchQuery}&nbsp;»
+          </p>
+        )}
+      </div>
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!pendingDeleteId} onOpenChange={open => { if (!open) setPendingDeleteId(null); }}>
+        <AlertDialogContent className="bg-card border-border text-foreground">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Supprimer ce projet ?</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              Cette action supprimera définitivement le projet et tous ses sites et bâtiments associés.
+              Les données d'inventaire liées seront également supprimées.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="bg-secondary border-border text-secondary-foreground hover:bg-secondary/80"
+              disabled={deleteMutation.isPending}
+            >
+              Annuler
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={deleteMutation.isPending}
+              className="bg-red-600 hover:bg-red-500 text-white"
+            >
+              {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Supprimer'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

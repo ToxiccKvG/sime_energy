@@ -14,14 +14,16 @@ import AcceptInvitation from "./pages/AcceptInvitation";
 import Index from "./pages/Index";
 import Facturation from "./pages/Facturation";
 import { AnnotationPage } from "./pages/AnnotationPage";
-import Mesures from "./pages/Mesures";
 import Inventaire from "./pages/Inventaire";
 import Audits from "./pages/Audits";
 import AuditDetail from "./pages/AuditDetail";
+import Rapport from "./pages/Rapport";
 import Parametres from "./pages/Parametres";
 import Compte from "./pages/Compte";
 import Auth from "./pages/Auth";
+import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
+import { BenjaminBubble } from "@/components/chatbot/BenjaminBubble";
 
 const queryClient = new QueryClient();
 
@@ -52,34 +54,35 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
 
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <Routes>
             {/* Routes publiques */}
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/invite" element={<AcceptInvitation />} />
 
-            {/* Routes protégées */}
+            {/* Routes protégées avec sidebar */}
             <Route
               path="/*"
               element={
                 <ProtectedRoute>
                   <OrganizationProvider>
-                    <div className="flex min-h-screen w-full bg-[#0f111a] text-slate-100">
+                    <div className="flex min-h-screen w-full bg-background text-foreground">
                       <AppSidebar />
                       <div className="flex flex-1 flex-col">
                         <AppHeader />
-                        <main className="flex-1 bg-transparent p-6 pl-24">
+                        <main className="flex-1 bg-transparent p-4 md:p-6 md:pl-28">
                           <Routes>
                             <Route path="/" element={<Index />} />
                             <Route path="/facturation" element={<Facturation />} />
                             <Route path="/annotation" element={<AnnotationPage />} />
-                            <Route path="/mesures" element={<Mesures />} />
                             <Route path="/inventaire" element={<Inventaire />} />
                             <Route path="/audits" element={<Audits />} />
                             <Route path="/audits/:auditId" element={<AuditDetail />} />
+                            <Route path="/rapport" element={<Rapport />} />
                             <Route path="/parametres" element={<Parametres />} />
                             <Route path="/compte" element={<Compte />} />
                             <Route path="*" element={<NotFound />} />
@@ -87,6 +90,7 @@ const App = () => (
                         </main>
                       </div>
                     </div>
+                    <BenjaminBubble />
                   </OrganizationProvider>
                 </ProtectedRoute>
               }

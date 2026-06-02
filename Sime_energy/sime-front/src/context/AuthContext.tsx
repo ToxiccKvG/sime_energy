@@ -1,6 +1,14 @@
 import {createContext, useContext, useState, useEffect} from 'react';
 import { supabase } from '@/lib/supabase';
 import { User } from '@supabase/supabase-js';
+import { setCustomTariffGrids } from '@/constants/senelec-tariffs';
+
+function syncTariffsFromUser(user: User | null) {
+    const customGrids = (user?.user_metadata?.energy_settings?.custom_tariff_grids ?? null) as
+        | Record<number, any>
+        | null;
+    setCustomTariffGrids(customGrids);
+}
 
 interface AuthContextType {
     user: User | null;
@@ -21,6 +29,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         const checkSession =  async () => {
             const { data: { user } } = await supabase.auth.getUser();
+            syncTariffsFromUser(user);
             setUser(user);
             setLoading(false);
         };
@@ -29,7 +38,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // listen to auth change
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
-                setUser(session?.user || null);
+                const nextUser = session?.user || null;
+                syncTariffsFromUser(nextUser);
+                setUser(nextUser);
             }
         });
 
@@ -41,7 +52,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             email,
             password,
             options: {
-                data: userData || {}
+                data: userData || {},
+                emailRedirectTo: `${window.location.origin}/auth`,
             }
         });
         if (error) throw error;
@@ -53,7 +65,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email,
         password,
         });
-        if (error) throw error;
+        if (error) {
+            // Fire-and-forget: log failed attempt for security monitoring (no PII stored)
+            supabase.from('auth_events').insert([{ event_type: 'failed_login' }]).then(() => {});
+            throw error;
+        }
     };
 
     const signOut = async () => {
@@ -63,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const resetPassword = async (email: string) => {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: `${window.location.origin}/auth`,
         });
         if (error) throw error;
     };

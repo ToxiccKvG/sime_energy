@@ -133,7 +133,9 @@ async def process_file_structured(
             
             # Send to Bedrock Mistral for normalization
             normalized = _normalize_with_llm(clean_payload)
-            
+            # Capture LLM-extracted invoice fields before bbox re-attachment
+            llm_invoice_fields = normalized.get("invoice_fields")
+
             # Re-attach coordinates by index mapping for forms
             corrected_forms_with_boxes: List[Dict[str, Any]] = []
             for i, kv in enumerate(normalized.get("forms", [])):
@@ -189,7 +191,8 @@ async def process_file_structured(
 
             extracted_fields = extract_invoice_fields(
                 corrected_forms_with_boxes,
-                corrected_tables_with_boxes
+                corrected_tables_with_boxes,
+                llm_fields=llm_invoice_fields
             )
             
             # Déterminer si c'est la première page (mise à jour) ou une nouvelle facture (création)

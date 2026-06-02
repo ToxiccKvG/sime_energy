@@ -67,6 +67,14 @@ export async function getAuditActivity(auditId: string) {
   return data || [];
 }
 
+export async function deleteActivity(activityId: string) {
+  const { error } = await supabase
+    .from('audit_activity')
+    .delete()
+    .eq('id', activityId);
+  if (error) throw error;
+}
+
 export async function getAuditActivityWithUserNames(auditId: string) {
   // Get activities with user names from auth.users table
   const { data, error } = await supabase

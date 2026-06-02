@@ -19,10 +19,13 @@ from pydantic_settings import BaseSettings
 
 #TODO: Ici le llm doit plutot corrgier les données et non extraire pas de sections, mais les noms des champs qu'ils doit corriger, il ne doit pas changer la forme, l'ordre ou les valeurs qu'il reçoit uniquement corriger le texte. donc pas de format de json à lui montrer il doit ressortir le json qu'on lui a envoyé
 PROMPT = """
-Tu es un assistant qui corrige les données reçu d'un ocr, tu dois en fonction du lexique présent corriger la syntaxe du json reçu.
-Tu ne change en aucun cas l'ordre, ni les valeurs, ton travail conssite simplement à corriger les entêtes et mettre en forme selon le lexique.
-l'ocr a pu faire des erreur, orthographe, gramaire, mots collées etc etc, ton travail et de reconaitre les champs du lexque et les corriger.
-Tu peux toucher uniquement aux valeurs numérique pour changer leurs format, un prix en cfa doit etres séparé en milliers, 100 000 par exemple, une consommation ne doit pas être séparé.
+Tu es un assistant qui corrige les données reçues d'un OCR de factures. En fonction du lexique ci-dessous, corrige les clés (Key) du JSON reçu.
+
+Règles strictes :
+1. Tu ne changes PAS l'ordre des éléments, ni les valeurs.
+2. Tu corriges uniquement les clés (Key) selon le lexique — reconnais-les même avec fautes, majuscules/minuscules, apostrophes parasites, espaces en trop, tirets, caractères spéciaux OCR.
+3. Les apostrophes, guillemets, deux-points ou autres artefacts OCR dans une clé (ex: "MONTANT TOTAL':" ou "DATE :") doivent être supprimés et la clé normalisée (ex: "MONTANT_TTC", "DATE_COMPTABLE_FACTURE").
+4. Pour les valeurs numériques uniquement : un prix en FCFA doit être séparé en milliers (ex: 100 000), une consommation ne doit pas être séparée.
 
 
 voici le lexique: 
@@ -98,7 +101,18 @@ voici le lexique:
 "MAJORATION_K2": null, // Majoration K2
 "MAJORATION_TOTALE": null // Majoration totale
 
-**Rends uniquement ce JSON complété sans texte explicatif**.
-**Renvoie uniquement le json sans balise**
+La structure de sortie JSON doit TOUJOURS être:
+{
+  "forms": [...mêmes formes avec clés normalisées selon le lexique ci-dessus...],
+  "tables": [...mêmes tableaux avec valeurs corrigées...],
+  "invoice_fields": {
+    "supplier": "<NOM_OU_RAISON_SOCIALE — extrais-le directement depuis tout le contenu visible (forms + tables), même si Textract l'a mal structuré>",
+    "invoice_date": "<DATE_COMPTABLE_FACTURE au format YYYY-MM-DD si possible, sinon telle quelle>",
+    "amount": <montant total à payer — règle stricte : utilise "TOTAL DES SOMMES DUES (1)+(2)" si présent (inclut arriérés), sinon "TOTAL FACTURE (1)" ou "NET A PAYER". JAMAIS "SOLDE GLOBAL (2)" (arriérés seuls) ni un sous-total partiel>,
+    "invoice_number": "<NUMERO_FACTURE>"
+  }
+}
+
+**Rends uniquement ce JSON sans texte explicatif ni balise markdown**.
 """
 ## essayer analyse image d'openai

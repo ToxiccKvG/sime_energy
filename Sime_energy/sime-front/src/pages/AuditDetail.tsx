@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { AuditHeader } from '@/components/audits/AuditHeader';
 import { AuditKPISection } from '@/components/audits/AuditKPISection';
 import { AuditQuickActions } from '@/components/audits/AuditQuickActions';
@@ -8,39 +9,15 @@ import { AuditDetailTabs } from '@/components/audits/AuditDetailTabs';
 import { AuditActivityTimeline } from '@/components/audits/AuditActivityTimeline';
 import { AddActivityDialog } from '@/components/audits/AddActivityDialog';
 import { Audit } from '@/types/audit';
-import { AuditInvoiceStats, AuditMeasureStats, AuditInventoryStats } from '@/types/auditActivity';
-import { getAudit, getAuditSites, getAuditBuildings } from '@/lib/audit-service';
-import { getAuditInvoices, getInvoiceStats } from '@/lib/invoice-service';
-import { getAuditMeasurements, getMeasurementStats } from '@/lib/measurement-service';
-import { getAuditActivity, logActivity } from '@/lib/activity-service';
+import { AuditInvoiceStats, AuditInventoryStats } from '@/types/auditActivity';
+import { getAudit, getAuditSites, getAuditBuildings, updateAudit, computeAuditCompletion } from '@/lib/audit-service';
+import { getInventoryCountsByAudit } from '@/lib/inventory-service';
+import { getInvoiceStats } from '@/lib/invoice-service';
+import { getAuditActivity, logActivity, deleteActivity } from '@/lib/activity-service';
 import { useAuth } from '@/context/AuthContext';
 import { useOrganization } from '@/context/OrganizationContext';
 import { toast } from 'sonner';
 import type { AuditActivityLog } from '@/lib/activity-service';
-
-let mockInvoiceStats: AuditInvoiceStats = {
-  total: 0,
-  uploaded: 0,
-  processed: 0,
-  verified: 0,
-  totalAmount: 0,
-  averageConfidence: 0,
-};
-
-let mockMeasureStats: AuditMeasureStats = {
-  totalSensors: 0,
-  activeSensors: 0,
-  measurementCount: 0,
-  lastMeasurementDate: new Date().toISOString(),
-};
-
-let mockInventoryStats: AuditInventoryStats = {
-  totalSites: 0,
-  totalBuildings: 0,
-  totalFloors: 0,
-  totalRooms: 0,
-  totalEquipment: 0,
-};
 
 const AuditDetail = () => {
   const { auditId } = useParams();
@@ -51,10 +28,21 @@ const AuditDetail = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isActivityDialogOpen, setIsActivityDialogOpen] = useState(false);
-  const [inventoryStats, setInventoryStats] = useState<AuditInventoryStats>(mockInventoryStats);
-  const [invoiceStats, setInvoiceStats] = useState<AuditInvoiceStats>(mockInvoiceStats);
-  const [measureStats, setMeasureStats] = useState<AuditMeasureStats>(mockMeasureStats);
-
+  const [inventoryStats, setInventoryStats] = useState<AuditInventoryStats>({
+    totalSites: 0,
+    totalBuildings: 0,
+    totalFloors: 0,
+    totalRooms: 0,
+    totalEquipment: 0,
+  });
+  const [invoiceStats, setInvoiceStats] = useState<AuditInvoiceStats>({
+    total: 0,
+    uploaded: 0,
+    processed: 0,
+    verified: 0,
+    totalAmount: 0,
+    averageConfidence: 0,
+  });
   // Fetch real audit data based on auditId
   useEffect(() => {
     const loadAuditData = async () => {
@@ -69,11 +57,7 @@ const AuditDetail = () => {
         // Fetch audit details
         const auditData = await getAudit(auditId);
         if (!auditData) {
-          toast({
-            title: 'Erreur',
-            description: 'Audit non trouvé',
-            variant: 'destructive',
-          });
+          toast.error('Audit non trouvé');
           setLoading(false);
           return;
         }
@@ -96,14 +80,10 @@ const AuditDetail = () => {
           createdBy: auditData.created_by,
         };
 
-        setAudit(transformedAudit);
-
         // Fetch sites and buildings for inventory stats
         const sites = await getAuditSites(auditId);
         const totalSites = sites?.length || 0;
         let totalBuildings = 0;
-        let totalFloors = 0;
-        let totalRooms = 0;
 
         if (sites && sites.length > 0) {
           for (const site of sites) {
@@ -112,13 +92,37 @@ const AuditDetail = () => {
           }
         }
 
+        let totalEquipment = 0;
+        let totalLevels = 0;
+        let totalRooms = 0;
+        try {
+          const counts = await getInventoryCountsByAudit(auditId);
+          totalEquipment = counts.equipment;
+          totalLevels = counts.levels;
+          totalRooms = counts.rooms;
+        } catch (e) {
+          console.error('[AuditDetail] Inventory counts fetch error:', e);
+        }
+
         setInventoryStats({
           totalSites,
           totalBuildings,
-          totalFloors,
+          totalFloors: totalLevels,
           totalRooms,
-          totalEquipment: 0,
+          totalEquipment,
         });
+
+        // Compute and persist completion percentage
+        const completion = computeAuditCompletion(auditData, {
+          totalSites,
+          totalBuildings,
+          totalEquipment,
+        });
+        if (completion !== auditData.completion_percentage) {
+          transformedAudit.completionPercentage = completion;
+          updateAudit(auditId, { completionPercentage: completion }).catch(() => {});
+        }
+        setAudit(transformedAudit);
 
         // Fetch invoices and get stats
         try {
@@ -126,14 +130,6 @@ const AuditDetail = () => {
           setInvoiceStats(invoiceStatsData);
         } catch (e) {
           console.warn('Error loading invoice stats:', e);
-        }
-
-        // Fetch measurements and get stats
-        try {
-          const measurementStatsData = await getMeasurementStats(auditId);
-          setMeasureStats(measurementStatsData);
-        } catch (e) {
-          console.warn('Error loading measurement stats:', e);
         }
 
         // Fetch activity log
@@ -145,11 +141,7 @@ const AuditDetail = () => {
         }
       } catch (error) {
         console.error('Error loading audit:', error);
-        toast({
-          title: 'Erreur',
-          description: 'Impossible de charger les détails de l\'audit',
-          variant: 'destructive',
-        });
+        toast.error("Impossible de charger les détails de l'audit");
       } finally {
         setLoading(false);
       }
@@ -170,9 +162,6 @@ const AuditDetail = () => {
 
     try {
       setSaving(true);
-
-      // Convert date string to ISO format
-      const activityDate = new Date(data.date).toISOString();
 
       const result = await logActivity(
         audit.id,
@@ -202,12 +191,23 @@ const AuditDetail = () => {
     }
   };
 
+  const handleDeleteActivity = async (activityId: string) => {
+    try {
+      await deleteActivity(activityId);
+      setActivities((prev) => prev.filter((a) => a.id !== activityId));
+      toast.success('Activité supprimée');
+    } catch (error) {
+      toast.error('Impossible de supprimer l\'activité');
+      throw error;
+    }
+  };
+
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0f111a] text-slate-200">
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-white/10 bg-[#0b0d14] px-6 py-8 shadow-2xl backdrop-blur">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-slate-400">Chargement de l'audit...</p>
+      <div className="flex min-h-screen items-center justify-center bg-[#0a0c14] text-slate-200">
+        <div className="flex flex-col items-center gap-3 rounded-2xl border border-slate-700/50 bg-[#0f111a] px-6 py-8">
+          <Loader2 className="h-7 w-7 animate-spin text-cyan-500" />
+          <p className="text-sm text-slate-400">Chargement de l'audit...</p>
         </div>
       </div>
     );
@@ -215,71 +215,88 @@ const AuditDetail = () => {
 
   if (!audit) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0f111a] text-slate-200">
-        <div className="space-y-2 rounded-2xl border border-white/10 bg-[#0b0d14] px-8 py-10 text-center shadow-2xl backdrop-blur">
-          <p className="text-lg font-medium text-white">Audit non trouvé</p>
-          <p className="text-slate-400">L'audit que vous recherchez n'existe pas ou a été supprimé</p>
+      <div className="flex min-h-screen items-center justify-center bg-[#0a0c14] text-slate-200">
+        <div className="space-y-2 rounded-2xl border border-slate-700/50 bg-[#0f111a] px-8 py-10 text-center">
+          <p className="text-base font-medium text-white">Audit non trouvé</p>
+          <p className="text-sm text-slate-400">
+            L'audit que vous recherchez n'existe pas ou a été supprimé
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-8 text-slate-50">
+    <div
+      className="min-h-screen bg-[#0a0c14] px-4 py-4 md:px-6 md:py-6 max-w-[1600px] mx-auto space-y-4 md:space-y-6 text-slate-100"
+      style={{
+        backgroundImage: `radial-gradient(circle, rgba(148,163,184,0.04) 1px, transparent 1px)`,
+        backgroundSize: '28px 28px',
+      }}
+    >
       <AuditHeader audit={audit} />
 
-      {/* Main Grid: 60/40 split */}
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_400px]">
-        {/* Left column - Activity Timeline */}
-        <div className="space-y-8">
-          {/* Map/Site selector placeholder */}
-          <div className="aspect-[21/9] rounded-xl border border-white/10 bg-[#0b0d14] p-8 text-center shadow-xl backdrop-blur">
-            <p className="text-slate-400">Carte des sites (à implémenter)</p>
-          </div>
-
-          {/* Activity Timeline */}
-          <div className="space-y-4 rounded-2xl border border-white/10 bg-[#0b0d14] p-6 shadow-xl backdrop-blur">
-            <h2 className="text-2xl font-semibold text-white">Historique d'activité</h2>
-            <AuditActivityTimeline
-              activities={activities}
-              onAddActivity={handleAddActivity}
-              loading={loading}
-            />
-          </div>
-        </div>
-
-        {/* Right column - KPIs & Quick actions */}
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-white/10 bg-[#0b0d14] p-6 shadow-xl backdrop-blur">
-            <AuditKPISection
-              invoiceStats={invoiceStats}
-              measureStats={measureStats}
-              inventoryStats={inventoryStats}
-              completionPercentage={audit.completionPercentage}
-            />
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-[#0b0d14] p-6 shadow-xl backdrop-blur">
-            <AuditQuickActions
-              onCreateAction={handleAddActivity}
-              auditId={audit.id}
-            />
-          </div>
-        </div>
+      {/* KPIs full width */}
+      <div className="bg-[#0f111a] border border-slate-700/50 rounded-xl p-5 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-slate-600/40 to-transparent" />
+        <AuditKPISection
+          invoiceStats={invoiceStats}
+          inventoryStats={inventoryStats}
+          completionPercentage={audit.completionPercentage}
+        />
       </div>
 
-      {/* Detailed sections - Tabs */}
-      <div className="border-t border-white/10 pt-8">
-        <div className="rounded-2xl border border-white/10 bg-[#0b0d14] p-6 shadow-xl backdrop-blur">
-          <AuditDetailTabs
-            invoiceCount={invoiceStats.total}
-            measureCount={measureStats.measurementCount}
-            equipmentCount={inventoryStats.totalEquipment}
-          />
-        </div>
+      {/* Modules — section principale, prioritaire */}
+      <div className="bg-[#0f111a] border border-slate-700/50 rounded-xl p-5 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-slate-600/40 to-transparent" />
+        <AuditDetailTabs
+          auditId={audit.id}
+          invoiceCount={invoiceStats.total}
+          equipmentCount={inventoryStats.totalEquipment}
+          inventoryStarted={
+            inventoryStats.totalSites > 0 ||
+            inventoryStats.totalBuildings > 0 ||
+            inventoryStats.totalFloors > 0 ||
+            inventoryStats.totalRooms > 0 ||
+            inventoryStats.totalEquipment > 0
+          }
+        />
       </div>
 
-      {/* Activity Creation Dialog */}
+      {/* Actions rapides */}
+      <div className="bg-[#0f111a] border border-slate-700/50 rounded-xl p-5 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-slate-600/40 to-transparent" />
+        <AuditQuickActions
+          onCreateAction={handleAddActivity}
+          auditId={audit.id}
+        />
+      </div>
+
+      {/* Historique d'activité — tout en bas */}
+      <div className="bg-[#0f111a] border border-slate-700/50 rounded-xl p-4 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-slate-600/40 to-transparent" />
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+            Historique d'activité
+          </h2>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleAddActivity}
+            className="h-7 text-xs text-slate-400 hover:text-slate-200 gap-1"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Ajouter
+          </Button>
+        </div>
+        <AuditActivityTimeline
+          activities={activities}
+          onAddActivity={handleAddActivity}
+          onDeleteActivity={handleDeleteActivity}
+          loading={loading}
+        />
+      </div>
+
       <AddActivityDialog
         isOpen={isActivityDialogOpen}
         onClose={() => setIsActivityDialogOpen(false)}

@@ -109,10 +109,10 @@ def _normalize_with_llm(clean_payload: Dict[str, Any]) -> Dict[str, Any]:
     bedrock_model_id = os.getenv("LLM_MODEL", "mistral.mistral-small-2402-v1:0")
     prompt = (PROMPT + f"JSON:\n{json.dumps(clean_payload, ensure_ascii=False)}")
     try:
-        brt = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1"))
+        brt = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
         body = {
             "prompt": prompt,
-            "max_tokens": 2048,
+            "max_tokens": 4096,
             "temperature": 0.0,
         }
         resp = brt.invoke_model(
@@ -161,7 +161,7 @@ def _analyze_energy_label_with_mistral(image_base64: str) -> Dict[str, Any]:
     )
 
     try:
-        brt = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1"))
+        brt = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
         body = {
             "messages" : [
                 {

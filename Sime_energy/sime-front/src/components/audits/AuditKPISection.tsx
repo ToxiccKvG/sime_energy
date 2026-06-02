@@ -1,148 +1,144 @@
-import { AuditInvoiceStats, AuditMeasureStats, AuditInventoryStats } from '@/types/auditActivity';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { FileText, Activity, Package, TrendingUp, CheckCircle, Zap } from 'lucide-react';
+import { AuditInvoiceStats, AuditInventoryStats } from '@/types/auditActivity';
+import { TrendingUp, FileText, Package } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
+import { cn } from '@/lib/utils';
 
 interface AuditKPISectionProps {
   invoiceStats: AuditInvoiceStats;
-  measureStats: AuditMeasureStats;
   inventoryStats: AuditInventoryStats;
   completionPercentage: number;
 }
 
-export function AuditKPISection({ 
-  invoiceStats, 
-  measureStats, 
+interface KpiCardProps {
+  borderColor: string;
+  icon: React.ReactNode;
+  label: string;
+  children: React.ReactNode;
+}
+
+function KpiCard({ borderColor, icon, label, children }: KpiCardProps) {
+  return (
+    <div
+      className={cn(
+        'bg-gradient-to-br from-[#151825] to-[#121520] border border-slate-700/40 rounded-lg p-4 space-y-2 border-l-2',
+        borderColor
+      )}
+    >
+      <div className="flex items-center gap-2">
+        {icon}
+        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
+          {label}
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function AuditKPISection({
+  invoiceStats,
   inventoryStats,
-  completionPercentage 
+  completionPercentage,
 }: AuditKPISectionProps) {
-  const processedPercentage = invoiceStats.total > 0 
-    ? Math.round((invoiceStats.processed / invoiceStats.total) * 100) 
-    : 0;
+  const invoiceProcessedPct =
+    invoiceStats.total > 0
+      ? Math.round((invoiceStats.processed / invoiceStats.total) * 100)
+      : 0;
 
   return (
-    <div className="space-y-6 text-slate-50">
-      <h3 className="text-lg font-semibold text-white">Indicateurs clés</h3>
-      
-      <div className="space-y-4">
-        {/* Completion progress */}
-        <Card className="border-white/10 bg-white/5 backdrop-blur">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium text-white">
-              <TrendingUp className="h-4 w-4 text-primary" />
-              Progression globale
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-slate-400">Avancement</span>
-              <span className="font-semibold text-white">{completionPercentage}%</span>
-            </div>
-            <Progress value={completionPercentage} className="h-2 bg-white/10" />
-          </CardContent>
-        </Card>
+    <div className="space-y-4">
+      <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-4">
+        Indicateurs clés
+      </p>
 
-        {/* Invoices */}
-        <Card className="border-white/10 bg-white/5 backdrop-blur">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium text-white">
-              <FileText className="h-4 w-4 text-primary" />
-              Factures SENELEC
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <div className="text-slate-400">Total</div>
-                <div className="text-2xl font-semibold text-white">{invoiceStats.total}</div>
-              </div>
-              <div>
-                <div className="text-slate-400">Traitées</div>
-                <div className="text-2xl font-semibold text-success">{invoiceStats.processed}</div>
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-400">Progression</span>
-                <span className="font-medium text-white">{processedPercentage}%</span>
-              </div>
-              <Progress value={processedPercentage} className="h-1.5 bg-white/10" />
-            </div>
-            {invoiceStats.totalAmount > 0 && (
-              <div className="border-t border-white/10 pt-2">
-                <div className="text-xs text-slate-500">Montant total reconnu</div>
-                <div className="text-xl font-semibold text-white">
-                  {invoiceStats.totalAmount.toLocaleString('fr-FR')} FCFA
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      {/* Progression globale */}
+      <KpiCard
+        borderColor="border-l-cyan-500"
+        icon={<TrendingUp className="w-3.5 h-3.5 text-cyan-400" />}
+        label="Progression globale"
+      >
+        <div className="flex items-end gap-2">
+          <span className="text-2xl font-mono font-bold text-slate-100">
+            {completionPercentage}
+          </span>
+          <span className="text-sm text-slate-400 mb-0.5">%</span>
+        </div>
+        <Progress
+          value={completionPercentage}
+          className="h-1 bg-slate-700"
+        />
+      </KpiCard>
 
-        {/* Measures */}
-        <Card className="border-white/10 bg-white/5 backdrop-blur">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium text-white">
-              <Activity className="h-4 w-4 text-chart-3" />
-              Mesures
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <div className="text-slate-400">Capteurs</div>
-                <div className="text-2xl font-semibold text-white">{measureStats.totalSensors}</div>
-              </div>
-              <div>
-                <div className="text-slate-400">Actifs</div>
-                <div className="text-2xl font-semibold text-chart-3">{measureStats.activeSensors}</div>
-              </div>
-            </div>
-            <div className="text-xs text-slate-500">
-              {measureStats.measurementCount.toLocaleString('fr-FR')} mesures collectées
-            </div>
-          </CardContent>
-        </Card>
+      {/* Factures SENELEC */}
+      <KpiCard
+        borderColor="border-l-amber-500"
+        icon={<FileText className="w-3.5 h-3.5 text-amber-400" />}
+        label="Factures SENELEC"
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <p className="text-xs text-slate-500">Total</p>
+            <p className="text-2xl font-mono font-bold text-slate-100">
+              {invoiceStats.total}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Traitées</p>
+            <p className="text-2xl font-mono font-bold text-emerald-400">
+              {invoiceStats.processed}
+            </p>
+          </div>
+        </div>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-500">Traitement</span>
+            <span className="text-xs text-slate-400 tabular-nums">{invoiceProcessedPct}%</span>
+          </div>
+          <Progress value={invoiceProcessedPct} className="h-1 bg-slate-700" />
+        </div>
+        {invoiceStats.totalAmount > 0 && (
+          <div className="pt-1 border-t border-slate-700/50">
+            <p className="text-xs text-slate-500">Montant total reconnu</p>
+            <p className="text-sm font-mono font-semibold text-slate-200">
+              {invoiceStats.totalAmount.toLocaleString('fr-FR')} FCFA
+            </p>
+          </div>
+        )}
+      </KpiCard>
 
-        {/* Inventory */}
-        <Card className="border-white/10 bg-white/5 backdrop-blur">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium text-white">
-              <Package className="h-4 w-4 text-chart-4" />
-              Inventaire
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Sites</span>
-                <span className="font-medium text-white">{inventoryStats.totalSites}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Bâtiments</span>
-                <span className="font-medium text-white">{inventoryStats.totalBuildings}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Équipements</span>
-                <span className="text-lg font-semibold text-white">{inventoryStats.totalEquipment}</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Status badge */}
-        <Card className="border-success/20 bg-success/10 backdrop-blur">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <CheckCircle className="h-5 w-5 text-success shrink-0" />
-              <div className="text-sm">
-                <div className="font-medium text-success">Aucune action en retard ✓</div>
-                <div className="text-success/80 text-xs">Toutes les tâches sont à jour</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Inventaire */}
+      <KpiCard
+        borderColor="border-l-emerald-500"
+        icon={<Package className="w-3.5 h-3.5 text-emerald-400" />}
+        label="Inventaire"
+      >
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+          <div>
+            <p className="text-xs text-slate-500">Sites</p>
+            <p className="text-2xl font-mono font-bold text-slate-100">
+              {inventoryStats.totalSites}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Bâtiments</p>
+            <p className="text-2xl font-mono font-bold text-slate-100">
+              {inventoryStats.totalBuildings}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Équipements</p>
+            <p className="text-2xl font-mono font-bold text-emerald-400">
+              {inventoryStats.totalEquipment}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Pièces</p>
+            <p className="text-2xl font-mono font-bold text-slate-100">
+              {inventoryStats.totalRooms}
+            </p>
+          </div>
+        </div>
+      </KpiCard>
     </div>
   );
 }

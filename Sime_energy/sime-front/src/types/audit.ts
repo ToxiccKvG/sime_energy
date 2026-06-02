@@ -1,3 +1,55 @@
+export interface PVCheckboxItem {
+  id: string;
+  label: string;
+  checked: boolean;
+  comment?: string;
+}
+
+// One timestamped reading for a senelec meter row
+export interface PVTableRowReading {
+  id: string;
+  dateTime: string;
+  value: string;
+}
+
+export interface PVTableRow {
+  id: string;
+  label: string;
+  // kept for SystemTableEditor (single-value mode) and backward compat
+  dateTime: string;
+  value: string;
+  subGroup?: string;
+  // multi-reading support (used by SenelecTableEditor)
+  readings?: PVTableRowReading[];
+}
+
+// One Woyofal prepaid meter entry: code on meter display → value read
+export interface WoyofalEntry {
+  id: string;
+  code: string;
+  valeur: string;
+  dateTime?: string;
+}
+
+export interface PVSectionData {
+  id: string;
+  fields: Record<string, string>;
+  tableRows?: PVTableRow[];
+  checkboxItems?: PVCheckboxItem[];
+  extraCheckboxItems?: PVCheckboxItem[];
+  freeText?: string;
+  customFields?: { id: string; key: string; value: string }[];
+  woyofalEntries?: WoyofalEntry[];
+}
+
+export interface PVQuestionnaire {
+  id: string;
+  name: string;
+  sections: PVSectionData[];
+  customFields: { id: string; key: string; value: string }[];
+  createdAt: string;
+}
+
 export interface AuditSite {
   id: string;
   name: string;
@@ -116,6 +168,7 @@ export interface Audit {
   endDate?: string;
   completionPercentage: number;
   responsable?: string;
+  clientType?: 'INDUSTRIE' | 'SERVICES' | 'AUTRE';
   generalInfo: AuditGeneralInfo;
   personnel: AuditPersonnel;
   capacites: AuditCapacites;
