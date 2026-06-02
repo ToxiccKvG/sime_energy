@@ -792,9 +792,22 @@ export function GenericNettoyage({
               <tr>
                 <th className="w-10 px-2 py-2 text-slate-600 border-b border-r border-white/10 bg-white/5 text-right font-normal select-none">#</th>
                 {columns.filter(c => visibleCols.has(c)).map(col => (
-                  <th key={col} className="px-3 py-2 text-left border-b border-r border-white/10 bg-white/5 whitespace-nowrap">
-                    <span className="text-slate-300 font-medium">{col}</span>
-                    <span className="text-slate-600 ml-2 text-[10px]">{colTypes[col]}</span>
+                  <th key={col} className="group px-3 py-2 text-left border-b border-r border-white/10 bg-white/5 whitespace-nowrap">
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-300 font-medium">{col}</span>
+                      <span className="text-slate-600 ml-1 text-[10px]">{colTypes[col]}</span>
+                      <button
+                        onClick={() => setSelectedCols(prev => {
+                          const base = prev.size === 0 ? new Set(Array.from(defaultVisibleCols)) : new Set(prev);
+                          base.delete(col);
+                          return base;
+                        })}
+                        className="ml-auto opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-opacity"
+                        title={`Masquer ${col}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
                   </th>
                 ))}
               </tr>
