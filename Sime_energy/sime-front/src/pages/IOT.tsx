@@ -1,6 +1,6 @@
 import {
   Zap, BarChart2,
-  Database, Eraser, FolderOpen, LayoutDashboard,
+  Database, Eraser, FolderOpen, LayoutDashboard, Settings,
 } from 'lucide-react';
 import { IOTProvider, useIOT } from '@/components/iot/IOTContext';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -9,15 +9,17 @@ import { SourcesTab }      from '@/components/iot/SourcesTab';
 import { FichiersTab }     from '@/components/iot/FichiersTab';
 import { AnalyseTab }      from '@/components/iot/AnalyseTab';
 import { NettoyageTab }    from '@/components/iot/NettoyageTab';
+import { ParametresTab }   from '@/components/iot/ParametresTab';
 import { Badge }           from '@/components/ui/badge';
 
 // ---- Définition des onglets ----
 const TABS = [
-  { id: 'dashboard', label: 'Dashboard',  icon: LayoutDashboard, description: 'Vue temps réel multi-sites' },
-  { id: 'sources',   label: 'Sources',    icon: Database,        description: 'Capteurs & sources' },
-  { id: 'fichiers',  label: 'Fichiers',   icon: FolderOpen,      description: 'Import & bibliothèque' },
-  { id: 'nettoyage', label: 'Nettoyage',  icon: Eraser,          description: 'Tri · filtre · édition' },
-  { id: 'tcd',       label: 'Analyse',    icon: BarChart2,       description: 'Courbe · TCD · Heatmap · Distribution' },
+  { id: 'dashboard',  label: 'Dashboard',   icon: LayoutDashboard, description: 'Vue temps réel multi-sites' },
+  { id: 'sources',    label: 'Sources',     icon: Database,        description: 'Capteurs & sources' },
+  { id: 'fichiers',   label: 'Fichiers',    icon: FolderOpen,      description: 'Import & bibliothèque' },
+  { id: 'nettoyage',  label: 'Nettoyage',   icon: Eraser,          description: 'Tri · filtre · édition' },
+  { id: 'tcd',        label: 'Analyse',     icon: BarChart2,       description: 'Courbe · TCD · Heatmap · Distribution' },
+  { id: 'parametres', label: 'Paramètres',  icon: Settings,        description: 'Comptes Shelly Cloud' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -109,11 +111,12 @@ function IOTInner() {
 
       {/* Contenu onglet */}
       <div className="min-h-[400px]">
-        {tabId === 'dashboard' && <DashboardTab />}
-        {tabId === 'sources'   && <SourcesTab />}
-        {tabId === 'fichiers'  && <FichiersTab />}
-        {tabId === 'nettoyage' && <NettoyageTab />}
-        {tabId === 'tcd'       && <AnalyseTab />}
+        {tabId === 'dashboard'  && <DashboardTab />}
+        {tabId === 'sources'    && <SourcesTab />}
+        {tabId === 'fichiers'   && <FichiersTab />}
+        {tabId === 'nettoyage'  && <NettoyageTab />}
+        {tabId === 'tcd'        && <AnalyseTab />}
+        {tabId === 'parametres' && <ParametresTab />}
       </div>
     </div>
   );

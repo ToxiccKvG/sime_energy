@@ -4,7 +4,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutDashboard, RefreshCw, Pause, Play, History } from 'lucide-react';
+import { LayoutDashboard, RefreshCw, Pause, Play, History, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -14,6 +14,8 @@ import {
   type ShellyClRow, type Device, type EnergyAgg, type HeatmapCell, type CalendarDay, type Alert,
   type Filters,
 } from '@/lib/iot-dashboard-service';
+import { fetchAccounts, type ShellyAccount } from '@/lib/shelly-account-service';
+import { useIOT } from '@/components/iot/IOTContext';
 import { FilterBar } from './dashboard/FilterBar';
 import { KPIBand } from './dashboard/KPIBand';
 import { TopConsumersCard } from './dashboard/TopConsumersCard';
@@ -39,11 +41,34 @@ export function DashboardTab() {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [accountAlerts, setAccountAlerts] = useState<ShellyAccount[]>([]);
+  const { setActiveTab } = useIOT();
 
   // Compteur "il y a Xs"
   const [, forceTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => forceTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Vérification des comptes Shelly en erreur (toutes les 60s)
+  useEffect(() => {
+    async function checkAccounts() {
+      try {
+        const accounts = await fetchAccounts();
+        const now = Date.now();
+        const problems = accounts.filter(a => {
+          if (!a.actif) return false;
+          if (a.last_poll_status === 'error') return true;
+          if (!a.last_poll_at) return false;
+          const elapsed = (now - new Date(a.last_poll_at).getTime()) / 1000;
+          return elapsed > 300; // > 5 min sans données
+        });
+        setAccountAlerts(problems);
+      } catch { /* silencieux */ }
+    }
+    checkAccounts();
+    const id = setInterval(checkAccounts, 60_000);
     return () => clearInterval(id);
   }, []);
 
@@ -116,6 +141,34 @@ export function DashboardTab() {
 
   return (
     <div className="space-y-3">
+
+      {/* Bannière alertes comptes Shelly */}
+      {accountAlerts.length > 0 && (
+        <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
+          <AlertTriangle className="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-red-300 text-sm font-medium">
+              {accountAlerts.length === 1
+                ? `Collecte interrompue — ${accountAlerts[0].label ?? accountAlerts[0].site}`
+                : `${accountAlerts.length} comptes en erreur`}
+            </p>
+            <p className="text-red-400/80 text-xs mt-0.5">
+              {accountAlerts.map(a =>
+                a.last_poll_status === 'error'
+                  ? `${a.site} : ${(a.last_error_msg ?? '').slice(0, 60)}`
+                  : `${a.site} : aucune donnée depuis plus de 5 min`
+              ).join(' · ')}
+            </p>
+          </div>
+          <button
+            onClick={() => setActiveTab('parametres')}
+            className="shrink-0 text-xs text-red-300 hover:text-white underline underline-offset-2"
+          >
+            Voir Paramètres →
+          </button>
+        </div>
+      )}
+
       {/* Barre de statut */}
       <div className="flex items-center justify-between gap-3 px-2 flex-wrap">
         <div className="flex items-center gap-2">
