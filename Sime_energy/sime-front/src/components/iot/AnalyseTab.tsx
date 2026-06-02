@@ -1588,7 +1588,7 @@ export function AnalyseTab() {
   }, [filteredRows]);
 
   const correlationData = useMemo(() =>
-    filteredRows.map(r => ({ x: toDate(r.date).getDay(), y: +fmt2(r.kwhNet) })),
+    filteredRows.map(r => ({ x: toDate(r.date).getDay(), y: +safeNum(r.kwhNet, 0).toFixed(2) })),
     [filteredRows]);
 
   // ---- Couleur du profil actif ----

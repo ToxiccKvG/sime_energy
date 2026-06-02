@@ -869,8 +869,51 @@ export function NettoyageTab() {
     setSelectedIndices(new Set());
     // Marquer toutes les issues comme traitées
     setIssues(prev => prev.map(i => ({ ...i, ignored: true })));
+
+    // Si un fichier est chargé, sauvegarder automatiquement et rediriger vers fichiers
+    if (localFileName) {
+      const rowsRecalculees = ajouterCumulatifs(
+        rows.map(r => ({ ...r, kwhNet: Math.max(0, r.kwhTotal - r.kwhRetourTotal) }))
+      );
+      const serializedRows = rowsRecalculees.map(r => ({
+        ...r,
+        date: r.date instanceof Date ? r.date.toISOString() : r.date,
+      })) as unknown as Record<string, unknown>[];
+      const columns = serializedRows.length > 0 ? Object.keys(serializedRows[0]) : [];
+      const preview = serializedRows.slice(0, 10);
+      const sourceFile = localFileId ? state.files.find(f => f.id === localFileId) : null;
+      const cleanedName = sourceFile
+        ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') + ' - nettoye'
+        : `${localFileName} - nettoye`;
+      const existingCleaned = sourceFile
+        ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
+        : null;
+      const cleanedId = existingCleaned?.id ?? `clean-${Date.now()}`;
+      if (existingCleaned) {
+        updateFile(existingCleaned.id, {
+          name: cleanedName, rowCount: rowsRecalculees.length, columns, preview,
+          rawData: serializedRows, statut: 'nettoyé', uploadedAt: new Date(),
+        });
+      } else {
+        addFile({
+          id: cleanedId, name: cleanedName, type: sourceFile?.type ?? 'shelly',
+          sourceId: sourceFile?.sourceId, uploadedAt: new Date(),
+          rowCount: rowsRecalculees.length, columns, preview,
+          rawData: serializedRows, statut: 'nettoyé',
+          taille: sourceFile?.taille, parentId: sourceFile?.id,
+        });
+      }
+      setShellyRows(rowsRecalculees);
+      setSelectedFile(cleanedId);
+      setLocalRows([]);
+      setLocalFileName(null);
+      setLocalFileId(null);
+      setActiveTab('fichiers');
+      return;
+    }
+
     setAutoCleanReport(report.length > 0 ? report : ['Aucune action nécessaire — données déjà propres']);
-  }, [activeRows, pushUndo, setActiveRows]);
+  }, [activeRows, pushUndo, setActiveRows, localFileName, localFileId, state.files, updateFile, addFile, setShellyRows, setSelectedFile, setActiveTab]);
 
   // ============================================================
   // OUTILS MANUELS
@@ -1316,6 +1359,7 @@ export function NettoyageTab() {
           setGenericRows([]);
           setGenericFileName(null);
           setGenericFileId(null);
+          setActiveTab('fichiers');
         }}
       />
     );
