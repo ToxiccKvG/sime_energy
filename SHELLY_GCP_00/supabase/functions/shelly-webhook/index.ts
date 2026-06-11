@@ -17,6 +17,20 @@ Deno.serve(async (req: Request) => {
     return new Response("Method not allowed", { status: 405 });
   }
 
+  // Vérification du secret webhook.
+  // Configurer SHELLY_WEBHOOK_SECRET dans Supabase > Edge Functions > Secrets,
+  // puis ajouter ?secret=<valeur> dans l'URL configurée sur chaque appareil Shelly.
+  const webhookSecret = Deno.env.get("SHELLY_WEBHOOK_SECRET");
+  if (webhookSecret) {
+    const reqUrl = new URL(req.url);
+    if (reqUrl.searchParams.get("secret") !== webhookSecret) {
+      return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
   let payload: Record<string, unknown>;
   try {
     payload = await req.json();

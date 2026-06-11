@@ -128,12 +128,12 @@ export function EnergyFlowCard({ snapshot, energyAgg, period }: Props) {
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex flex-wrap items-start sm:items-center justify-between mb-3 gap-2">
         <h3 className="text-white font-semibold text-sm flex items-center gap-2">
           <Zap className="h-4 w-4 text-yellow-400" /> Flux énergétique — Académie CER2E
         </h3>
         <span className="text-slate-500 text-xs">
-          {isHistoric ? 'Historique' : 'Live'} · M1 SENELEC · M2 Sélecteur · M3 Charges · M5 PV
+          {isHistoric ? 'Historique' : 'Live'} · M1 · M2 · M3 · M5 PV
         </span>
       </div>
 
@@ -147,7 +147,7 @@ export function EnergyFlowCard({ snapshot, energyAgg, period }: Props) {
           <NodeHist icon={Building2} color="#ef4444" name="M3 — Charges"    kwh={hCharge}  sub="Consommation totale" />
 
           <div className="md:col-span-3 md:col-start-1 mt-2">
-            <div className="grid grid-cols-[1fr,auto,1fr] gap-2 items-center">
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-2 items-center">
               <NodeHist icon={Sun} color="#facc15" name="M5 — PV" kwh={hPV} sub="Production solaire" />
               <Arrow value={autoConsoKwhHist} unit="kWh" color="#22c55e" dim={hPV === 0} />
               <div className="rounded-xl border p-3 text-center bg-green-500/5 border-green-500/30">
@@ -176,7 +176,7 @@ export function EnergyFlowCard({ snapshot, energyAgg, period }: Props) {
           <NodeLive icon={Building2} color="#ef4444" name="M3 — Charges"   power={pCharge}  energy={eCharge} sub="Consommation totale" />
 
           <div className="md:col-span-3 md:col-start-1 mt-2">
-            <div className="grid grid-cols-[1fr,auto,1fr] gap-2 items-center">
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-2 items-center">
               <NodeLive icon={Sun} color="#facc15" name="M5 — PV" power={pPV} energy={ePV} sub="Production solaire" />
               <Arrow value={Math.min(pPV, pCharge)} color="#22c55e" dim={pPV === 0} />
               <div className="rounded-xl border p-3 text-center bg-green-500/5 border-green-500/30">

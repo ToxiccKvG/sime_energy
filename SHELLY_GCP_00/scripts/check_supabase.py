@@ -155,7 +155,7 @@ print(f"\n  → {len(seen)} appareils distincts dans les 500 dernières lignes")
 sep("4. QUALITÉ — taux de remplissage par famille (dernière heure)")
 one_hour_ago = (now - __import__('datetime').timedelta(hours=1)).isoformat()
 rows_1h = get("shelly_cl", {
-    "select": "device_family,power_w,voltage_v,temperature,humidity,battery_level,wh_counter,state",
+    "select": "device_family,power_w,voltage_v,temperature,humidity,battery_level,wh_tot,state",
     "ts": f"gte.{one_hour_ago}",
     "limit": "10000",
 })
@@ -173,7 +173,7 @@ for r in rows_1h:
     if r.get("temperature")   is not None: s["temp"]     += 1
     if r.get("humidity")      is not None: s["hum"]      += 1
     if r.get("battery_level") is not None: s["bat"]      += 1
-    if r.get("wh_counter")    is not None: s["wh"]       += 1
+    if r.get("wh_tot")         is not None: s["wh"]       += 1
     if r.get("state")         is not None: s["state"]    += 1
 
 print(f"  {'FAMILLE':<16} {'LIGNES':>7}  {'power%':>7} {'volt%':>6} {'temp%':>6} {'hum%':>5} {'bat%':>5} {'wh%':>5} {'state%':>7}")
@@ -190,7 +190,7 @@ if anomalies:
         print(f"\n  [{site}] {name}  (pièce: {room or '-'}, type: {dtype})")
         for f in flags:
             print(f"      ⚠  {f}")
-        for k in ("power_w","voltage_v","p_a","p_b","p_c","temperature","humidity","battery_level","wh_counter","ts"):
+        for k in ("power_w","voltage_v","p_a","p_b","p_c","temperature","humidity","battery_level","wh_tot","ts"):
             if r.get(k) is not None:
                 print(f"         {k}: {r[k]}")
 else:

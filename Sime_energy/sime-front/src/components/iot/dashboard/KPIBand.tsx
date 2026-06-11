@@ -99,7 +99,7 @@ export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg 
   }
 
   return (
-    <div className={`grid gap-3 ${sites.length === 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
+    <div className={`grid gap-3 ${sites.length === 1 ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
       {sites.map(s => {
         const account = ACCOUNT_BY_SITE[s.site] ?? s.site;
         const alerts = alertsBySite[s.site] ?? 0;
@@ -120,14 +120,14 @@ export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg 
           return (
             <div key={s.site}
               className="rounded-xl border border-amber-500/20 bg-gradient-to-br from-amber-500/5 to-white/[0.02] p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h3 className="text-white font-bold text-base flex items-center gap-2">
                     <Activity className="h-4 w-4 text-amber-400" /> {s.site}
                   </h3>
                   <p className="text-slate-500 text-[10px] uppercase tracking-wide mt-0.5">{account}</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {hs.nbSubDevices > 0 && (
                     <span className="text-[10px] text-slate-400 bg-white/5 px-2 py-0.5 rounded-full">
                       {hs.nbSubDevices} sous-appareils
@@ -147,7 +147,7 @@ export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg 
                 </p>
               ) : (
                 <>
-                  <div className={`grid gap-2 ${hs.kwhPV > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                  <div className={`grid gap-2 ${hs.kwhPV > 0 ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2'}`}>
                     {/* Consommation totale — M3 Charges */}
                     <div className="rounded-lg bg-amber-500/5 border border-amber-500/20 p-3">
                       <p className="text-[10px] text-slate-400 uppercase tracking-wide flex items-center gap-1">

@@ -72,21 +72,21 @@ export function HeatmapCard({ cells }: Props) {
             <tr>
               <th className="text-slate-500 text-right font-normal pr-2 text-[10px]">Heure →</th>
               {Array.from({ length: 24 }, (_, h) => (
-                <th key={h} className="text-slate-500 font-normal text-[9px] w-6">{h}</th>
+                <th key={h} className="text-slate-500 font-normal text-[9px] w-3 md:w-6">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {devices.slice(0, 30).map(d => (
               <tr key={d.id}>
-                <td className="text-slate-300 text-right pr-2 truncate max-w-[180px]" title={d.name}>
-                  {d.name.length > 22 ? d.name.slice(0, 20) + '…' : d.name}
+                <td className="text-slate-300 text-right pr-2 truncate max-w-[80px] sm:max-w-[130px] md:max-w-[180px]" title={d.name}>
+                  {d.name.length > 14 ? d.name.slice(0, 12) + '…' : d.name}
                 </td>
                 {d.hours.map((kwh, h) => {
                   const intensity = max > 0 ? kwh / max : 0;
                   return (
                     <td key={h}
-                      className="w-6 h-6 rounded"
+                      className="w-3 h-3 md:w-6 md:h-6 rounded"
                       style={{ backgroundColor: colorFor(intensity) }}
                       title={`${d.name} · ${h}h : ${fmtFr(kwh, 3)} kWh`} />
                   );

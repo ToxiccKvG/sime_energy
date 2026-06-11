@@ -1,7 +1,8 @@
 // ============================================================
 // IOT MODULE — Service Dashboard temps réel
 // Toutes les requêtes Supabase pour la vue globale multi-sites.
-// Tables : shelly_cl (brut minute) · shelly_cl_horaire (agrégé heure)
+// Tables : shelly_cl (brut minute) · shelly_cl_horaire (agrégé heure pour ProfilChargeTab)
+// KPIs 7j/30j : RPC fn_energy_by_device (delta wh_tot sur shelly_cl, plus précis)
 // ============================================================
 
 import { supabase } from '@/lib/supabase';
@@ -382,33 +383,26 @@ export async function fetchEnergyByDevice(
     return result.sort((a, b) => b.kwh - a.kwh);
   }
 
-  // ── Modes 7d / 30d : table horaire shelly_cl_horaire ────────────────────────
-  let q = supabase
-    .from('shelly_cl_horaire')
-    .select('device_id,name,site,device_family,wh_conso,ts_heure')
-    .gte('ts_heure', since)
-    .lte('ts_heure', until)
-    .limit(50000);
-  if (filters.sites.length > 0)     q = q.in('site', filters.sites);
-  if (filters.families.length > 0)  q = q.in('device_family', filters.families);
-  if (filters.deviceIds.length > 0) q = q.in('device_id', filters.deviceIds);
-  const { data, error } = await q;
+  // ── Modes 7d / 30d : RPC fn_energy_by_device (delta wh_tot sur shelly_cl) ──
+  // Plus précis que shelly_cl_horaire : calcul en Wh réels, pas avg(power_w).
+  const sinceZ = since.endsWith('Z') ? since : `${since}Z`;
+  const untilZ = until.endsWith('Z') ? until : `${until}Z`;
+  const { data, error } = await supabase.rpc('fn_energy_by_device', {
+    p_since:      sinceZ,
+    p_until:      untilZ,
+    p_sites:      filters.sites.length > 0       ? filters.sites      : null,
+    p_families:   filters.families.length > 0    ? filters.families   : null,
+    p_device_ids: filters.deviceIds.length > 0   ? filters.deviceIds  : null,
+  });
   if (error) throw error;
-
-  const agg = new Map<string, EnergyAgg>();
-  for (const r of data ?? []) {
-    const cur = agg.get(r.device_id) ?? {
-      device_id: r.device_id,
-      name:      r.name ?? r.device_id,
-      site:      r.site ?? '',
-      room:      null,
-      family:    (r.device_family as DeviceFamily) ?? 'INCONNU',
-      kwh:       0,
-    };
-    cur.kwh += Number(r.wh_conso ?? 0) / 1000;
-    agg.set(r.device_id, cur);
-  }
-  return Array.from(agg.values()).sort((a, b) => b.kwh - a.kwh);
+  return (data ?? []).map((r: any) => ({
+    device_id: r.device_id,
+    name:      r.name ?? r.device_id,
+    site:      r.site ?? '',
+    room:      null,
+    family:    (r.device_family as DeviceFamily) ?? 'INCONNU',
+    kwh:       Number(r.kwh ?? 0),
+  }));
 }
 
 // ── 7. Heatmap appareils × heures (24 dernières heures par défaut) ─

@@ -78,6 +78,9 @@ select cron.schedule(
 select cron.unschedule('poll-shelly-every-minute');
 
 -- Créer le job
+-- IMPORTANT : remplacer <SERVICE_ROLE_JWT> par la valeur réelle depuis
+--   Dashboard Supabase > Settings > API > service_role key
+--   NE PAS committer le JWT réel dans git.
 select cron.schedule(
   'poll-shelly-every-minute',
   '* * * * *',
@@ -87,7 +90,7 @@ select cron.schedule(
         headers := '{"Content-Type":"application/json","Authorization":"Bearer %s"}'::jsonb,
         body    := '{}'::jsonb
     )$$,
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFzbnpmYXZreGt2ZHR5d3hyc3BrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDg2NTY1OCwiZXhwIjoyMDkwNDQxNjU4fQ.giXLBVugKO66hgybEMoKqTlXg-tQfwRENVOLo9BFhgE'
+    '<SERVICE_ROLE_JWT>'
   )
 );
 

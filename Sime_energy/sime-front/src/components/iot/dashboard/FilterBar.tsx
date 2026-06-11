@@ -85,7 +85,7 @@ function MultiPopover<T extends string>({
           <ChevronDown className="h-3 w-3 text-slate-400" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-64 bg-[#1a1d2e] border-white/20 p-2" align="start">
+      <PopoverContent className="w-[min(16rem,90vw)] bg-[#1a1d2e] border-white/20 p-2" align="start">
         <div className="flex items-center justify-between px-2 py-1 mb-1">
           <span className="text-slate-300 text-xs font-medium">
             {label}
@@ -277,12 +277,12 @@ export function FilterBar({ filters, onChange }: Props) {
 
         {/* Sélecteurs temporels — visibles uniquement en mode historique */}
         {filters.period === '1h' && (
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Input
               type="date"
               value={filters.historicDate}
               onChange={e => onChange({ ...filters, historicDate: e.target.value })}
-              className="w-36 h-7 bg-white/5 border-white/20 text-white text-xs px-2"
+              className="w-full sm:w-36 h-7 bg-white/5 border-white/20 text-white text-xs px-2"
             />
             <select
               value={filters.historicHour}
@@ -301,24 +301,24 @@ export function FilterBar({ filters, onChange }: Props) {
             type="date"
             value={filters.historicDate}
             onChange={e => onChange({ ...filters, historicDate: e.target.value })}
-            className="w-36 h-7 bg-white/5 border-white/20 text-white text-xs px-2"
+            className="w-full sm:w-36 h-7 bg-white/5 border-white/20 text-white text-xs px-2"
           />
         )}
 
         {(filters.period === '7d' || filters.period === '30d') && (
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Input
               type="date"
               value={filters.historicDateStart}
               onChange={e => onChange({ ...filters, historicDateStart: e.target.value })}
-              className="w-36 h-7 bg-white/5 border-white/20 text-white text-xs px-2"
+              className="w-full sm:w-36 h-7 bg-white/5 border-white/20 text-white text-xs px-2"
             />
             <span className="text-slate-500 text-xs">→</span>
             <Input
               type="date"
               value={filters.historicDateEnd}
               onChange={e => onChange({ ...filters, historicDateEnd: e.target.value })}
-              className="w-36 h-7 bg-white/5 border-white/20 text-white text-xs px-2"
+              className="w-full sm:w-36 h-7 bg-white/5 border-white/20 text-white text-xs px-2"
             />
           </div>
         )}

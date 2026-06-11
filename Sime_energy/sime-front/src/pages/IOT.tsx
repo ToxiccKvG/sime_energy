@@ -41,7 +41,7 @@ function IOTInner() {
   return (
     <div className="space-y-6">
       {/* En-tête */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-blue-600/30 border border-blue-500/50 flex items-center justify-center">
@@ -55,7 +55,7 @@ function IOTInner() {
         </div>
 
         {/* Indicateurs rapides */}
-        <div className="flex gap-3 text-xs text-slate-400">
+        <div className="flex flex-wrap gap-2 text-xs text-slate-400">
           {sources.filter(s => s.actif).length > 0 && (
             <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
               <p className="text-blue-400 font-bold text-sm">{sources.filter(s => s.actif).length}</p>

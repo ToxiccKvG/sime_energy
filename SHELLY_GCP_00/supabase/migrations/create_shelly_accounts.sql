@@ -35,9 +35,11 @@ CREATE POLICY "shelly_accounts_authenticated_rw" ON shelly_accounts
   USING (auth.role() = 'authenticated')
   WITH CHECK (auth.role() = 'authenticated');
 
--- Pré-peupler avec les 3 comptes existants
--- (remplacer les valeurs par celles du .env avant d'exécuter)
+-- Pré-peupler avec les comptes Shelly Cloud.
+-- Les auth_keys réelles sont dans Supabase Dashboard > Table Editor > shelly_accounts
+-- ou dans Settings > Edge Functions > Secrets (variable SHELLY_ACCOUNTS).
+-- NE PAS committer les auth_keys réelles dans git.
 INSERT INTO shelly_accounts (site, label, auth_key, server_url) VALUES
-  ('Ma Maison',      'Compte 1 — Ma Maison',      'MWY5NDU1dWlkEF970F841898E8150A8ACAC2A194A97237068E65120C14FD4545DCB84BE8DC0C76D2CD4525F59FA7', 'https://shelly-88-eu.shelly.cloud'),
-  ('Académie CER2E', 'Compte 2 — Académie CER2E', 'MjI4MGY3dWlkA47CD089434DECBC1266C46BBD0DA4C848DB7425EE1DED728EF2E4EAA52538B5A6869D5C9F4A244E', 'https://shelly-97-eu.shelly.cloud')
+  ('Ma Maison',      'Compte 1 — Ma Maison',      '<AUTH_KEY_MA_MAISON>',      'https://shelly-88-eu.shelly.cloud'),
+  ('Académie CER2E', 'Compte 2 — Académie CER2E', '<AUTH_KEY_ACADEMIE_CER2E>', 'https://shelly-97-eu.shelly.cloud')
 ON CONFLICT (site) DO NOTHING;
