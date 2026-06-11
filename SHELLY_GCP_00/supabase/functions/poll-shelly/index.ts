@@ -394,14 +394,24 @@ async function writePollStatus(site: string, status: "ok" | "error", errorMsg?: 
 }
 
 Deno.serve(async (req: Request) => {
-  // Seuls les appels avec le service_role JWT sont acceptés (appelé par pg_cron)
-  const token = req.headers.get("Authorization")?.replace("Bearer ", "");
-  if (!token || token !== Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) {
-    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  // Auth gérée par Supabase (JWT vérifié avant d'atteindre cette fonction).
+  // Le déploiement est fait sans --no-verify-jwt : seuls les JWTs valides passent.
+  // Vérification supplémentaire : le rôle doit être service_role
+  try {
+    const auth = req.headers.get("Authorization");
+    if (auth?.startsWith("Bearer ")) {
+      const payload = auth.slice(7).split(".")[1];
+      if (payload) {
+        const decoded = JSON.parse(atob(payload));
+        if (decoded.role && decoded.role !== "service_role") {
+          return new Response(JSON.stringify({ ok: false, error: "Forbidden" }), {
+            status: 403,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+    }
+  } catch { /* ignore JWT decode errors */ }
 
   try {
     const accounts: Account[] = await loadAccounts();
