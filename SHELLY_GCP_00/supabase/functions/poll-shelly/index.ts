@@ -393,7 +393,16 @@ async function writePollStatus(site: string, status: "ok" | "error", errorMsg?: 
     .eq("site", site);
 }
 
-Deno.serve(async (_req: Request) => {
+Deno.serve(async (req: Request) => {
+  // Seuls les appels avec le service_role JWT sont acceptés (appelé par pg_cron)
+  const token = req.headers.get("Authorization")?.replace("Bearer ", "");
+  if (!token || token !== Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) {
+    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   try {
     const accounts: Account[] = await loadAccounts();
     const now=new Date();

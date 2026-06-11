@@ -85,19 +85,21 @@ export function StatusGridCard({ snapshot, allDevices, alertDeviceIds }: Props) 
         <h3 className="text-white font-semibold text-sm flex items-center gap-2">
           <CircleOff className="h-4 w-4 text-cyan-400" /> État des appareils
         </h3>
-        <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-lg p-0.5 text-xs">
-          {([
-            { key: 'all',     label: `Tous (${counts.all})` },
-            { key: 'on',      label: `On (${counts.on})` },
-            { key: 'off',     label: `Off (${counts.off})` },
-            { key: 'offline', label: `Offline (${counts.offline})` },
-            { key: 'alert',   label: `Alertes (${counts.alert})` },
-          ] as { key: FilterStatus; label: string }[]).map(b => (
-            <button key={b.key} onClick={() => setFilter(b.key)}
-              className={`px-2 py-1 rounded transition-colors ${filter === b.key ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-              {b.label}
-            </button>
-          ))}
+        <div className="overflow-x-auto">
+          <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-lg p-0.5 text-xs min-w-max">
+            {([
+              { key: 'all',     label: `Tous (${counts.all})` },
+              { key: 'on',      label: `On (${counts.on})` },
+              { key: 'off',     label: `Off (${counts.off})` },
+              { key: 'offline', label: `Offline (${counts.offline})` },
+              { key: 'alert',   label: `Alertes (${counts.alert})` },
+            ] as { key: FilterStatus; label: string }[]).map(b => (
+              <button key={b.key} onClick={() => setFilter(b.key)}
+                className={`px-2 py-1 rounded transition-colors whitespace-nowrap ${filter === b.key ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                {b.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

@@ -49,7 +49,7 @@ export function PhaseQualityCard({ snapshot }: Props) {
         </h3>
         {meters3PH.length > 1 && (
           <Select value={c.device_id} onValueChange={setSelectedId}>
-            <SelectTrigger className="w-56 h-7 text-xs bg-white/5 border-white/20 text-white"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full sm:w-56 h-7 text-xs bg-white/5 border-white/20 text-white"><SelectValue /></SelectTrigger>
             <SelectContent className="bg-[#1a1d2e] border-white/20">
               {meters3PH.map(m => <SelectItem key={m.device_id} value={m.device_id}>{m.name}</SelectItem>)}
             </SelectContent>
@@ -61,7 +61,7 @@ export function PhaseQualityCard({ snapshot }: Props) {
         <span className="text-white font-medium">{c.name}</span> · {c.site}{c.room ? ' · ' + c.room : ''}
       </p>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
         {/* Tensions */}
         {v.map((val, idx) => {
           const ok = val >= 220 && val <= 245;
@@ -92,7 +92,7 @@ export function PhaseQualityCard({ snapshot }: Props) {
           </div>
         ))}
 
-        <div className={`col-span-3 rounded-lg p-3 text-center border ${
+        <div className={`col-span-2 sm:col-span-3 rounded-lg p-3 text-center border ${
           desequilibre > 5 ? 'bg-amber-500/10 border-amber-500/30' :
           desequilibre > 2 ? 'bg-yellow-500/5 border-yellow-500/20' :
                               'bg-green-500/5 border-green-500/20'

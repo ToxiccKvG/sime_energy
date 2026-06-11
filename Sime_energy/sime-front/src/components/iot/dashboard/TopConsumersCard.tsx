@@ -57,7 +57,7 @@ export function TopConsumersCard({ snapshot, energyAgg, period }: Props) {
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex flex-wrap items-start sm:items-center justify-between mb-3 gap-2">
         <h3 className="text-white font-semibold text-sm flex items-center gap-2">
           <TrendingUp className="h-4 w-4 text-orange-400" />
           {isHistoric ? 'Top 10 consommateurs (période)' : 'Top 10 consommateurs (live)'}
@@ -73,12 +73,12 @@ export function TopConsumersCard({ snapshot, energyAgg, period }: Props) {
         </p>
       ) : (
         <ResponsiveContainer width="100%" height={Math.max(280, top10.length * 30)}>
-          <BarChart data={top10} layout="vertical" margin={{ top: 5, right: 60, bottom: 5, left: 130 }}>
+          <BarChart data={top10} layout="vertical" margin={{ top: 5, right: 20, bottom: 20, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
             <XAxis type="number" tick={{ fill: '#94a3b8', fontSize: 10 }}
               tickFormatter={(v: number) => `${fmtFr(v, isHistoric ? 2 : 0)} ${unit}`}
-              label={{ value: axisLabel, position: 'insideBottom', offset: -3, fill: '#94a3b8', fontSize: 10 }} />
-            <YAxis type="category" dataKey="name" tick={{ fill: '#cbd5e1', fontSize: 10 }} width={125} />
+              label={{ value: axisLabel, position: 'insideBottom', offset: -5, fill: '#94a3b8', fontSize: 10 }} />
+            <YAxis type="category" dataKey="name" tick={{ fill: '#cbd5e1', fontSize: 10 }} width={110} />
             <Tooltip
               cursor={{ fill: 'rgba(255,255,255,0.05)' }}
               contentStyle={{ backgroundColor: '#1a1d2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
