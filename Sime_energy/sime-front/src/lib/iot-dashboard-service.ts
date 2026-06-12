@@ -274,117 +274,13 @@ export async function fetchEnergyByDevice(
 
   const { since, until } = getHistoricRange(filters);
 
-  // ── Mode 1h : table brute shelly_cl (rétention 90j, données minute) ────────
-  // shelly_cl_horaire est peuplée par un job d'agrégation avec délai ; shelly_cl
-  // est toujours à jour.
-  if (filters.period === '1h') {
-    let q = supabase
-      .from('shelly_cl')
-      .select('device_id,name,site,room,device_family,wh_tot,wh_a,wh_b,wh_c,power_w,ts')
-      .gte('ts', since)
-      .lte('ts', until)
-      .order('ts', { ascending: true })
-      .limit(10000);
-    if (filters.sites.length > 0)     q = q.in('site', filters.sites);
-    if (filters.families.length > 0)  q = q.in('device_family', filters.families);
-    if (filters.rooms.length > 0)     q = q.in('room', filters.rooms);
-    if (filters.deviceIds.length > 0) q = q.in('device_id', filters.deviceIds);
-    const { data, error } = await q;
-    if (error) throw error;
-
-    const byDev = new Map<string, { rows: typeof data; meta: EnergyAgg }>();
-    for (const r of data ?? []) {
-      const cur = byDev.get(r.device_id);
-      if (!cur) {
-        byDev.set(r.device_id, {
-          rows: [r],
-          meta: {
-            device_id: r.device_id,
-            name:      r.name ?? r.device_id,
-            site:      r.site ?? '',
-            room:      r.room,
-            family:    (r.device_family as DeviceFamily) ?? 'INCONNU',
-            kwh:       0,
-          },
-        });
-      } else {
-        cur.rows!.push(r);
-      }
-    }
-
-    const result: EnergyAgg[] = [];
-    for (const { rows, meta } of byDev.values()) {
-      if (!rows || rows.length === 0) continue;
-      if (rows.length < 2) {
-        // Un seul relevé : puissance × 1h ≈ énergie
-        meta.kwh = Math.max(0, Number(rows[0]?.power_w ?? 0)) / 1000;
-      } else {
-        // Delta wh_tot entre le premier et le dernier relevé de l'heure
-        const first = rows[0];
-        const last  = rows[rows.length - 1];
-        const w0 = Number(first.wh_tot ?? ((first.wh_a ?? 0) + (first.wh_b ?? 0) + (first.wh_c ?? 0)));
-        const w1 = Number(last.wh_tot  ?? ((last.wh_a  ?? 0) + (last.wh_b  ?? 0) + (last.wh_c  ?? 0)));
-        meta.kwh = Math.max(0, (w1 - w0) / 1000);
-      }
-      result.push(meta);
-    }
-    return result.sort((a, b) => b.kwh - a.kwh);
-  }
-
-  // ── Mode 24h : table brute shelly_cl — même logique que 1h mais sur la journée ─
-  // shelly_cl_horaire n'a pas de job d'agrégation actif → toujours vide pour les
-  // dates récentes. On lit shelly_cl directement (rétention 90j, toujours à jour).
-  if (filters.period === '24h') {
-    const sinceFull = `${filters.historicDate}T00:00:00.000Z`;
-    const untilFull = `${filters.historicDate}T23:59:59.999Z`;
-    let q = supabase
-      .from('shelly_cl')
-      .select('device_id,name,site,room,device_family,wh_tot,wh_a,wh_b,wh_c,ts')
-      .gte('ts', sinceFull)
-      .lte('ts', untilFull)
-      .order('ts', { ascending: true })
-      .limit(50000);
-    if (filters.sites.length > 0)     q = q.in('site', filters.sites);
-    if (filters.families.length > 0)  q = q.in('device_family', filters.families);
-    if (filters.rooms.length > 0)     q = q.in('room', filters.rooms);
-    if (filters.deviceIds.length > 0) q = q.in('device_id', filters.deviceIds);
-    const { data, error } = await q;
-    if (error) throw error;
-
-    const byDev = new Map<string, { rows: typeof data; meta: EnergyAgg }>();
-    for (const r of data ?? []) {
-      const cur = byDev.get(r.device_id);
-      if (!cur) {
-        byDev.set(r.device_id, {
-          rows: [r],
-          meta: {
-            device_id: r.device_id,
-            name:      r.name ?? r.device_id,
-            site:      r.site ?? '',
-            room:      r.room,
-            family:    (r.device_family as DeviceFamily) ?? 'INCONNU',
-            kwh:       0,
-          },
-        });
-      } else {
-        cur.rows!.push(r);
-      }
-    }
-
-    const result: EnergyAgg[] = [];
-    for (const { rows, meta } of byDev.values()) {
-      if (!rows || rows.length < 2) continue;
-      const r0 = rows[0], rN = rows[rows.length - 1];
-      const w0 = Number(r0.wh_tot ?? ((r0.wh_a ?? 0) + (r0.wh_b ?? 0) + (r0.wh_c ?? 0)));
-      const w1 = Number(rN.wh_tot ?? ((rN.wh_a ?? 0) + (rN.wh_b ?? 0) + (rN.wh_c ?? 0)));
-      meta.kwh = Math.max(0, (w1 - w0) / 1000);
-      result.push(meta);
-    }
-    return result.sort((a, b) => b.kwh - a.kwh);
-  }
-
-  // ── Modes 7d / 30d : RPC fn_energy_by_device (delta wh_tot sur shelly_cl) ──
-  // Plus précis que shelly_cl_horaire : calcul en Wh réels, pas avg(power_w).
+  // ── 1h / 24h / 7d / 30d : RPC fn_energy_by_device ───────────────────────────
+  // Calcul serveur du delta wh_tot (1ère/dernière borne par appareil). Avantages :
+  //  • cohérent entre toutes les périodes (même source, même méthode) ;
+  //  • exact : le compteur cumulatif traverse les trous de polling ;
+  //  • rapide : ~1 ligne/appareil renvoyée, pas de scan brut côté client
+  //    (l'agrégation client se faisait écraser par le plafond 1000 lignes de
+  //    PostgREST → 24h sous-comptait d'un facteur ~40).
   const sinceZ = since.endsWith('Z') ? since : `${since}Z`;
   const untilZ = until.endsWith('Z') ? until : `${until}Z`;
   const { data, error } = await supabase.rpc('fn_energy_by_device', {
@@ -449,31 +345,22 @@ function _heatAddHoraire(acc: HeatAcc, rows: HoraireRow[]) {
 export async function fetchHourlyHeatmap(filters: Filters, _period?: Period): Promise<HeatmapCell[]> {
   const { period } = filters;
 
-  // ── live / 1h / 24h : lire shelly_cl (fenêtre ≤ 24h, toujours à jour) ──────
-  if (period === 'live' || period === '1h' || period === '24h') {
-    const since = period === 'live'
-      ? new Date(Date.now() - 24 * 60 * 60_000).toISOString()
-      : `${filters.historicDate}T00:00:00.000Z`;
-    const until = period === 'live'
-      ? new Date().toISOString()
-      : `${filters.historicDate}T23:59:59.999Z`;
-    let q = supabase
-      .from('shelly_cl')
-      .select('device_id,name,ts,power_w')
-      .gte('ts', since).lte('ts', until)
-      .order('ts', { ascending: true })
-      .limit(100_000);
-    if (filters.sites.length > 0)     q = q.in('site', filters.sites);
-    if (filters.families.length > 0)  q = q.in('device_family', filters.families);
-    if (filters.deviceIds.length > 0) q = q.in('device_id', filters.deviceIds);
-    const { data, error } = await q;
-    if (error) throw error;
-    const acc = _heatAcc(); _heatAddRaw(acc, data ?? []); return _heatFlat(acc);
+  // Source unique : shelly_cl_horaire (wh_conso/heure déjà agrégé, à jour).
+  // Évite le plafond 1000 lignes de PostgREST qui tronquait la lecture brute
+  // de shelly_cl (la heatmap n'affichait alors que les 1res minutes du jour).
+  let since: string, until: string;
+  if (period === 'live') {
+    since = toHoraireTs(new Date(Date.now() - 24 * 60 * 60_000).toISOString());
+    until = toHoraireTs(new Date().toISOString());
+  } else if (period === '1h' || period === '24h') {
+    since = `${filters.historicDate}T00:00:00`;
+    until = `${filters.historicDate}T23:59:59`;
+  } else {
+    const r = getHistoricRange(filters);
+    since = toHoraireTs(r.since);
+    until = toHoraireTs(r.until);
   }
 
-  // ── 7d / 30d : shelly_cl_horaire (agrégat horaire) ───────────────────────
-  // Fallback sur shelly_cl si horaire est vide (job d'agrégation inactif).
-  const { since, until } = getHistoricRange(filters);
   let qH = supabase
     .from('shelly_cl_horaire')
     .select('device_id,name,ts_heure,wh_conso')
@@ -483,26 +370,10 @@ export async function fetchHourlyHeatmap(filters: Filters, _period?: Period): Pr
   if (filters.sites.length > 0)     qH = qH.in('site', filters.sites);
   if (filters.families.length > 0)  qH = qH.in('device_family', filters.families);
   if (filters.deviceIds.length > 0) qH = qH.in('device_id', filters.deviceIds);
-  const { data: horaireData, error: horaireErr } = await qH;
-  if (horaireErr) throw horaireErr;
+  const { data, error } = await qH;
+  if (error) throw error;
 
-  if ((horaireData ?? []).length > 0) {
-    const acc = _heatAcc(); _heatAddHoraire(acc, horaireData!); return _heatFlat(acc);
-  }
-
-  // Fallback : shelly_cl — données les plus récentes en premier (ordre DESC)
-  const toZ = (s: string) => s.endsWith('Z') ? s : `${s}Z`;
-  let qR = supabase
-    .from('shelly_cl')
-    .select('device_id,name,ts,power_w')
-    .gte('ts', toZ(since)).lte('ts', toZ(until))
-    .order('ts', { ascending: false })
-    .limit(100_000);
-  if (filters.sites.length > 0)     qR = qR.in('site', filters.sites);
-  if (filters.families.length > 0)  qR = qR.in('device_family', filters.families);
-  if (filters.deviceIds.length > 0) qR = qR.in('device_id', filters.deviceIds);
-  const { data: rawData } = await qR; // best-effort, ignore error
-  const acc = _heatAcc(); _heatAddRaw(acc, rawData ?? []); return _heatFlat(acc);
+  const acc = _heatAcc(); _heatAddHoraire(acc, data ?? []); return _heatFlat(acc);
 }
 
 // ── 8. Calendrier d'activité (90 jours) ──────────────────────
