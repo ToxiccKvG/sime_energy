@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import * as XLSX from 'xlsx';
+import { parseExcelBuffer, rowsToObjects, exportJsonToXlsx } from '@/lib/excel-utils';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import {
@@ -1244,22 +1244,21 @@ export function AnalyseTab() {
     setLoading(true);
     setFileName(file.name);
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
-        const data = new Uint8Array(e.target!.result as ArrayBuffer);
-        const wb = XLSX.read(data, { type: 'array', cellDates: true });
-        let sheetName = wb.SheetNames[0];
-        const candidates = wb.SheetNames.filter(n =>
+        const buffer = e.target!.result as ArrayBuffer;
+        const wb = await parseExcelBuffer(buffer);
+        let sheetName = wb.sheetNames[0];
+        const candidates = wb.sheetNames.filter(n =>
           n.toLowerCase().includes('profil') ||
           n.toLowerCase().includes('données') ||
           n.toLowerCase().includes('data') ||
           n.toLowerCase().includes('mesure')
         );
         if (candidates.length > 0) sheetName = candidates[0];
-        const ws = wb.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
-          defval: null, raw: false, dateNF: 'YYYY-MM-DD',
-        }).filter(r => Object.values(r).some(v => v !== null));
+        const rawRows = wb.getRows(sheetName);
+        const rows = rowsToObjects(rawRows, { dateNF: 'YYYY-MM-DD' })
+          .filter(r => Object.values(r).some(v => v !== null));
         if (rows.length === 0) { setLoading(false); return; }
         const cols = Object.keys(rows[0]);
         setAllColumns(cols);
@@ -1364,23 +1363,24 @@ export function AnalyseTab() {
   }, [parseFile]);
 
   // ---- Export CSV ----
-  const exportCSV = () => {
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(activeRows.map(r => ({
-      Date: toDate(r.date).toLocaleDateString('fr-FR'),
-      Jour: r.jourSemaine,
-      'kWh Total': fmt3(r.kwhTotal),
-      'kWh Net': fmt3(r.kwhNet),
-      'kWh Retour': r.kwhRetourTotal.toFixed(3),
-      'Phase A': fmt3(r.kwhA),
-      'Phase B': fmt3(r.kwhB),
-      'Phase C': fmt3(r.kwhC),
-      Profil: profilMiActif !== 'tous' ? profilMiActif : 'Tous',
-      Ferié: r.isJourFerie ? 'Oui' : '',
-      Weekend: r.isWeekend ? 'Oui' : '',
-    })));
-    XLSX.utils.book_append_sheet(wb, ws, 'Données');
-    XLSX.writeFile(wb, `tcd_${profilMiActif}_${fileName || 'export'}.xlsx`);
+  const exportCSV = async () => {
+    await exportJsonToXlsx(
+      activeRows.map(r => ({
+        Date: toDate(r.date).toLocaleDateString('fr-FR'),
+        Jour: r.jourSemaine,
+        'kWh Total': fmt3(r.kwhTotal),
+        'kWh Net': fmt3(r.kwhNet),
+        'kWh Retour': r.kwhRetourTotal.toFixed(3),
+        'Phase A': fmt3(r.kwhA),
+        'Phase B': fmt3(r.kwhB),
+        'Phase C': fmt3(r.kwhC),
+        Profil: profilMiActif !== 'tous' ? profilMiActif : 'Tous',
+        Ferié: r.isJourFerie ? 'Oui' : '',
+        Weekend: r.isWeekend ? 'Oui' : '',
+      })),
+      'Données',
+      `tcd_${profilMiActif}_${fileName || 'export'}.xlsx`
+    );
   };
 
   // ---- Calculs ----
@@ -1448,7 +1448,7 @@ export function AnalyseTab() {
     filteredRows.map(r => {
       const obj: Record<string, unknown> = {
         date: toDate(r.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
-        consommation: +r.kwhTotal.toFixed(3),
+        consommation: +(r.kwhTotal ?? 0).toFixed(3),
         isWeekend: r.isWeekend,
         isFerie: r.isJourFerie,
         appareil: r.nomAppareil ?? '',

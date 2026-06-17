@@ -53,7 +53,7 @@ export function DataExportStep({
     setExporting("excel");
     try {
       const dataToExport = tableData && tableData.length > 0 ? tableData : extractedData;
-      exportToExcel(dataToExport as any, {
+      await exportToExcel(dataToExport as any, {
         ...metadata,
         files: [],
         isDataTransformed: tableData !== undefined,

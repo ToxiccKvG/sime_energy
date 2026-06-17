@@ -169,7 +169,7 @@ export async function exportAuditData(
         ? state.tablePreviewData
         : state.extractedData;
 
-    exportToExcel(dataToExport as any, {
+    await exportToExcel(dataToExport as any, {
       ...metadata,
       files: state.measureFiles,
       isDataTransformed: state.isDataTransformed,

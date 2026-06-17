@@ -4,7 +4,7 @@
 // ============================================================
 
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import * as XLSX from 'xlsx';
+import { exportJsonToXlsx } from '@/lib/excel-utils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -1067,7 +1067,7 @@ export function NettoyageTab() {
   // Aperçu : nb de lignes qui seront modifiées
   const trPreviewCount = trScope === 'selected' ? selectedIndices.size : activeRows.length;
 
-  const doExport = useCallback((format: 'xlsx' | 'csv_semicolon' | 'csv_comma' | 'csv_fr' | 'pdf') => {
+  const doExport = useCallback(async (format: 'xlsx' | 'csv_semicolon' | 'csv_comma' | 'csv_fr' | 'pdf') => {
     const data = sortedRef.current.map(r => {
       const obj: Record<string, unknown> = {};
       COLUMNS.forEach(c => {
@@ -1078,10 +1078,7 @@ export function NettoyageTab() {
       return obj;
     });
     if (format === 'xlsx') {
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(data);
-      XLSX.utils.book_append_sheet(wb, ws, 'Données nettoyées');
-      XLSX.writeFile(wb, 'iot_donnees_nettoyees.xlsx');
+      await exportJsonToXlsx(data, 'Données nettoyées', 'iot_donnees_nettoyees.xlsx');
     } else if (format === 'pdf') {
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
       doc.setFontSize(11);

@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import { exportJsonToXlsx } from './excel-utils';
 import { AuditInvoice } from './invoice-service';
 
 /**
@@ -248,20 +248,9 @@ export async function exportVerifiedInvoicesToExcel(
     return row;
   });
 
-  // Créer le classeur
-  const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet(rows, {
-    header: finalColumns,
-  });
-
-  // Ajouter le worksheet au classeur
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Factures');
-
-  // Générer le nom du fichier avec la date actuelle
   const now = new Date();
-  const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  const dateStr = now.toISOString().split('T')[0];
   const fileName = `Factures-verifiees-${dateStr}.xlsx`;
 
-  // Télécharger le fichier
-  XLSX.writeFile(workbook, fileName);
+  await exportJsonToXlsx(rows, 'Factures', fileName, { header: finalColumns });
 }

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { X, Plus, Search, Download, Settings2 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { exportAoaToXlsx } from '@/lib/excel-utils';
 import { Button } from '@/components/ui/button';
 import type { ShellyRow } from './shared';
 import { MOIS_FR, JOURS_SEMAINE } from './shared';
@@ -418,7 +418,7 @@ export function ExcelPivotTable({ rows }: { rows: ShellyRow[] }) {
   const updAgg    = (id: string, fn: AggFn) => setValueConfigs(valueConfigs.map(v => v.id === id ? { ...v, aggFn: fn } : v));
 
   // ── Excel export ──────────────────────────────────────────
-  const exportExcel = () => {
+  const exportExcel = async () => {
     if (!pivot) return;
     const rows2D: (string | number | null)[][] = [];
     const hdr: (string | number | null)[] = ['Étiquettes de lignes'];
@@ -451,9 +451,7 @@ export function ExcelPivotTable({ rows }: { rows: ShellyRow[] }) {
     for (const vc of valueConfigs) gtRow.push(pivot.grandTotals[vc.id] ?? null);
     rows2D.push(gtRow);
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows2D), 'TCD');
-    XLSX.writeFile(wb, 'tcd_export.xlsx');
+    await exportAoaToXlsx(rows2D, 'TCD', 'tcd_export.xlsx');
   };
 
   const cols = pivot?.cols ?? [];
