@@ -393,26 +393,10 @@ async function writePollStatus(site: string, status: "ok" | "error", errorMsg?: 
     .eq("site", site);
 }
 
-Deno.serve(async (req: Request) => {
-  // Auth gérée par Supabase (JWT vérifié avant d'atteindre cette fonction).
-  // Le déploiement est fait sans --no-verify-jwt : seuls les JWTs valides passent.
-  // Vérification supplémentaire : le rôle doit être service_role
-  try {
-    const auth = req.headers.get("Authorization");
-    if (auth?.startsWith("Bearer ")) {
-      const payload = auth.slice(7).split(".")[1];
-      if (payload) {
-        const decoded = JSON.parse(atob(payload));
-        if (decoded.role && decoded.role !== "service_role") {
-          return new Response(JSON.stringify({ ok: false, error: "Forbidden" }), {
-            status: 403,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-      }
-    }
-  } catch { /* ignore JWT decode errors */ }
-
+Deno.serve(async (_req: Request) => {
+  // Déployé avec --no-verify-jwt : le cron pg_cron peut appeler sans JWT valide.
+  // La sécurité des données est assurée par RLS sur shelly_cl (lecture = authenticated).
+  // Écriture par service_role dans le client Supabase ci-dessus → bypass RLS OK.
   try {
     const accounts: Account[] = await loadAccounts();
     const now=new Date();
