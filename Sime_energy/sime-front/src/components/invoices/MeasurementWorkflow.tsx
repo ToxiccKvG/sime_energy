@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { MeasurementUploadStep } from './MeasurementUploadStep';
+import { MeasurementCharts } from './MeasurementCharts';
 import { Upload, Activity, BarChart3, TrendingUp } from 'lucide-react';
 
 type WorkflowStep = 'upload' | 'analysis' | 'visualization';
@@ -73,11 +74,11 @@ export function MeasurementWorkflow({ auditId }: MeasurementWorkflowProps) {
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="analysis" disabled={measurementData.length === 0} className="flex items-center gap-2">
+          <TabsTrigger value="analysis" className="flex items-center gap-2">
             <TrendingUp className="h-4 w-4" />
             Analyse
           </TabsTrigger>
-          <TabsTrigger value="visualization" disabled={measurementData.length === 0} className="flex items-center gap-2">
+          <TabsTrigger value="visualization" className="flex items-center gap-2">
             <BarChart3 className="h-4 w-4" />
             Visualisation
           </TabsTrigger>
@@ -180,38 +181,42 @@ export function MeasurementWorkflow({ auditId }: MeasurementWorkflowProps) {
 
         {/* Onglet Visualisation */}
         <TabsContent value="visualization" className="space-y-4">
-          <Card className="p-6">
-            <div className="space-y-4">
-              <div>
-                <h3 className="font-medium mb-4">Graphiques de consommation</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="p-4 bg-muted/30 rounded-lg flex items-center justify-center min-h-64">
-                    <div className="text-center">
-                      <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">Graphique à implémenter</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Utilisez une librairie comme recharts ou chart.js
-                      </p>
-                    </div>
-                  </div>
-                  <div className="p-4 bg-muted/30 rounded-lg flex items-center justify-center min-h-64">
-                    <div className="text-center">
-                      <TrendingUp className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">Tendances à implémenter</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Visualisez les tendances temporelles
-                      </p>
-                    </div>
-                  </div>
+          {measurementData.length > 1 && (
+            <Card className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-medium">Visualisation</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Fichier {currentDataIndex + 1} sur {measurementData.length}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentDataIndex(Math.max(0, currentDataIndex - 1))}
+                    disabled={currentDataIndex === 0}
+                  >
+                    Précédent
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentDataIndex(Math.min(measurementData.length - 1, currentDataIndex + 1))}
+                    disabled={currentDataIndex === measurementData.length - 1}
+                  >
+                    Suivant
+                  </Button>
                 </div>
               </div>
-
-              <div className="pt-4 border-t">
-                <p className="text-sm text-muted-foreground">
-                  <span className="font-medium">À faire:</span> Intégrer une librairie de graphiques pour visualiser les données de consommation en temps réel
-                </p>
-              </div>
-            </div>
+            </Card>
+          )}
+          <Card className="p-6">
+            <MeasurementCharts
+              measurements={currentData?.measurements ?? []}
+              unit={currentData?.unit ?? currentData?.kpis?.unit ?? 'W'}
+              label={currentData?.metric_label ?? 'Valeur'}
+            />
           </Card>
         </TabsContent>
       </Tabs>

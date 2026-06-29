@@ -6,11 +6,11 @@ import io
 import logging
 import base64
 from app.core.llm import _textract_analyze_bytes, _parse_trp, _normalize_with_llm, _analyze_energy_label_with_mistral
-from app.core.utils import calculate_kpis, _strip_coordinates_for_mistral, _pil_image_to_bytes, extract_invoice_fields, parse_voltcraft_csv, parse_th30_csv, parse_smart_energy_csv, parse_rht10_txt, parse_sentinel_excel, prepare_chart_data
+from app.core.utils import _strip_coordinates_for_mistral, _pil_image_to_bytes, extract_invoice_fields
+from app.core.sensors import process_measurement_file
 from app.core.unified_invoice_processor import UnifiedInvoiceProcessor
 from pydantic import BaseModel
 import pandas as pd
-import chardet
 import tempfile
 import os
 from supabase import create_client
@@ -32,27 +32,6 @@ if not supabase_url or not supabase_key:
 
 supabase = create_client(supabase_url, supabase_key)
 logger.info(f"[SUPABASE] Client initialisé avec succès - URL: {supabase_url[:30]}...")
-
-class MeasurementData(BaseModel):
-    timestamp: str
-    consumption: float
-    current: Optional[float] = None
-    power: Optional[float] = None
-    apparent_power: Optional[float] = None
-
-class KPIs(BaseModel):
-    duration: str
-    avgConsumption: str
-    peakConsumption: str
-    totalConsumption: str
-    minConsumption: str
-    measurementCount: int
-
-class ProcessedMeasures(BaseModel):
-    measurements: List[MeasurementData]
-    kpis: KPIs
-    sensor_type: str
-    processing_info: Dict[str, Any]
 
 class TableCell(BaseModel):
     text: str
@@ -418,80 +397,22 @@ async def process_measures(
     sensor_type: str = Form(...)
 ):
     """
-    Traite un fichier CSV de mesures selon le type de capteur
+    Traite un fichier de mesures selon le type de capteur.
+
+    Les formats supportés et leur normalisation sont définis dans
+    `app.core.sensors.SENSOR_REGISTRY` (analyseur réseau C.A 8335, station qualité
+    d'air M100, monitoring PV SolarEdge / Huawei, compteur Shelly…).
     """
     try:
-        print(sensor_type)
-        # Lire le contenu du fichier
         contents = await file.read()
-        encoding = chardet.detect(contents)['encoding']
-        print(f"Encodage détecté : {encoding}")
-
-        # Lire avec le bon encodage
-        content_str = contents.decode(encoding)
-        
-        # Traitement selon le type de capteur
-        if sensor_type == "89_VOLTCRAFT":
-            df, metadata = parse_voltcraft_csv(content_str)
-        elif sensor_type == "TH_30":
-            df, metadata = parse_th30_csv(content_str)
-        elif sensor_type == "SMART_ENERGY_METER":
-            df, metadata = parse_smart_energy_csv(content_str)
-        elif sensor_type == "RHT_10":
-            df, metadata = parse_rht10_txt(content_str)
-        elif sensor_type == "8_SENTINEL":
-            # Pour Sentinel, on traite un fichier Excel
-            import tempfile
-            import os
-            
-            # Créer un fichier temporaire avec le contenu
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-                tmp_file.write(contents)
-                tmp_file_path = tmp_file.name
-            
-            try:
-                df, metadata = parse_sentinel_excel(tmp_file_path)
-            finally:
-                # Nettoyer le fichier temporaire
-                if os.path.exists(tmp_file_path):
-                    os.unlink(tmp_file_path)
-        else:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Type de capteur '{sensor_type}' non supporté pour le moment"
-            )
-        # Vérifier que nous avons des données
-        if df.empty:
-            raise HTTPException(status_code=400, detail="Aucune donnée valide trouvée dans le fichier")
-        # lui il met 
-        # Calculer les KPIs
-        kpi_sensor_type = "SENTINEL" if sensor_type == "8_SENTINEL" else sensor_type
-        kpis = calculate_kpis(df, metadata, kpi_sensor_type)
-        # Préparer les données pour le graphique
-        chart_data = prepare_chart_data(df, kpi_sensor_type)
-        # Informations de traitement
-        processing_info = {
-            "original_rows": len(df),
-            "valid_measurements": len(chart_data),
-            "file_name": file.filename,
-            "metadata": metadata
-        }
-                
-        response_data = {
-            "measurements": chart_data,
-            "kpis": kpis,               
-            "sensor_type": sensor_type,
-            "processing_info": processing_info
-        }
-
-        # Puis valider avec Pydantic
+        response_data = process_measurement_file(contents, sensor_type)
+        response_data["processing_info"]["file_name"] = file.filename
         return response_data
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="Erreur d'encodage du fichier. Utilisez UTF-8 ou ISO-8859-1")
-    except pd.errors.EmptyDataError:
-        raise HTTPException(status_code=400, detail="Le fichier CSV est vide ou mal formaté")
+    except ValueError as e:
+        # Type de capteur inconnu, fichier illisible ou vide → erreur client
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(e)
+        logger.exception("Erreur lors du traitement du fichier de mesures")
         raise HTTPException(status_code=500, detail=f"Erreur lors du traitement: {str(e)}")
 
 

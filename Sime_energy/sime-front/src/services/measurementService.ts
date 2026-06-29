@@ -7,8 +7,15 @@ export interface MeasurementData {
   measurements?: any[];
   kpis?: {
     avgConsumption?: number;
+    unit?: string;
     [key: string]: any;
   };
+  /** Clé du capteur (cf. SENSOR_REGISTRY backend). */
+  sensor_type?: string;
+  /** Libellé de la grandeur tracée (ex. "Puissance active", "CO₂"). */
+  metric_label?: string;
+  /** Unité de la grandeur principale (W, kWh, ppm, …). */
+  unit?: string;
 }
 
 export interface HierarchyNode {
@@ -54,7 +61,16 @@ export async function uploadMeasurementFile(
   });
 
   if (!response.ok) {
-    throw new Error(`Erreur lors du traitement de la mesure: ${response.statusText}`);
+    // Le backend renvoie la vraie raison dans le champ JSON `detail`
+    // (ex. « Le fichier ne correspond pas au capteur sélectionné »).
+    let detail = response.statusText;
+    try {
+      const body = await response.json();
+      if (body?.detail) detail = body.detail;
+    } catch {
+      /* réponse non-JSON : on garde statusText */
+    }
+    throw new Error(detail);
   }
 
   return response.json();

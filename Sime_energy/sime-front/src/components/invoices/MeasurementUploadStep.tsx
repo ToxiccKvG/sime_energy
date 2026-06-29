@@ -17,16 +17,14 @@ interface MeasurementUploadStepProps {
   isLoading?: boolean;
 }
 
-const SENSOR_TYPES = [
-  "CA_8331",
-  "Dent_Elite_Pro",
-  "FLUKE",
-  "PEL_103",
-  "RHT_10",
-  "8_SENTINEL",
-  "Smart_Energy_Meter",
-  "TH_30",
-  "89_VOLTCRAFT",
+// Capteurs supportés par le backend (cf. app/core/sensors.py — SENSOR_REGISTRY).
+const SENSOR_TYPES: { value: string; label: string }[] = [
+  { value: "CA8335_TREND", label: "Analyseur réseau C.A 8335 — Qualité réseau (10 min)" },
+  { value: "CA8335_DEMAND", label: "Analyseur réseau C.A 8335 — Demande énergétique (5 min)" },
+  { value: "AIR_STATION_M100", label: "Station qualité d'air M100 (IAQ)" },
+  { value: "PV_SOLAREDGE", label: "Monitoring PV SolarEdge — Puissance (15 min)" },
+  { value: "PV_HUAWEI", label: "Centrale PV Huawei FusionSolar — Bilan journalier" },
+  { value: "SHELLY", label: "Compteur Shelly — Énergie journalière" },
 ];
 
 export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: MeasurementUploadStepProps) {
@@ -152,8 +150,8 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
               </SelectTrigger>
               <SelectContent>
                 {SENSOR_TYPES.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {type}
+                  <SelectItem key={type.value} value={type.value}>
+                    {type.label}
                   </SelectItem>
                 ))}
               </SelectContent>
