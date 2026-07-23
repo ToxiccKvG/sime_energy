@@ -6,6 +6,7 @@ import {
   ScatterChart, Scatter, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, ReferenceLine, AreaChart, Area, Legend,
+  PieChart, Pie,
 } from 'recharts';
 import {
   Filter, BarChart2, TrendingUp, Activity, Upload,
@@ -29,6 +30,7 @@ import { JOURS_SEMAINE, MOIS_FR, PROFIL_MI_LABELS, COLONNES_PROFIL_SHELLY } from
 import type { ShellyRow, ProfilMi } from './shared';
 
 type AnalyseMode = 'courbe' | 'tcd' | 'profil_semaine' | 'distribution' | 'correlation' | 'serie';
+type ChartType = 'bar' | 'line' | 'area' | 'pie';
 
 const COULEURS = ['#a78bfa', '#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#f97316', '#06b6d4'];
 
@@ -123,14 +125,14 @@ const tcdFormatter = (value: number | string, name: string): [string, string] =>
   return [meta?.unit ? `${fmtd} ${meta.unit}` : fmtd, meta?.label ?? name];
 };
 
-function SerieTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; name: string; color?: string; payload: Record<string, unknown> }[]; label?: string }) {
+function SerieTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; name: string; dataKey?: string | number; color?: string; payload: Record<string, unknown> }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload as { appareil: string; emplacement: string; piece: string; isWeekend: boolean; isFerie: boolean };
   return (
     <div style={TOOLTIP_STYLE} className="px-3 py-2 space-y-1 text-xs min-w-[200px]">
       <p style={TOOLTIP_LABEL_STYLE} className="text-sm">{label}</p>
       {payload.map((p, i) => {
-        const metaMatch = METRIQUES.find(m => p.name?.includes(m.label)) ?? METRIQUES.find(m => m.key === p.name);
+        const metaMatch = METRIQUES.find(m => m.key === p.dataKey) ?? METRIQUES.find(m => p.name?.includes(m.label)) ?? METRIQUES.find(m => m.key === p.name);
         return (
           <p key={i} className="text-slate-300 flex items-center gap-1.5">
             <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
@@ -152,9 +154,184 @@ function SerieTooltip({ active, payload, label }: { active?: boolean; payload?: 
   );
 }
 
-function formatAxisMetric(key: MetricKey): string {
-  const m = METRIQUES.find(m => m.key === key);
-  return m ? `${m.label} (${m.unit})` : key;
+// Libellé lisible des regroupements TCD (axe X)
+const TCD_LIGNE_LABEL: Record<'mois' | 'jouSemaine' | 'typeJour' | 'appareil' | 'piece', string> = {
+  mois: 'Mois',
+  jouSemaine: 'Jour de semaine',
+  typeJour: 'Type de jour',
+  appareil: 'Appareil',
+  piece: 'Pièce',
+};
+
+// Libellé d'axe lisible par unité (pour les axes double échelle kWh / kW / FCFA)
+const UNIT_AXIS_LABEL: Record<string, string> = {
+  kWh: 'Énergie (kWh)',
+  kW: 'Puissance (kW)',
+  FCFA: 'Montant (FCFA)',
+};
+function axisLabelForUnit(unit?: string): string {
+  return unit ? (UNIT_AXIS_LABEL[unit] ?? unit) : '';
+}
+
+// Tooltip détaillé pour TCD / Camembert : métrique + valeur + unité + contexte (appareil, site, nb points)
+function TcdTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: { value: number; name: string; dataKey?: string | number; color?: string; payload: Record<string, unknown> }[];
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const row = (payload[0].payload ?? {}) as Record<string, unknown>;
+  const n = typeof row.n === 'number' ? row.n : undefined;
+  const appareils = Array.isArray(row._appareils) ? (row._appareils as string[]) : [];
+  const emplacements = Array.isArray(row._emplacements) ? (row._emplacements as string[]) : [];
+  const pieces = Array.isArray(row._pieces) ? (row._pieces as string[]) : [];
+  const fmtList = (arr: string[]) => `${arr.slice(0, 3).join(', ')}${arr.length > 3 ? ` +${arr.length - 3}` : ''}`;
+  return (
+    <div style={TOOLTIP_STYLE} className="px-3 py-2 space-y-1.5 text-xs min-w-[230px]">
+      <div className="flex items-center justify-between gap-3">
+        <p style={TOOLTIP_LABEL_STYLE} className="text-sm">{label ?? (row.label as string) ?? ''}</p>
+        {typeof n === 'number' && <span className="text-slate-500">{n} pt{n > 1 ? 's' : ''}</span>}
+      </div>
+      <div className="space-y-1 pt-1 border-t border-white/10">
+        {payload.map((p, i) => {
+          const meta = METRIQUES.find(m => m.key === p.dataKey) ?? METRIQUES.find(m => m.label === p.name);
+          return (
+            <div key={i} className="flex items-center gap-1.5">
+              <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color ?? meta?.color }} />
+              <span className="flex-1 text-slate-300">{meta?.label ?? p.name}</span>
+              <span className="text-white font-semibold ml-auto">
+                {typeof p.value === 'number' ? fmtFr(p.value, 3) : p.value}
+                {meta?.unit && <span className="text-slate-400 font-normal ml-1">{meta.unit}</span>}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {(appareils.length > 0 || emplacements.length > 0 || pieces.length > 0) && (
+        <div className="pt-1 border-t border-white/10 space-y-0.5">
+          {appareils.length > 0 && (
+            <p className="text-slate-400">Appareil{appareils.length > 1 ? 's' : ''} : <span className="text-cyan-300">{fmtList(appareils)}</span></p>
+          )}
+          {emplacements.length > 0 && (
+            <p className="text-slate-400">Site{emplacements.length > 1 ? 's' : ''} : <span className="text-yellow-300">{fmtList(emplacements)}</span></p>
+          )}
+          {pieces.length > 0 && (
+            <p className="text-slate-400">Pièce{pieces.length > 1 ? 's' : ''} : <span className="text-purple-300">{fmtList(pieces)}</span></p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Graphique TCD (bar/line/area/pie) — partagé entre la vue normale et la vue plein écran,
+// qui ne diffèrent que par la taille/densité (police, marges, rayons).
+function TcdChart({
+  data, chartType, metrics, primaryMetric, units, crossFilter, onBarClick, onPieClick,
+  metricAxis, unitAxis, primaryUnit, profilColor, angled, height, bottomMargin, xAxisHeight,
+  xAxisLabel, compact,
+}: {
+  data: Record<string, unknown>[];
+  chartType: ChartType;
+  metrics: Set<MetricKey>;
+  primaryMetric: MetricKey;
+  units: string[];
+  crossFilter: string | null;
+  onBarClick: (e: { activeLabel?: unknown }) => void;
+  onPieClick: (entry: { label?: string }) => void;
+  metricAxis: (mk: MetricKey) => 'left' | 'right';
+  unitAxis: (unit?: string) => 'left' | 'right';
+  primaryUnit?: string;
+  profilColor: string;
+  angled: boolean;
+  height: number;
+  bottomMargin: number;
+  xAxisHeight: number;
+  xAxisLabel?: string;
+  compact: boolean;
+}) {
+  const tickFontSize = compact ? 10 : 11;
+  const yTickFontSize = compact ? 9 : 10;
+  const axisLabelFontSize = compact ? 10 : 11;
+  const axisLabelFill = compact ? '#94a3b8' : '#cbd5e1';
+  const margin = { top: 5, right: compact ? 10 : 20, bottom: bottomMargin, left: compact ? 0 : 10 };
+  const barRadius: [number, number, number, number] = compact ? [3, 3, 0, 0] : [4, 4, 0, 0];
+  const dimOpacity = compact ? 0.3 : 0.35;
+  const dotRadius = compact ? 3 : 4;
+  const avgLabel = compact ? 'Moy.' : 'Moyenne';
+  const pieOuterRadius = compact ? 80 : 95;
+  const pieInnerRadius = compact ? 38 : 45;
+
+  return (
+    <ResponsiveContainer key={chartType} width="100%" height={height}>
+      {chartType === 'bar' ? (
+        <BarChart data={data} margin={margin} onClick={onBarClick}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+          <XAxis dataKey="label" tick={{ fill: '#cbd5e1', fontSize: tickFontSize }} interval={0} height={xAxisHeight} angle={angled ? -35 : 0} textAnchor={angled ? 'end' : 'middle'} label={xAxisLabel ? { value: xAxisLabel, position: 'insideBottom', offset: 0, fill: '#94a3b8', fontSize: 11 } : undefined} />
+          <YAxis yAxisId="left" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[0]), angle: -90, position: 'insideLeft', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
+          {units.length > 1 && (
+            <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[1]), angle: 90, position: 'insideRight', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
+          )}
+          <Tooltip content={<TcdTooltip />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
+          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {Array.from(metrics).map(mk => {
+            const meta = METRIQUES.find(m => m.key === mk);
+            return (
+              <Bar key={mk} yAxisId={metricAxis(mk)} dataKey={mk} name={meta?.label ?? mk} radius={barRadius} fill={meta?.color ?? profilColor} cursor="pointer" opacity={0.85}>
+                {mk === primaryMetric && data.map((entry, i) => (
+                  <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : meta?.color ?? COULEURS[i % COULEURS.length]} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} />
+                ))}
+              </Bar>
+            );
+          })}
+        </BarChart>
+      ) : chartType === 'line' ? (
+        <LineChart data={data} margin={margin}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+          <XAxis dataKey="label" tick={{ fill: '#cbd5e1', fontSize: tickFontSize }} interval={0} height={xAxisHeight} angle={angled ? -35 : 0} textAnchor={angled ? 'end' : 'middle'} label={xAxisLabel ? { value: xAxisLabel, position: 'insideBottom', offset: 0, fill: '#94a3b8', fontSize: 11 } : undefined} />
+          <YAxis yAxisId="left" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[0]), angle: -90, position: 'insideLeft', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
+          {units.length > 1 && (
+            <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[1]), angle: 90, position: 'insideRight', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
+          )}
+          <Tooltip content={<TcdTooltip />} />
+          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {Array.from(metrics).map(mk => {
+            const meta = METRIQUES.find(m => m.key === mk);
+            return <Line key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} strokeWidth={2} dot={{ r: dotRadius }} />;
+          })}
+          <Line yAxisId={unitAxis(primaryUnit)} type="monotone" dataKey="moyenne" name={avgLabel} stroke="#06b6d4" strokeWidth={1} strokeDasharray="4 4" dot={false} />
+        </LineChart>
+      ) : chartType === 'area' ? (
+        <AreaChart data={data} margin={margin}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+          <XAxis dataKey="label" tick={{ fill: '#cbd5e1', fontSize: tickFontSize }} interval={0} height={xAxisHeight} angle={angled ? -35 : 0} textAnchor={angled ? 'end' : 'middle'} label={xAxisLabel ? { value: xAxisLabel, position: 'insideBottom', offset: 0, fill: '#94a3b8', fontSize: 11 } : undefined} />
+          <YAxis yAxisId="left" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[0]), angle: -90, position: 'insideLeft', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
+          {units.length > 1 && (
+            <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[1]), angle: 90, position: 'insideRight', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
+          )}
+          <Tooltip content={<TcdTooltip />} />
+          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {Array.from(metrics).map(mk => {
+            const meta = METRIQUES.find(m => m.key === mk);
+            return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} fill={(meta?.color ?? profilColor) + '20'} strokeWidth={2} />;
+          })}
+        </AreaChart>
+      ) : (
+        <PieChart>
+          <Tooltip content={<TcdTooltip />} />
+          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          <Pie data={data} dataKey={primaryMetric} nameKey="label" cx="50%" cy="50%" outerRadius={pieOuterRadius} innerRadius={pieInnerRadius}
+            label={(e: { name?: string; percent?: number }) => `${e.name} · ${((e.percent ?? 0) * 100).toFixed(0)}%`}
+            labelLine={false}
+            onClick={onPieClick}>
+            {data.map((entry, i) => (
+              <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : COULEURS[i % COULEURS.length]} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} cursor="pointer" />
+            ))}
+          </Pie>
+        </PieChart>
+      )}
+    </ResponsiveContainer>
+  );
 }
 
 function reviveStoredShellyRows(rows: Record<string, unknown>[]): ShellyRow[] {
@@ -364,6 +541,7 @@ function SupabaseExportPanel({
   // Filtres — site vide = tous les sites
   const [site, setSite] = useState('');
   const [deviceFamily, setDeviceFamily] = useState('ENERGIE_3PH');
+  const [deviceRoom, setDeviceRoom] = useState('');
   const [deviceSearch, setDeviceSearch] = useState('');
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
   const [dateDebut, setDateDebut] = useState(sevenDaysAgoStr);
@@ -376,8 +554,9 @@ function SupabaseExportPanel({
   // ── Données dynamiques depuis Supabase ───────────────────────
   const [disponibles, setDisponibles] = useState<{
     sites: string[];
-    devices: { name: string; device_id: string; device_family: string; site: string }[];
+    devices: { name: string; device_id: string; device_family: string; site: string; room?: string | null }[];
     deviceFamilies?: string[];
+    rooms?: string[];
   }>({ sites: [], devices: [] });
   const [loadingMeta, setLoadingMeta] = useState(false);
 
@@ -395,10 +574,19 @@ function SupabaseExportPanel({
     return acc;
   }, {});
 
-  // Appareils filtrés par site + famille + recherche
+  // Pièces disponibles pour le site sélectionné (ou toutes si aucun site choisi)
+  const roomOptions = Array.from(new Set(
+    disponibles.devices
+      .filter(d => !site || d.site === site)
+      .map(d => d.room)
+      .filter((r): r is string => Boolean(r))
+  )).sort();
+
+  // Appareils filtrés par site + famille + pièce + recherche
   const devicesFiltres = disponibles.devices.filter(d =>
     (!site || d.site === site) &&
     (!deviceFamily || d.device_family === deviceFamily) &&
+    (!deviceRoom || d.room === deviceRoom) &&
     (!deviceSearch || d.name.toLowerCase().includes(deviceSearch.toLowerCase()))
   );
 
@@ -421,7 +609,7 @@ function SupabaseExportPanel({
   useEffect(() => {
     const availableIds = new Set(devicesFiltres.map(d => d.device_id));
     setSelectedDeviceIds(prev => prev.filter(id => availableIds.has(id)));
-  }, [site, deviceFamily, deviceSearch, disponibles.devices]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [site, deviceFamily, deviceRoom, deviceSearch, disponibles.devices]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleCol = (key: string) => {
     setSelectedCols(prev => {
@@ -556,7 +744,7 @@ function SupabaseExportPanel({
                   </Label>
                   <select
                     value={site}
-                    onChange={e => { setSite(e.target.value); setSelectedDeviceIds([]); }}
+                    onChange={e => { setSite(e.target.value); setSelectedDeviceIds([]); setDeviceRoom(''); }}
                     className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
                   >
                     <option value="" className="bg-[#1a1d2e]">Tous les sites</option>
@@ -579,6 +767,24 @@ function SupabaseExportPanel({
                       <option key={o.value} value={o.value} className="bg-[#1a1d2e]">{o.label}</option>
                     ))}
                   </select>
+                </div>
+
+                <div>
+                  <Label className="text-slate-400 text-xs mb-1 block">Pièce</Label>
+                  <select
+                    value={deviceRoom}
+                    onChange={e => setDeviceRoom(e.target.value)}
+                    className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
+                    disabled={roomOptions.length === 0}
+                  >
+                    <option value="" className="bg-[#1a1d2e]">Toutes les pièces</option>
+                    {roomOptions.map(r => (
+                      <option key={r} value={r} className="bg-[#1a1d2e]">{r}</option>
+                    ))}
+                  </select>
+                  {roomOptions.length === 0 && (
+                    <p className="text-slate-600 text-[11px] mt-1">Aucune pièce renseignée pour ce filtre</p>
+                  )}
                 </div>
 
                 <div className="md:col-span-2 xl:col-span-3">
@@ -717,8 +923,9 @@ function SupabaseExportPanel({
               <p className="text-slate-500 text-xs">
                 {site && <span>Site : <span className="text-slate-300">{site}</span> · </span>}
                 {deviceFamily && <span>Famille : <span className="text-slate-300">{deviceFamily}</span> · </span>}
+                {deviceRoom && <span>Pièce : <span className="text-slate-300">{deviceRoom}</span> · </span>}
                 {selectedDeviceIds.length > 0 && <span>Appareils : <span className="text-slate-300">{selectedDeviceIds.length}</span></span>}
-                {!site && !deviceFamily && selectedDeviceIds.length === 0 && <span>Aucun filtre spécifique appliqué</span>}
+                {!site && !deviceFamily && !deviceRoom && selectedDeviceIds.length === 0 && <span>Aucun filtre spécifique appliqué</span>}
               </p>
 
               <Button
@@ -859,6 +1066,50 @@ function SupabaseExportPanel({
 }
 
 // ============================================================
+// Filtre multi-sélection (Appareil / Pièce) — appliqué à tous les graphiques
+// ============================================================
+function MultiSelectFilter({ label, icon, options, selected, onChange }: {
+  label: string;
+  icon: React.ReactNode;
+  options: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const toggle = (v: string) =>
+    onChange(selected.includes(v) ? selected.filter(x => x !== v) : [...selected, v]);
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm"
+          className={`h-8 gap-1.5 text-xs ${selected.length ? 'bg-blue-600/20 border-blue-500/50 text-blue-300' : 'bg-white/5 border-white/20 text-slate-300'}`}>
+          {icon}
+          {label}
+          {selected.length > 0 && <span className="ml-0.5 rounded-full bg-blue-500/40 px-1.5 text-blue-100">{selected.length}</span>}
+          <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 bg-[#1a1d2e] border-white/20 p-2" align="end">
+        <div className="flex items-center justify-between px-1 py-1 mb-1">
+          <span className="text-slate-300 text-xs font-medium">{label} ({options.length})</span>
+          {selected.length > 0 && (
+            <button onClick={() => onChange([])} className="text-xs text-blue-400 hover:text-blue-300">Réinitialiser</button>
+          )}
+        </div>
+        <div className="max-h-72 overflow-y-auto space-y-0.5 pr-1">
+          {options.map(opt => (
+            <label key={opt} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
+              <Checkbox checked={selected.includes(opt)} onCheckedChange={() => toggle(opt)} />
+              <span className="text-white text-xs flex-1 truncate" title={opt}>{opt}</span>
+            </label>
+          ))}
+          {options.length === 0 && <p className="text-slate-500 text-xs px-2 py-1">Aucune donnée</p>}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ============================================================
 // COMPOSANT PRINCIPAL
 // ============================================================
 export function AnalyseTab() {
@@ -941,7 +1192,7 @@ export function AnalyseTab() {
     const arr = Array.from(serieMetrics);
     return (arr[0] ?? 'kwhTotal') as MetricKey;
   }, [serieMetrics]);
-  const [tcdLigne, setTcdLigne] = useState<'mois' | 'jouSemaine' | 'typeJour'>('mois');
+  const [tcdLigne, setTcdLigne] = useState<'mois' | 'jouSemaine' | 'typeJour' | 'appareil' | 'piece'>('mois');
   const [showFeries, setShowFeries] = useState(true);
   const [showWeekends, setShowWeekends] = useState(true);
 
@@ -960,6 +1211,9 @@ export function AnalyseTab() {
   const [slicerSaison, setSlicerSaison] = useState<string[]>([]);
   const [slicerPeriode, setSlicerPeriode] = useState<string[]>([]);
   const [slicerTypeJour, setSlicerTypeJour] = useState<string[]>([]);
+  // Filtres globaux Appareil / Pièce (s'appliquent à TOUS les graphiques)
+  const [slicerAppareil, setSlicerAppareil] = useState<string[]>([]);
+  const [slicerPiece, setSlicerPiece] = useState<string[]>([]);
   const [showRawData, setShowRawData] = useState(false);
   const [rawPage, setRawPage] = useState(0);
   const [fsPage, setFsPage] = useState(0);
@@ -1384,6 +1638,14 @@ export function AnalyseTab() {
   };
 
   // ---- Calculs ----
+  // Appareils & pièces présents dans les données (pour les filtres globaux)
+  const availableAppareils = useMemo(
+    () => Array.from(new Set(activeRows.map(r => r.nomAppareil).filter((x): x is string => Boolean(x)))).sort(),
+    [activeRows]);
+  const availablePieces = useMemo(
+    () => Array.from(new Set(activeRows.map(r => r.deviceRoom).filter((x): x is string => Boolean(x)))).sort(),
+    [activeRows]);
+
   const filteredRows = useMemo(() => {
     // Exclure SEULEMENT les lignes où TOUTES les mesures énergétiques ET de puissance sont nulles
     // (sinon on filtre par erreur les flux d'injection ou de monitoring)
@@ -1398,8 +1660,11 @@ export function AnalyseTab() {
     if (rows.length === 0) rows = activeRows;
     if (!showFeries) rows = rows.filter(r => !r.isJourFerie);
     if (!showWeekends) rows = rows.filter(r => !r.isWeekend);
+    // Filtres globaux Appareil / Pièce — appliqués à tous les graphiques
+    if (slicerAppareil.length) rows = rows.filter(r => slicerAppareil.includes(r.nomAppareil ?? ''));
+    if (slicerPiece.length) rows = rows.filter(r => slicerPiece.includes(r.deviceRoom ?? ''));
     return rows;
-  }, [activeRows, showFeries, showWeekends]);
+  }, [activeRows, showFeries, showWeekends, slicerAppareil, slicerPiece]);
 
   // Slicers Power BI (saison, tranche, type de jour)
   const slicerRows = useMemo(() => {
@@ -1428,6 +1693,8 @@ export function AnalyseTab() {
       });
     }
     if (tcdLigne === 'jouSemaine') return slicerRows.filter(r => r.jourSemaine === crossFilter);
+    if (tcdLigne === 'appareil') return slicerRows.filter(r => (r.nomAppareil || '(Sans nom)') === crossFilter);
+    if (tcdLigne === 'piece') return slicerRows.filter(r => (r.deviceRoom || '(Sans pièce)') === crossFilter);
     const typeMap: Record<string, (r: ShellyRow) => boolean> = {
       'Jours ouvrés': r => !r.isWeekend && !r.isJourFerie,
       'Samedis': r => toDate(r.date).getDay() === 6,
@@ -1463,8 +1730,34 @@ export function AnalyseTab() {
     }), [filteredRows]);
 
   // Sélecteur de type de graphique
-  type ChartType = 'bar' | 'line' | 'area' | 'pie_like';
   const [chartType, setChartType] = useState<ChartType>('bar');
+
+  // ── Double axe Y : regroupe les métriques par unité (kWh à gauche, kW à droite, etc.) ──
+  // Évite que la puissance (kW) soit écrasée par la consommation (kWh) sur un axe unique.
+  const tcdUnits = useMemo(() => {
+    const seen: string[] = [];
+    for (const m of METRIQUES) {
+      if (tcdMetrics.has(m.key) && !seen.includes(m.unit)) seen.push(m.unit);
+    }
+    return seen.length ? seen : ['kWh'];
+  }, [tcdMetrics]);
+  // Renvoie l'axe (gauche = 1ère unité, droite = unités suivantes)
+  const unitAxis = useCallback((unit?: string): 'left' | 'right' =>
+    unit && tcdUnits.indexOf(unit) > 0 ? 'right' : 'left', [tcdUnits]);
+  const metricAxis = useCallback((mk: MetricKey): 'left' | 'right' =>
+    unitAxis(METRIQUES.find(m => m.key === mk)?.unit), [unitAxis]);
+  const primaryTcdUnit = METRIQUES.find(m => m.key === primaryTcdMetric)?.unit;
+
+  // ── Idem pour la série temporelle (mode "serie") ──
+  const serieUnits = useMemo(() => {
+    const seen: string[] = [];
+    for (const m of METRIQUES) {
+      if (serieMetrics.has(m.key) && !seen.includes(m.unit)) seen.push(m.unit);
+    }
+    return seen.length ? seen : ['kWh'];
+  }, [serieMetrics]);
+  const serieMetricAxis = useCallback((unit?: string): 'left' | 'right' =>
+    unit && serieUnits.indexOf(unit) > 0 ? 'right' : 'left', [serieUnits]);
 
   const getVal = (r: ShellyRow): number => (r[primaryTcdMetric] as number) ?? 0;
 
@@ -1473,8 +1766,14 @@ export function AnalyseTab() {
     const perMetric: Record<string, number> = {};
     for (const mk of tcdMetrics) {
       const mvs = rows.map(r => (r[mk] as number) ?? 0);
-      perMetric[mk] = +mvs.reduce((s, v) => s + v, 0).toFixed(2);
+      const isPower = METRIQUES.find(m => m.key === mk)?.unit === 'kW';
+      perMetric[mk] = isPower
+        ? +(mvs.length ? mvs.reduce((s, v) => s + v, 0) / mvs.length : 0).toFixed(2)
+        : +mvs.reduce((s, v) => s + v, 0).toFixed(2);
     }
+    const appareils = Array.from(new Set(rows.map(r => r.nomAppareil).filter((x): x is string => Boolean(x))));
+    const emplacements = Array.from(new Set(rows.map(r => r.deviceLocation).filter((x): x is string => Boolean(x))));
+    const pieces = Array.from(new Set(rows.map(r => r.deviceRoom).filter((x): x is string => Boolean(x))));
     return {
       label: key,
       ...perMetric,
@@ -1483,6 +1782,9 @@ export function AnalyseTab() {
       max: vals.length ? +vals.reduce((a, v) => Math.max(a, v), -Infinity).toFixed(2) : 0,
       min: vals.length ? +vals.reduce((a, v) => Math.min(a, v), Infinity).toFixed(2) : 0,
       n: vals.length,
+      _appareils: appareils,
+      _emplacements: emplacements,
+      _pieces: pieces,
     };
   };
 
@@ -1520,6 +1822,17 @@ export function AnalyseTab() {
       }
       return JOURS_SEMAINE.map(jour => buildTcdGroup(byJour[jour] ?? [], jour));
     }
+    if (tcdLigne === 'appareil' || tcdLigne === 'piece') {
+      const by: Record<string, ShellyRow[]> = {};
+      for (const r of src) {
+        const k = tcdLigne === 'appareil' ? (r.nomAppareil || '(Sans nom)') : (r.deviceRoom || '(Sans pièce)');
+        (by[k] ??= []).push(r);
+      }
+      // Tri par valeur décroissante de la métrique principale (plus gros consommateurs en premier)
+      return Object.entries(by)
+        .map(([label, rows]) => buildTcdGroup(rows, label))
+        .sort((a, b) => (b[primaryTcdMetric] as number ?? 0) - (a[primaryTcdMetric] as number ?? 0));
+    }
     const types = [
       { key: 'Jours ouvrés', rows: src.filter(r => !r.isWeekend && !r.isJourFerie) },
       { key: 'Samedis', rows: src.filter(r => toDate(r.date).getDay() === 6) },
@@ -1529,6 +1842,28 @@ export function AnalyseTab() {
     return types.map(({ key, rows }) => buildTcdGroup(rows, key));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slicerRows, tcdLigne, tcdMetrics, drillMonth]);
+
+  // Total de la métrique principale sur toutes les catégories → pour la colonne "Part %" (occupation)
+  const tcdPrimaryTotal = useMemo(
+    () => tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[primaryTcdMetric] ?? 0), 0),
+    [tcdData, primaryTcdMetric]);
+  const tcdPart = (row: Record<string, unknown>): string => {
+    const v = (row as Record<string, number>)[primaryTcdMetric] ?? 0;
+    return tcdPrimaryTotal > 0 ? `${fmtFr((v / tcdPrimaryTotal) * 100, 1)} %` : '—';
+  };
+
+  // Dimensions adaptatives du graphique TCD : libellés inclinés (mois/appareil/pièce/jour)
+  // → besoin de plus de hauteur + grande marge basse pour ne rien couper.
+  const tcdAngled = (tcdLigne !== 'jouSemaine' && tcdLigne !== 'typeJour') || !!drillMonth;
+  // Plus de catégories ou libellés longs → graphique plus haut
+  const tcdLongLabels = tcdData.some(d => String(d.label).length > 10);
+  const tcdChartHeight = tcdAngled ? (tcdLongLabels ? 500 : 440) : 360;
+  const tcdBottomMargin = tcdAngled ? (tcdLongLabels ? 130 : 95) : 28;
+  const tcdXAxisHeight = tcdAngled ? (tcdLongLabels ? 125 : 90) : 32;
+  // Variante compacte pour la grille 2×2 du plein écran
+  const fsChartHeight = tcdAngled ? (tcdLongLabels ? 380 : 320) : 240;
+  const fsBottomMargin = tcdAngled ? (tcdLongLabels ? 115 : 80) : 20;
+  const fsXAxisHeight = tcdAngled ? (tcdLongLabels ? 110 : 78) : 28;
 
   // Stacked data phases A/B/C par mois
   // Série temporelle par phase (granularité = jour) — style Shelly Cloud
@@ -1893,7 +2228,15 @@ export function AnalyseTab() {
                   </button>
                 ))}
               </div>
-              <div className="flex items-center gap-4 ml-auto">
+              <div className="flex items-center gap-3 ml-auto flex-wrap">
+                {availableAppareils.length > 0 && (
+                  <MultiSelectFilter label="Appareil" icon={<Zap className="h-3.5 w-3.5" />}
+                    options={availableAppareils} selected={slicerAppareil} onChange={setSlicerAppareil} />
+                )}
+                {availablePieces.length > 0 && (
+                  <MultiSelectFilter label="Pièce" icon={<Layers className="h-3.5 w-3.5" />}
+                    options={availablePieces} selected={slicerPiece} onChange={setSlicerPiece} />
+                )}
                 <div className="flex items-center gap-2">
                   <Switch id="fe2" checked={showFeries} onCheckedChange={setShowFeries} className="data-[state=checked]:bg-purple-500 scale-75" />
                   <Label htmlFor="fe2" className="text-slate-400 text-xs">Fériés</Label>
@@ -2052,24 +2395,21 @@ export function AnalyseTab() {
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                         <XAxis dataKey="date" tick={{ fill: '#cbd5e1', fontSize: 10 }} interval="preserveStartEnd"
                           label={{ value: 'Temps (date)', position: 'insideBottom', offset: -5, fill: '#cbd5e1', fontSize: 11 }} />
-                        <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }}
+                        <YAxis yAxisId="left" tick={{ fill: '#cbd5e1', fontSize: 10 }}
                           tickFormatter={(v: number) => fmtFr(v, v >= 100 ? 0 : 1)}
-                          label={{
-                            value: (() => {
-                              const units = Array.from(new Set(
-                                METRIQUES.filter(m => serieMetrics.has(m.key)).map(m => m.unit)
-                              ));
-                              return units.length === 1 ? `Valeur (${units[0]})` : 'Valeur (multi-unités)';
-                            })(),
-                            angle: -90, position: 'insideLeft', fill: '#cbd5e1', fontSize: 11, offset: 5,
-                          }} />
+                          label={{ value: axisLabelForUnit(serieUnits[0]), angle: -90, position: 'insideLeft', fill: '#cbd5e1', fontSize: 11, offset: 5 }} />
+                        {serieUnits.length > 1 && (
+                          <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: 10 }}
+                            tickFormatter={(v: number) => fmtFr(v, v >= 100 ? 0 : 1)}
+                            label={{ value: axisLabelForUnit(serieUnits[1]), angle: 90, position: 'insideRight', fill: '#cbd5e1', fontSize: 11, offset: 5 }} />
+                        )}
                         <Tooltip content={<SerieTooltip />} />
                         <Legend wrapperStyle={{ color: '#94a3b8', cursor: 'pointer', paddingTop: 10 }}
                           onClick={(e) => toggleSeries(String(e.dataKey ?? ''))} />
-                        <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4"
+                        <ReferenceLine yAxisId={serieMetricAxis(METRIQUES.find(m => m.key === primarySerieMetric)?.unit)} y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4"
                           label={{ value: `Moy. ${fmt1(stats.moyenne)} ${METRIQUES.find(m => m.key === primarySerieMetric)?.unit ?? ''}`, fill: '#f59e0b', fontSize: 10, position: 'right' }} />
                         {METRIQUES.filter(m => serieMetrics.has(m.key)).map(m => (
-                          <Area key={m.key} type="monotone" dataKey={m.key} name={`${m.label} (${m.unit})`}
+                          <Area key={m.key} yAxisId={serieMetricAxis(m.unit)} type="monotone" dataKey={m.key} name={`${m.label} (${m.unit})`}
                             stroke={m.color} fill={`${m.color}25`}
                             strokeWidth={m.key === primarySerieMetric ? 2.5 : 1.5}
                             dot={false}
@@ -2108,6 +2448,8 @@ export function AnalyseTab() {
                           <SelectItem value="mois">Mois</SelectItem>
                           <SelectItem value="jouSemaine">Jour de semaine</SelectItem>
                           <SelectItem value="typeJour">Type de jour</SelectItem>
+                          {availableAppareils.length > 0 && <SelectItem value="appareil">Par appareil</SelectItem>}
+                          {availablePieces.length > 0 && <SelectItem value="piece">Par pièce</SelectItem>}
                         </SelectContent>
                       </Select>
                       {/* Sélecteur métrique (multi-select) */}
@@ -2121,10 +2463,10 @@ export function AnalyseTab() {
                       </div>
                       {/* Sélecteur type graphique */}
                       <div className="flex gap-1 border border-white/10 rounded-lg p-0.5">
-                        {(['bar', 'line', 'area'] as ChartType[]).map(ct => (
+                        {(['bar', 'line', 'area', 'pie'] as ChartType[]).map(ct => (
                           <button key={ct} onClick={() => setChartType(ct)}
                             className={`px-2 py-0.5 rounded text-xs transition-all ${chartType === ct ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-white'}`}
-                          >{{ bar: 'Barres', line: 'Ligne', area: 'Aire' }[ct]}</button>
+                          >{{ bar: 'Barres', line: 'Ligne', area: 'Aire', pie: 'Camembert' }[ct]}</button>
                         ))}
                       </div>
                     </div>
@@ -2179,58 +2521,31 @@ export function AnalyseTab() {
 
                   {/* Graphique principal */}
                   <div className="bg-white/5 rounded-xl border border-white/10 p-4">
-                    <ResponsiveContainer width="100%" height={280}>
-                      {chartType === 'bar' ? (
-                        <BarChart data={tcdData} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}
-                          onClick={(e) => {
-                            if (!e?.activeLabel) return;
-                            const lbl = e.activeLabel as string;
-                            if (tcdLigne === 'mois' && !drillMonth) { setDrillMonth(lbl); setCrossFilter(lbl); }
-                            else { setCrossFilter(prev => prev === lbl ? null : lbl); }
-                          }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                          <XAxis dataKey="label" tick={{ fill: '#cbd5e1', fontSize: 11 }} angle={(tcdLigne === 'mois' || drillMonth) ? -25 : 0} textAnchor={(tcdLigne === 'mois' || drillMonth) ? 'end' : 'middle'} label={{ value: drillMonth ? 'Jour' : tcdLigne === 'mois' ? 'Mois' : tcdLigne === 'jouSemaine' ? 'Jour de semaine' : 'Type de jour', position: 'insideBottom', offset: -2, fill: '#cbd5e1', fontSize: 11 }} />
-                          <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} label={{ value: formatAxisMetric(primaryTcdMetric), angle: -90, position: 'insideLeft', fill: '#cbd5e1', fontSize: 11 }} />
-                          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} formatter={tcdFormatter} />
-                          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
-                          {Array.from(tcdMetrics).map(mk => {
-                            const meta = METRIQUES.find(m => m.key === mk);
-                            return (
-                              <Bar key={mk} dataKey={mk} name={meta?.label ?? mk} radius={[4, 4, 0, 0]} fill={meta?.color ?? profilColor} cursor="pointer" opacity={0.85}>
-                                {mk === primaryTcdMetric && tcdData.map((entry, i) => (
-                                  <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : meta?.color ?? COULEURS[i % COULEURS.length]} opacity={crossFilter && crossFilter !== entry.label ? 0.35 : 1} />
-                                ))}
-                              </Bar>
-                            );
-                          })}
-                        </BarChart>
-                      ) : chartType === 'line' ? (
-                        <LineChart data={tcdData} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                          <XAxis dataKey="label" tick={{ fill: '#cbd5e1', fontSize: 11 }} label={{ value: drillMonth ? 'Jour' : tcdLigne === 'mois' ? 'Mois' : tcdLigne === 'jouSemaine' ? 'Jour de semaine' : 'Type de jour', position: 'insideBottom', offset: -2, fill: '#cbd5e1', fontSize: 11 }} />
-                          <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} label={{ value: formatAxisMetric(primaryTcdMetric), angle: -90, position: 'insideLeft', fill: '#cbd5e1', fontSize: 11 }} />
-                          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} formatter={tcdFormatter} />
-                          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
-                          {Array.from(tcdMetrics).map(mk => {
-                            const meta = METRIQUES.find(m => m.key === mk);
-                            return <Line key={mk} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} strokeWidth={2} dot={{ r: 4 }} />;
-                          })}
-                          <Line type="monotone" dataKey="moyenne" name="Moyenne" stroke="#06b6d4" strokeWidth={1} strokeDasharray="4 4" dot={false} />
-                        </LineChart>
-                      ) : (
-                        <AreaChart data={tcdData} margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                          <XAxis dataKey="label" tick={{ fill: '#cbd5e1', fontSize: 11 }} label={{ value: drillMonth ? 'Jour' : tcdLigne === 'mois' ? 'Mois' : tcdLigne === 'jouSemaine' ? 'Jour de semaine' : 'Type de jour', position: 'insideBottom', offset: -2, fill: '#cbd5e1', fontSize: 11 }} />
-                          <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} label={{ value: formatAxisMetric(primaryTcdMetric), angle: -90, position: 'insideLeft', fill: '#cbd5e1', fontSize: 11 }} />
-                          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} formatter={tcdFormatter} />
-                          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
-                          {Array.from(tcdMetrics).map(mk => {
-                            const meta = METRIQUES.find(m => m.key === mk);
-                            return <Area key={mk} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} fill={(meta?.color ?? profilColor) + '20'} strokeWidth={2} />;
-                          })}
-                        </AreaChart>
-                      )}
-                    </ResponsiveContainer>
+                    <TcdChart
+                      compact={false}
+                      data={tcdData}
+                      chartType={chartType}
+                      metrics={tcdMetrics}
+                      primaryMetric={primaryTcdMetric}
+                      units={tcdUnits}
+                      crossFilter={crossFilter}
+                      onBarClick={(e) => {
+                        if (!e?.activeLabel) return;
+                        const lbl = e.activeLabel as string;
+                        if (tcdLigne === 'mois' && !drillMonth) { setDrillMonth(lbl); setCrossFilter(lbl); }
+                        else { setCrossFilter(prev => prev === lbl ? null : lbl); }
+                      }}
+                      onPieClick={(entry) => { const lbl = entry?.label; if (lbl) setCrossFilter(prev => prev === lbl ? null : lbl); }}
+                      metricAxis={metricAxis}
+                      unitAxis={unitAxis}
+                      primaryUnit={primaryTcdUnit}
+                      profilColor={profilColor}
+                      angled={tcdAngled}
+                      height={tcdChartHeight}
+                      bottomMargin={tcdBottomMargin}
+                      xAxisHeight={tcdXAxisHeight}
+                      xAxisLabel={drillMonth ? 'Jour' : TCD_LIGNE_LABEL[tcdLigne]}
+                    />
                   </div>
 
                   {/* Tableau agrégé */}
@@ -2249,6 +2564,7 @@ export function AnalyseTab() {
                             const u = METRIQUES.find(m => m.key === primaryTcdMetric)?.unit;
                             return <th key={h} className="px-4 py-3 text-left text-slate-300 font-medium text-xs">{h}{u && <span className="text-slate-500 ml-1 font-normal">({u})</span>}</th>;
                           })}
+                          <th className="px-4 py-3 text-left text-amber-300 font-medium text-xs">Part <span className="text-slate-500 font-normal">(% {METRIQUES.find(m => m.key === primaryTcdMetric)?.label})</span></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2260,12 +2576,13 @@ export function AnalyseTab() {
                             {Array.from(tcdMetrics).map(mk => {
                               const meta = METRIQUES.find(m => m.key === mk);
                               return <td key={mk} className="px-4 py-2 font-medium text-xs" style={{ color: meta?.color }}>
-                                {fmtFr((row as Record<string, number>)[mk] ?? 0, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
+                                {fmtFr((row as unknown as Record<string, number>)[mk] ?? 0, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                               </td>;
                             })}
                             <td className="px-4 py-2 text-cyan-400 text-xs">{fmtFr(row.moyenne, 3)}<span className="opacity-50 ml-0.5">{METRIQUES.find(m => m.key === primaryTcdMetric)?.unit}</span></td>
                             <td className="px-4 py-2 text-green-400 text-xs">{fmtFr(row.max, 3)}<span className="opacity-50 ml-0.5">{METRIQUES.find(m => m.key === primaryTcdMetric)?.unit}</span></td>
                             <td className="px-4 py-2 text-slate-400 text-xs">{fmtFr(row.min, 3)}<span className="opacity-50 ml-0.5">{METRIQUES.find(m => m.key === primaryTcdMetric)?.unit}</span></td>
+                            <td className="px-4 py-2 text-amber-300 font-semibold text-xs">{tcdPart(row)}</td>
                           </tr>
                         ))}
                         <tr className="border-t-2 border-white/20 bg-white/5 font-bold">
@@ -2273,12 +2590,13 @@ export function AnalyseTab() {
                           <td className="px-4 py-2 text-slate-400 text-xs">{tcdData.reduce((s, r) => s + r.n, 0)}</td>
                           {Array.from(tcdMetrics).map(mk => {
                             const meta = METRIQUES.find(m => m.key === mk);
-                            const total = tcdData.reduce((s, r) => s + ((r as Record<string, number>)[mk] ?? 0), 0);
+                            const total = tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
                             return <td key={mk} className="px-4 py-2 text-xs" style={{ color: meta?.color }}>
                               {fmtFr(total, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                             </td>;
                           })}
                           <td colSpan={3} />
+                          <td className="px-4 py-2 text-amber-300 text-xs">100 %</td>
                         </tr>
                       </tbody>
                     </table>
@@ -2421,7 +2739,7 @@ export function AnalyseTab() {
                 <div className="bg-white/5 rounded-xl border border-white/10 p-4">
                   <h3 className="text-white font-semibold text-sm mb-4">Consommation vs Jour de semaine</h3>
                   <ResponsiveContainer width="100%" height={260}>
-                    <ScatterChart margin={{ top: 5, right: 20, bottom: 20, left: 10 }}>
+                    <ScatterChart margin={{ top: 5, right: 20, bottom: tcdBottomMargin, left: 10 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                       <XAxis type="number" dataKey="x" domain={[0, 6]} tick={{ fill: '#cbd5e1', fontSize: 11 }} tickFormatter={(v) => JOURS_SEMAINE[v]} />
                       <YAxis type="number" dataKey="y" tick={{ fill: '#cbd5e1', fontSize: 10 }} />
@@ -2483,10 +2801,10 @@ export function AnalyseTab() {
             </div>
             {/* Type graphique */}
             <div className="flex gap-1 border border-white/10 rounded-lg p-0.5">
-              {(['bar', 'line', 'area'] as ChartType[]).map(ct => (
+              {(['bar', 'line', 'area', 'pie'] as ChartType[]).map(ct => (
                 <button key={ct} onClick={() => setChartType(ct)}
                   className={`px-2.5 py-1 rounded text-xs transition-all ${chartType === ct ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-white'}`}
-                >{{ bar: 'Barres', line: 'Ligne', area: 'Aire' }[ct]}</button>
+                >{{ bar: 'Barres', line: 'Ligne', area: 'Aire', pie: 'Camembert' }[ct]}</button>
               ))}
             </div>
             <button onClick={() => setFullscreenTCD(false)}
@@ -2546,68 +2864,44 @@ export function AnalyseTab() {
               <div className="bg-white/5 rounded-xl border border-white/10 p-4">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-white text-xs font-semibold">
-                    {drillMonth ? `Jours — ${drillMonth}` : { mois: 'Par Mois', jouSemaine: 'Par Jour de semaine', typeJour: 'Par Type de jour' }[tcdLigne]}
+                    {drillMonth ? `Jours — ${drillMonth}` : `Par ${TCD_LIGNE_LABEL[tcdLigne]}`}
                   </p>
-                  <div className="flex gap-1">
-                    {(['mois', 'jouSemaine', 'typeJour'] as const).map(v => (
+                  <div className="flex gap-1 flex-wrap">
+                    {([
+                      'mois', 'jouSemaine', 'typeJour',
+                      ...(availableAppareils.length > 0 ? ['appareil'] as const : []),
+                      ...(availablePieces.length > 0 ? ['piece'] as const : []),
+                    ] as typeof tcdLigne[]).map(v => (
                       <button key={v} onClick={() => { setTcdLigne(v); setDrillMonth(null); setCrossFilter(null); }}
                         className={`px-2 py-0.5 rounded text-xs border transition-all ${tcdLigne === v ? 'bg-white/15 border-white/20 text-white' : 'border-white/10 text-slate-500 hover:text-white'}`}
-                      >{{ mois: 'Mois', jouSemaine: 'Semaine', typeJour: 'Type' }[v]}</button>
+                      >{{ mois: 'Mois', jouSemaine: 'Semaine', typeJour: 'Type', appareil: 'Appareil', piece: 'Pièce' }[v]}</button>
                     ))}
                   </div>
                 </div>
-                <ResponsiveContainer width="100%" height={220}>
-                  {chartType === 'bar' ? (
-                    <BarChart data={tcdData} margin={{ top: 5, right: 10, bottom: 20, left: 0 }}
-                      onClick={e => {
-                        if (!e?.activeLabel) return;
-                        const lbl = e.activeLabel as string;
-                        if (tcdLigne === 'mois' && !drillMonth) { setDrillMonth(lbl); setCrossFilter(lbl); }
-                        else setCrossFilter(prev => prev === lbl ? null : lbl);
-                      }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                      <XAxis dataKey="label" tick={{ fill: '#cbd5e1', fontSize: 10 }} angle={(tcdLigne === 'mois' || drillMonth) ? -25 : 0} textAnchor={(tcdLigne === 'mois' || drillMonth) ? 'end' : 'middle'} />
-                      <YAxis tick={{ fill: '#cbd5e1', fontSize: 9 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
-                      <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
-                      {Array.from(tcdMetrics).map(mk => {
-                        const meta = METRIQUES.find(m => m.key === mk);
-                        return (
-                          <Bar key={mk} dataKey={mk} name={meta?.label ?? mk} radius={[3, 3, 0, 0]} fill={meta?.color ?? profilColor} cursor="pointer" opacity={0.85}>
-                            {mk === primaryTcdMetric && tcdData.map((entry, i) => (
-                              <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : meta?.color ?? COULEURS[i % COULEURS.length]} opacity={crossFilter && crossFilter !== entry.label ? 0.3 : 1} />
-                            ))}
-                          </Bar>
-                        );
-                      })}
-                    </BarChart>
-                  ) : chartType === 'line' ? (
-                    <LineChart data={tcdData} margin={{ top: 5, right: 10, bottom: 20, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                      <XAxis dataKey="label" tick={{ fill: '#cbd5e1', fontSize: 10 }} />
-                      <YAxis tick={{ fill: '#cbd5e1', fontSize: 9 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
-                      <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
-                      {Array.from(tcdMetrics).map(mk => {
-                        const meta = METRIQUES.find(m => m.key === mk);
-                        return <Line key={mk} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} strokeWidth={2} dot={{ r: 3 }} />;
-                      })}
-                      <Line type="monotone" dataKey="moyenne" name="Moy." stroke="#06b6d4" strokeWidth={1} strokeDasharray="4 4" dot={false} />
-                    </LineChart>
-                  ) : (
-                    <AreaChart data={tcdData} margin={{ top: 5, right: 10, bottom: 20, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                      <XAxis dataKey="label" tick={{ fill: '#cbd5e1', fontSize: 10 }} />
-                      <YAxis tick={{ fill: '#cbd5e1', fontSize: 9 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
-                      <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
-                      {Array.from(tcdMetrics).map(mk => {
-                        const meta = METRIQUES.find(m => m.key === mk);
-                        return <Area key={mk} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} fill={(meta?.color ?? profilColor) + '20'} strokeWidth={2} />;
-                      })}
-                    </AreaChart>
-                  )}
-                </ResponsiveContainer>
+                <TcdChart
+                  compact
+                  data={tcdData}
+                  chartType={chartType}
+                  metrics={tcdMetrics}
+                  primaryMetric={primaryTcdMetric}
+                  units={tcdUnits}
+                  crossFilter={crossFilter}
+                  onBarClick={(e) => {
+                    if (!e?.activeLabel) return;
+                    const lbl = e.activeLabel as string;
+                    if (tcdLigne === 'mois' && !drillMonth) { setDrillMonth(lbl); setCrossFilter(lbl); }
+                    else setCrossFilter(prev => prev === lbl ? null : lbl);
+                  }}
+                  onPieClick={(entry) => { const lbl = entry?.label; if (lbl) setCrossFilter(prev => prev === lbl ? null : lbl); }}
+                  metricAxis={metricAxis}
+                  unitAxis={unitAxis}
+                  primaryUnit={primaryTcdUnit}
+                  profilColor={profilColor}
+                  angled={tcdAngled}
+                  height={fsChartHeight}
+                  bottomMargin={fsBottomMargin}
+                  xAxisHeight={fsXAxisHeight}
+                />
               </div>
 
               {/* Chart 2 : Phases A/B/C — séries temporelles superposées (style Shelly Cloud) */}
@@ -2662,12 +2956,15 @@ export function AnalyseTab() {
                   })} margin={{ top: 5, right: 10, bottom: 20, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                     <XAxis dataKey="date" tick={{ fill: '#cbd5e1', fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fill: '#cbd5e1', fontSize: 9 }} />
-                    <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
+                    <YAxis yAxisId="left" tick={{ fill: '#cbd5e1', fontSize: 9 }} label={{ value: axisLabelForUnit(tcdUnits[0]), angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 10 }} />
+                    {tcdUnits.length > 1 && (
+                      <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: 9 }} label={{ value: axisLabelForUnit(tcdUnits[1]), angle: 90, position: 'insideRight', fill: '#94a3b8', fontSize: 10 }} />
+                    )}
+                    <Tooltip content={<TcdTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
                     {Array.from(tcdMetrics).map(mk => {
                       const meta = METRIQUES.find(m => m.key === mk);
-                      return <Area key={mk} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} fill={(meta?.color ?? profilColor) + '15'} strokeWidth={2} dot={false} />;
+                      return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} fill={(meta?.color ?? profilColor) + '15'} strokeWidth={2} dot={false} />;
                     })}
                   </AreaChart>
                 </ResponsiveContainer>
@@ -2699,7 +2996,7 @@ export function AnalyseTab() {
                         {Array.from(tcdMetrics).map(mk => {
                           const meta = METRIQUES.find(m => m.key === mk);
                           return <td key={mk} className="px-3 py-1.5 font-medium" style={{ color: meta?.color }}>
-                            {fmtFr((row as Record<string, number>)[mk] ?? 0, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
+                            {fmtFr((row as unknown as Record<string, number>)[mk] ?? 0, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                           </td>;
                         })}
                         <td className="px-3 py-1.5 text-cyan-400">{fmtFr(row.moyenne, 3)}<span className="opacity-50 ml-0.5">{METRIQUES.find(m => m.key === primaryTcdMetric)?.unit}</span></td>
@@ -2712,7 +3009,7 @@ export function AnalyseTab() {
                       <td className="px-3 py-1.5 text-slate-400">{tcdData.reduce((s, r) => s + r.n, 0)}</td>
                       {Array.from(tcdMetrics).map(mk => {
                         const meta = METRIQUES.find(m => m.key === mk);
-                        const total = tcdData.reduce((s, r) => s + ((r as Record<string, number>)[mk] ?? 0), 0);
+                        const total = tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
                         return <td key={mk} className="px-3 py-1.5" style={{ color: meta?.color }}>
                           {fmtFr(total, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                         </td>;

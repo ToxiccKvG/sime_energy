@@ -6,13 +6,25 @@ Shelly…) exporte un format différent. Ce module ramène tous ces formats à u
 contrat unique consommé par le frontend (`/process-file/measures`) :
 
     {
-        "measurements": [ {timestamp, consumption, current, power, apparent_power, …}, … ],
-        "kpis":         {duration, avgConsumption, peakConsumption, …, unit},
-        "sensor_type":  "<clé du registre>",
-        "metric_label": "Puissance active",   # libellé de la grandeur tracée
-        "unit":         "W",
+        "measurements":   [ {timestamp, consumption, current, power, apparent_power, …}, … ],
+        "sensor_type":    "<clé du registre>",
+        "metric_label":   "Puissance active",   # libellé de la grandeur tracée
+        "unit":           "W",
+        "quantity_kind":  "power",   # "power" | "energy" | "other" — cf. plus bas
         "processing_info": {original_rows, valid_measurements, metadata}
     }
+
+Ce module ne calcule volontairement aucune statistique (moyenne, écart-type,
+percentiles, interprétation...) : le frontend reçoit l'intégralité des mesures
+et calcule lui-même ces indicateurs (voir `src/services/measurementStats.ts`),
+ce qui évite de dupliquer cette logique dans les deux langages et permet de la
+recalculer à la volée sur un sous-ensemble filtré (période, grandeur...).
+
+`quantity_kind` indique au frontend comment calculer un cumul pour la grandeur
+principale :
+  - "power"  : grandeur instantanée (W, kW) → intégration temporelle (trapèzes)
+  - "energy" : grandeur déjà cumulable par échantillon (Wh, kWh...) → somme
+  - "other"  : grandeur sans cumul physique sensé (ppm, °C, %...) → pas de cumul
 
 Pour ajouter un capteur : écrire un `_parse_*` qui renvoie un DataFrame avec une
 colonne `timestamp` (datetime) + les colonnes normalisées, puis l'enregistrer
@@ -123,63 +135,32 @@ def _build_measurements(
     df: pd.DataFrame,
     *,
     value_col: str,
-    apparent_col: Optional[str] = None,
-    current_col: Optional[str] = None,
-    power_col: Optional[str] = None,
     extra_cols: Optional[Dict[str, str]] = None,
     keep_negative: bool = True,
-    max_points: int = 1000,
 ) -> List[Dict[str, Any]]:
-    """Transforme le DataFrame normalisé en liste de mesures pour le frontend."""
+    """Transforme le DataFrame normalisé en liste de mesures pour le frontend.
+
+    Renvoie l'intégralité des mesures valides (pas de sous-échantillonnage) :
+    l'analyse, le filtrage par période et les rapports côté client ont besoin
+    des données complètes, pas d'un aperçu.
+    """
     extra_cols = extra_cols or {}
     work = df[df[value_col].notna() & df["timestamp"].notna()].copy()
     if not keep_negative:
         work = work[work[value_col] >= 0]
     work = work.sort_values("timestamp")
 
-    # Sous-échantillonnage pour ne pas saturer le graphique / la table
-    if len(work) > max_points:
-        step = max(1, len(work) // max_points)
-        work = work.iloc[::step]
-
     rows: List[Dict[str, Any]] = []
     for _, r in work.iterrows():
         row: Dict[str, Any] = {
             "timestamp": _format_ts(r["timestamp"]),
             "consumption": _to_float(r[value_col]),
-            "current": _to_float(r[current_col]) if current_col and current_col in df.columns else None,
-            "power": _to_float(r[power_col]) if power_col and power_col in df.columns else None,
-            "apparent_power": _to_float(r[apparent_col]) if apparent_col and apparent_col in df.columns else None,
         }
         for label, col in extra_cols.items():
             if col in df.columns:
                 row[label] = _to_float(r[col])
         rows.append(row)
     return rows
-
-
-def _compute_kpis(df: pd.DataFrame, value_col: str, unit: str) -> Dict[str, Any]:
-    """Calcule les indicateurs synthétiques sur la grandeur principale."""
-    series = pd.to_numeric(df[value_col], errors="coerce").dropna()
-    if series.empty:
-        raise ValueError("Aucune valeur numérique exploitable dans le fichier")
-
-    duration = "N/A"
-    ts = pd.to_datetime(df["timestamp"], errors="coerce").dropna()
-    if len(ts) > 1:
-        delta = ts.max() - ts.min()
-        duration = f"{delta.days}j {delta.seconds // 3600}h {(delta.seconds // 60) % 60}min"
-
-    return {
-        "duration": duration,
-        "avgConsumption": round(float(series.mean()), 2),
-        "peakConsumption": round(float(series.max()), 2),
-        "minConsumption": round(float(series.min()), 2),
-        "totalConsumption": round(float(series.sum()), 2),
-        "varConsumption": round(float(series.var()), 2) if len(series) > 1 else 0.0,
-        "unit": unit,
-        "measurementCount": int(series.shape[0]),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -378,11 +359,10 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
         "input": "bytes",
         "parser": parse_ca8335_trend,
         "value_col": "power_active_w",
-        "apparent_col": "power_apparent_va",
-        "current_col": "current_avg_a",
         "unit": "W",
         "metric_label": "Puissance active",
         "keep_negative": True,
+        "quantity_kind": "power",
         "extra_cols": {
             "P apparente (VA)": "power_apparent_va",
             "Q (var)": "power_reactive_var",
@@ -390,6 +370,7 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
             "Fréquence (Hz)": "frequency_hz",
             "Déséq. U (%)": "voltage_unbalance_pct",
             "U moy. A (V)": "voltage_a_v",
+            "I moy. (A)": "current_avg_a",
         },
     },
     "CA8335_DEMAND": {
@@ -397,11 +378,10 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
         "input": "bytes",
         "parser": parse_ca8335_demand,
         "value_col": "active_energy_wh",
-        "apparent_col": "apparent_energy_vah",
-        "current_col": "current_avg_a",
         "unit": "Wh",
         "metric_label": "Énergie active",
         "keep_negative": True,
+        "quantity_kind": "energy",
         "extra_cols": {
             "E apparente (VAh)": "apparent_energy_vah",
             "E non-active (varh)": "nonactive_energy_varh",
@@ -417,6 +397,7 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
         "unit": "ppm",
         "metric_label": "CO₂",
         "keep_negative": True,
+        "quantity_kind": "other",
         "extra_cols": {
             "PM2.5 (µg/m³)": "pm25_ugm3",
             "PM10 (µg/m³)": "pm10_ugm3",
@@ -433,6 +414,7 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
         "unit": "kW",
         "metric_label": "Puissance produite",
         "keep_negative": False,
+        "quantity_kind": "power",
         "extra_cols": {},
     },
     "PV_HUAWEI": {
@@ -443,6 +425,7 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
         "unit": "kWh",
         "metric_label": "Production",
         "keep_negative": True,
+        "quantity_kind": "energy",
         "extra_cols": {
             "Consommation (kWh)": "consumption_kwh",
             "Injecté réseau (kWh)": "grid_injected_kwh",
@@ -460,6 +443,7 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
         "unit": "Wh",
         "metric_label": "Énergie consommée",
         "keep_negative": True,
+        "quantity_kind": "energy",
         "extra_cols": {
             "Phase A (Wh)": "phase_a_wh",
             "Phase B (Wh)": "phase_b_wh",
@@ -471,16 +455,131 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
 
 
 # ---------------------------------------------------------------------------
+# Parser générique — capteurs personnalisés
+# ---------------------------------------------------------------------------
+
+def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
+    """Parse un fichier CSV ou Excel selon un mapping de colonnes libre.
+
+    `config` attendu (correspond à la table custom_sensors) :
+        timestamp_col    : nom de la colonne timestamp dans le fichier
+        timestamp_format : format strptime optionnel (ex. "%d/%m/%Y %H:%M")
+        value_col        : colonne de la grandeur principale
+        extra_cols       : liste de {label, col} pour les colonnes supplémentaires
+    """
+    # Détection CSV vs Excel
+    try:
+        bio = io.BytesIO(contents)
+        xls = pd.ExcelFile(bio, engine="openpyxl")
+        sheet = xls.sheet_names[0]
+        raw = xls.parse(sheet)
+    except Exception:
+        encoding = chardet.detect(contents)["encoding"] or "utf-8"
+        try:
+            text = contents.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            text = contents.decode("utf-8", errors="replace")
+        # Détection séparateur (; ou ,)
+        first_line = text.split("\n", 1)[0]
+        sep = ";" if first_line.count(";") >= first_line.count(",") else ","
+        raw = pd.read_csv(io.StringIO(text), sep=sep, engine="python", on_bad_lines="skip")
+
+    ts_col = config["timestamp_col"]
+    val_col = config["value_col"]
+
+    if ts_col not in raw.columns:
+        raise ValueError(
+            f"Colonne timestamp « {ts_col} » introuvable. "
+            f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
+        )
+    if val_col not in raw.columns:
+        raise ValueError(
+            f"Colonne valeur « {val_col} » introuvable. "
+            f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
+        )
+
+    df = pd.DataFrame()
+    fmt = config.get("timestamp_format")
+    if fmt:
+        df["timestamp"] = pd.to_datetime(raw[ts_col].astype(str), format=fmt, errors="coerce")
+        if df["timestamp"].isna().all():
+            df["timestamp"] = pd.to_datetime(raw[ts_col], errors="coerce")
+    else:
+        df["timestamp"] = pd.to_datetime(raw[ts_col], errors="coerce")
+
+    df[val_col] = pd.to_numeric(raw[val_col], errors="coerce")
+
+    for extra in config.get("extra_cols", []):
+        col = extra.get("col") or extra.get("column")
+        if col and col in raw.columns:
+            df[col] = pd.to_numeric(raw[col], errors="coerce")
+
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Point d'entrée unique
 # ---------------------------------------------------------------------------
 
-def process_measurement_file(contents: bytes, sensor_type: str) -> Dict[str, Any]:
-    """Parse un fichier capteur et renvoie le payload normalisé pour le frontend."""
+def process_measurement_file(
+    contents: bytes,
+    sensor_type: str,
+    custom_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Parse un fichier capteur et renvoie le payload normalisé pour le frontend.
+
+    Pour un capteur personnalisé, passer `sensor_type='CUSTOM'` et fournir
+    `custom_config` avec les clés : timestamp_col, value_col, unit, metric_label,
+    extra_cols (liste), keep_negative, timestamp_format (optionnel).
+    """
+    if sensor_type == "CUSTOM":
+        if not custom_config:
+            raise ValueError("sensor_type=CUSTOM requiert un custom_config")
+        df = _parse_generic(contents, custom_config)
+        value_col   = custom_config["value_col"]
+        unit        = custom_config.get("unit", "")
+        metric_label = custom_config.get("metric_label", "Valeur")
+        keep_negative = custom_config.get("keep_negative", True)
+        quantity_kind = custom_config.get("quantity_kind", "energy")
+        extra_cols = {
+            e.get("label", e.get("col", "")): e.get("col", e.get("column", ""))
+            for e in custom_config.get("extra_cols", [])
+            if e.get("col") or e.get("column")
+        }
+
+        if df.empty or value_col not in df.columns:
+            raise ValueError(
+                f"Colonne « {value_col} » introuvable ou fichier vide après parsing."
+            )
+
+        original_rows = len(df)
+        measurements = _build_measurements(
+            df,
+            value_col=value_col,
+            extra_cols=extra_cols,
+            keep_negative=keep_negative,
+        )
+        if not measurements:
+            raise ValueError("Aucune mesure exploitable après nettoyage des données")
+
+        return {
+            "measurements": measurements,
+            "sensor_type": "CUSTOM",
+            "metric_label": metric_label,
+            "unit": unit,
+            "quantity_kind": quantity_kind,
+            "processing_info": {
+                "original_rows": original_rows,
+                "valid_measurements": len(measurements),
+                "sensor_label": custom_config.get("name", "Capteur personnalisé"),
+            },
+        }
+
     config = SENSOR_REGISTRY.get(sensor_type)
     if config is None:
         raise ValueError(
             f"Type de capteur '{sensor_type}' non supporté. "
-            f"Valeurs acceptées : {', '.join(SENSOR_REGISTRY)}"
+            f"Valeurs acceptées : CUSTOM, {', '.join(SENSOR_REGISTRY)}"
         )
 
     # Décodage selon le type d'entrée attendu par le parser
@@ -517,23 +616,18 @@ def process_measurement_file(contents: bytes, sensor_type: str) -> Dict[str, Any
     measurements = _build_measurements(
         df,
         value_col=value_col,
-        apparent_col=config.get("apparent_col"),
-        current_col=config.get("current_col"),
-        power_col=config.get("power_col"),
         extra_cols=config.get("extra_cols"),
         keep_negative=config.get("keep_negative", True),
     )
     if not measurements:
         raise ValueError("Aucune mesure exploitable après nettoyage des données")
 
-    kpis = _compute_kpis(df, value_col, config["unit"])
-
     return {
         "measurements": measurements,
-        "kpis": kpis,
         "sensor_type": sensor_type,
         "metric_label": config["metric_label"],
         "unit": config["unit"],
+        "quantity_kind": config.get("quantity_kind", "energy"),
         "processing_info": {
             "original_rows": original_rows,
             "valid_measurements": len(measurements),
