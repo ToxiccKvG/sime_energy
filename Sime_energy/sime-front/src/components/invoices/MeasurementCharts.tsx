@@ -15,12 +15,12 @@
 import { useMemo, useState } from 'react';
 import {
   Area,
-  AreaChart,
   Bar,
   BarChart,
   Brush,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Line,
   ResponsiveContainer,
@@ -276,14 +276,27 @@ function CurveView({
   const shown = series.filter((s) => visible.has(s.key));
 
   // Chaque grandeur a sa propre unité (ou aucune, ex. Cos φ) — jamais celle de la
-  // grandeur principale par défaut. Axe partagé entre plusieurs séries superposées :
-  // on n'affiche une unité dessus que si une seule série est visible (sinon ambigu).
+  // grandeur principale par défaut.
   const unitByName = useMemo(() => {
     const map = new Map<string, string>();
     for (const s of series) map.set(s.name, s.key === 'consumption' ? unit : extractUnit(s.name));
     return map;
   }, [series, unit]);
-  const axisUnit = shown.length === 1 ? (unitByName.get(shown[0].name) ?? '') : '';
+
+  // Une grandeur en % ou en Hz superposée à une grandeur en kW serait écrasée en
+  // ligne plate sur un axe partagé (échelles trop différentes). Chaque unité
+  // distincte parmi les séries affichées reçoit donc son propre axe, à l'échelle
+  // de ses propres valeurs — seules les 2 premières sont visibles (gauche/droite),
+  // les suivantes restent actives mais masquées pour ne pas surcharger le graphique.
+  const axisIdFor = (name: string) => unitByName.get(name) || '∅';
+  const axisUnits = useMemo(() => {
+    const seen: string[] = [];
+    for (const s of shown) {
+      const id = axisIdFor(s.name);
+      if (!seen.includes(id)) seen.push(id);
+    }
+    return seen;
+  }, [shown, unitByName]);
 
   return (
     <div className="space-y-3">
@@ -306,7 +319,7 @@ function CurveView({
       )}
 
       <ResponsiveContainer width="100%" height={400}>
-        <AreaChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+        <ComposedChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="curveFill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
@@ -315,7 +328,19 @@ function CurveView({
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
           <XAxis dataKey="label" fontSize={11} tickLine={false} minTickGap={40} />
-          <YAxis fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => formatValue(Number(v), axisUnit)} />
+          {axisUnits.map((id, i) => (
+            <YAxis
+              key={id}
+              yAxisId={id}
+              orientation={i % 2 === 0 ? 'left' : 'right'}
+              hide={i > 1}
+              domain={['auto', 'auto']}
+              fontSize={11}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v) => formatValue(Number(v), id === '∅' ? '' : id)}
+            />
+          ))}
           <Tooltip
             contentStyle={tooltipStyle}
             labelFormatter={(l) => `📅 ${l}`}
@@ -326,6 +351,7 @@ function CurveView({
             i === 0 ? (
               <Area
                 key={s.key}
+                yAxisId={axisIdFor(s.name)}
                 type="monotone"
                 dataKey={s.key}
                 name={s.name}
@@ -339,6 +365,7 @@ function CurveView({
             ) : (
               <Line
                 key={s.key}
+                yAxisId={axisIdFor(s.name)}
                 type="monotone"
                 dataKey={s.key}
                 name={s.name}
@@ -351,7 +378,7 @@ function CurveView({
             ),
           )}
           <Brush dataKey="label" height={24} stroke="hsl(var(--primary))" travellerWidth={8} />
-        </AreaChart>
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
