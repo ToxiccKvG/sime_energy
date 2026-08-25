@@ -11,6 +11,7 @@ python-multipart
 pandas==2.3.1
 chardet==5.2.0
 openpyxl==3.1.5
+msoffcrypto-tool==6.0.0
 mistralai==1.9.2
 pytesseract==0.3.10
 Pillow==12.2.0

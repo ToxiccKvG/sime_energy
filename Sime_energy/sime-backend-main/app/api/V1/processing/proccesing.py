@@ -393,23 +393,25 @@ async def process_file_excel(
 
 @router.post('/measures')
 async def process_measures(
-    file: UploadFile = File(...), 
-    sensor_type: str = Form(...)
+    file: UploadFile = File(...),
+    sensor_type: str = Form(...),
+    sensor_config: Optional[str] = Form(None),
 ):
     """
     Traite un fichier de mesures selon le type de capteur.
 
-    Les formats supportés et leur normalisation sont définis dans
-    `app.core.sensors.SENSOR_REGISTRY` (analyseur réseau C.A 8335, station qualité
-    d'air M100, monitoring PV SolarEdge / Huawei, compteur Shelly…).
+    Pour un capteur personnalisé, passer sensor_type='CUSTOM' et sensor_config
+    comme JSON stringifié (champs : timestamp_col, value_col, unit, metric_label,
+    extra_cols, keep_negative, timestamp_format optionnel).
     """
+    import json
     try:
         contents = await file.read()
-        response_data = process_measurement_file(contents, sensor_type)
+        custom = json.loads(sensor_config) if sensor_config else None
+        response_data = process_measurement_file(contents, sensor_type, custom_config=custom)
         response_data["processing_info"]["file_name"] = file.filename
         return response_data
     except ValueError as e:
-        # Type de capteur inconnu, fichier illisible ou vide → erreur client
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("Erreur lors du traitement du fichier de mesures")
