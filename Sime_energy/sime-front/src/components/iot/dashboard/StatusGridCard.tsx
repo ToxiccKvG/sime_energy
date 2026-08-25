@@ -110,9 +110,16 @@ export function StatusGridCard({ snapshot, allDevices, alertDeviceIds }: Props) 
           {filtered.map(t => {
             const Icon = FAMILY_ICON[t.device.device_family] ?? Activity;
             const s = STATUS_STYLE[t.status];
+            const extras: string[] = [];
+            if (typeof t.row?.device_temp_c === 'number') extras.push(`${fmtFr(t.row.device_temp_c, 0)}°C interne`);
+            if (typeof t.row?.frequency_hz === 'number')  extras.push(`${fmtFr(t.row.frequency_hz, 1)} Hz`);
+            if (typeof t.row?.tilt_angle === 'number')    extras.push(`inclinaison ${fmtFr(t.row.tilt_angle, 0)}°`);
+            if (typeof t.row?.signal_rssi === 'number')   extras.push(`signal ${t.row.signal_rssi} dBm`);
+            const tooltip = `${t.device.name} — ${t.device.site}${t.device.room ? ' · ' + t.device.room : ''}`
+              + (extras.length > 0 ? ` (${extras.join(' · ')})` : '');
             return (
               <div key={t.device.device_id}
-                title={`${t.device.name} — ${t.device.site}${t.device.room ? ' · ' + t.device.room : ''}`}
+                title={tooltip}
                 className={`relative rounded-lg border ${s.bg} ${s.border} p-2.5 transition-colors hover:bg-white/5`}>
                 <div className="flex items-start gap-2">
                   <div className={`shrink-0 w-7 h-7 rounded-md ${s.bg} flex items-center justify-center`}>

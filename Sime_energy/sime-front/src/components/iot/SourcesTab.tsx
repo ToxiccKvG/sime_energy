@@ -105,58 +105,6 @@ function CellSelect<T extends string>({
   );
 }
 
-// ---- Dropdown flottant pour lier une source ----
-function LinkPicker({
-  candidates,
-  onPick,
-  onClose,
-}: {
-  candidates: Source[];
-  onPick: (id: string) => void;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
-
-  if (candidates.length === 0) {
-    return (
-      <div ref={ref} className="absolute left-0 top-full mt-1 z-30 bg-[#1a1d2e] border border-white/20 rounded-xl shadow-xl p-3 min-w-[200px]">
-        <p className="text-slate-500 text-xs italic">Aucune autre source disponible</p>
-      </div>
-    );
-  }
-
-  return (
-    <div ref={ref} className="absolute left-0 top-full mt-1 z-30 bg-[#1a1d2e] border border-white/20 rounded-xl shadow-xl py-1 min-w-[220px]">
-      {candidates.map(src => {
-        const Icon = TYPE_ICONS[src.type];
-        return (
-          <button
-            key={src.id}
-            onClick={() => { onPick(src.id); onClose(); }}
-            className="flex items-center gap-2.5 w-full px-3 py-2.5 hover:bg-white/10 transition-colors text-left"
-          >
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-              style={{ backgroundColor: src.couleur + '25' }}>
-              <Icon className="h-3.5 w-3.5" style={{ color: src.couleur }} />
-            </div>
-            <div>
-              <p className="text-white text-xs font-semibold">{src.nom}</p>
-              <p className="text-slate-500 text-[10px]">{src.type}</p>
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 // ============================================================
 // Ligne source principale avec sources liées inline
 // ============================================================
@@ -544,7 +492,8 @@ function LegendPanel({ open, onToggle }: { open: boolean; onToggle: () => void }
         {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
       </button>
       {open && (
-        <div className="border-t border-white/10 p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 text-xs">
+        <div className="border-t border-white/10 p-4 space-y-4 text-xs">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           <div>
             <p className="text-slate-300 font-semibold mb-2">Modes</p>
             <div className="space-y-2">
@@ -589,13 +538,38 @@ function LegendPanel({ open, onToggle }: { open: boolean; onToggle: () => void }
           <div>
             <p className="text-slate-300 font-semibold mb-2">Transfert / Charges</p>
             <div className="space-y-1 text-slate-400">
-              <p><span className="text-white">Selecteur</span> — ATS</p>
-              <p><span className="text-white">Inverseur</span> — Onduleur</p>
-              <p><span className="text-white">Direct</span> — Direct</p>
+              <p><span className="text-white">Selecteur</span> — ATS (bascule auto réseau ⇄ PV/groupe)</p>
+              <p><span className="text-white">Inverseur</span> — Onduleur (convertit DC→AC PV/batterie)</p>
+              <p><span className="text-white">Direct</span> — Raccordement direct au réseau</p>
             </div>
             <div className="space-y-1 text-slate-400 mt-2">
-              {['CH1_TGBT', 'CH2_TGBT', 'CH3_TD1', 'CH4_TD2'].map(c => (
-                <p key={c}><span className="text-white">{c}</span> — Circuit {c.split('_')[0].replace('CH', '')}</p>
+              <p><span className="text-white">CH1_TGBT</span> — Circuit 1 sur le TGBT</p>
+              <p><span className="text-white">CH2_TGBT</span> — Circuit 2 sur le TGBT</p>
+              <p><span className="text-white">CH3_TD1</span> — Circuit 3 sur le TD1</p>
+              <p><span className="text-white">CH4_TD2</span> — Circuit 4 sur le TD2</p>
+            </div>
+          </div>
+          </div>
+
+          {/* Glossaire des abréviations techniques */}
+          <div className="border-t border-white/10 pt-3">
+            <p className="text-slate-300 font-semibold mb-2">Glossaire des abréviations</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-1.5 text-slate-400">
+              {[
+                ['TGBT', 'Tableau Général Basse Tension'],
+                ['TD1 / TD2 / TD3', 'Tableaux Divisionnaires (sous-tableaux)'],
+                ['ATS', 'Automatic Transfer Switch — inverseur de source automatique'],
+                ['Onduleur', 'Convertisseur courant continu → alternatif (PV / batterie)'],
+                ['SENELEC', 'Réseau électrique national (distributeur Sénégal)'],
+                ['PV', 'Panneaux photovoltaïques (production solaire)'],
+                ['BESS', 'Battery Energy Storage System — stockage par batterie'],
+                ['GROUPE', 'Groupe électrogène (secours)'],
+                ['ON-GRID / OFF-GRID', 'Connecté / déconnecté du réseau'],
+                ['M1 → M5', 'Points de mesure (SENELEC, sélecteur, charge, groupe, PV)'],
+                ['CHi', 'Circuit de charge n°i (départ tableau)'],
+                ['kWh / kW', 'Énergie (cumul) / Puissance (instantanée)'],
+              ].map(([abbr, desc]) => (
+                <p key={abbr}><span className="text-white font-medium">{abbr}</span> — {desc}</p>
               ))}
             </div>
           </div>

@@ -28,7 +28,7 @@ const FAMILY_BY_TYPE: Record<string, DeviceFamily> = {
   'SNPL-00112EU':'ENERGIE_1PH','SNPM-001PCEU16':'ENERGIE_1PH','S3PM-001PCEU16':'ENERGIE_1PH',
   'S3PL-00112EU':'ENERGIE_1PH','S4PL-00416EU':'ENERGIE_1PH','SPSW-104PE16EU':'ENERGIE_1PH','S3PB-O3AR000001':'ENERGIE_1PH',
   'SHCB-1':'LUMIERE','SHBDUO-1':'LUMIERE','SHDM-2':'LUMIERE',
-  'SBHT-003C':'CAPTEUR_ENV','S3SN-0U12A':'CAPTEUR_ENV','SHGS-1':'CAPTEUR_ENV',
+  'SBHT-003C':'CAPTEUR_ENV','S3SN-0U12A':'CAPTEUR_ENV','S3SN-0U53X':'CAPTEUR_ENV','SHGS-1':'CAPTEUR_ENV','SBWS-90CM':'CAPTEUR_ENV',
   'SBDW-002C':'ETAT','SBBT-002C':'ETAT','SBMO-003Z':'ETAT','SHMOS-02':'ETAT','S3SW-001P8EU':'ETAT','LOQED':'ETAT',
 };
 
@@ -137,6 +137,24 @@ export interface ShellyClRow {
   temperature: number | null;
   humidity: number | null;
   battery_level: number | null;
+  // Station météo (SBWS-90CM) — ajout 2026-07-14
+  uv_index: number | null;
+  illuminance_lux: number | null;
+  wind_speed_ms: number | null;
+  wind_gust_ms: number | null;
+  wind_direction_deg: number | null;
+  pressure_hpa: number | null;
+  precipitation_mm: number | null;
+  dewpoint_c: number | null;
+  feels_like_c: number | null; // calculé côté poll-shelly, pas natif Shelly
+  // Diagnostics communs (BLU/Wi-Fi)
+  battery_voltage_v: number | null;
+  signal_rssi: number | null;
+  // Capteurs porte/fenêtre
+  tilt_angle: number | null;
+  // Compteurs d'énergie
+  device_temp_c: number | null;
+  frequency_hz: number | null;
 }
 
 // Fenêtre de scan pour le catalogue (7 jours — garantit la présence des sites
@@ -559,16 +577,6 @@ export function computeAlerts(snapshot: ShellyClRow[], allDevices: Device[]): Al
 }
 
 // ── Utilitaires ──────────────────────────────────────────────
-function periodToMinutes(p: Period): number {
-  switch (p) {
-    case 'live':  return 5;
-    case '1h':    return 60;
-    case '24h':   return 24 * 60;
-    case '7d':    return 7 * 24 * 60;
-    case '30d':   return 30 * 24 * 60;
-  }
-}
-
 export function isMainMeter(name: string): boolean {
   const upper = name.toUpperCase();
   return /(^|_)M\d_|SENELEC|TGBT|CHARGE_CONSOMMATION|EM-SENELEC/.test(upper);
