@@ -5,7 +5,7 @@ import { useLocation } from "react-router-dom";
 const menuItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard, blocked:true },
   { title: "Facturation", url: "/facturation", icon: FileText, blocked: false },
-  { title: "Mesures", url: "/mesures", icon: Activity, blocked: true },
+  { title: "Mesures", url: "/mesures", icon: Activity, blocked: false },
   { title: "Inventaire", url: "/inventaire", icon: Package, blocked: true },
   { title: "Audits", url: "/audits", icon: ClipboardCheck, blocked: false },
   { title: "IOT", url: "/iot", icon: Zap, blocked: false },
