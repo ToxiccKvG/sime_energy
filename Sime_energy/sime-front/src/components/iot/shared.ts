@@ -86,6 +86,27 @@ export const COLONNES_PROFIL_SHELLY: ColonneProfilShelly[] = [
   { key: 'Wh_RetourB',        label: 'Wh Retour Ph. B',           groupe: 'entree', unite: 'Wh' },
   { key: 'Wh_RetourC',        label: 'Wh Retour Ph. C',           groupe: 'entree', unite: 'Wh' },
   { key: 'Wh_RetourTotal',    label: 'Wh Retour Total',           groupe: 'entree', unite: 'Wh' },
+  // --- Données d'entrée — capteurs environnementaux (CAPTEUR_ENV / ETAT) ---
+  { key: 'Temperature',       label: 'Température',               groupe: 'entree', unite: '°C' },
+  { key: 'Humidite',          label: 'Humidité',                  groupe: 'entree', unite: '%' },
+  { key: 'Ressenti',          label: 'Température ressentie',     groupe: 'entree', unite: '°C' },
+  { key: 'Point_Rosee',       label: 'Point de rosée',             groupe: 'entree', unite: '°C' },
+  { key: 'UV_Index',          label: 'Indice UV',                 groupe: 'entree' },
+  { key: 'Luminosite',        label: 'Luminosité',                groupe: 'entree', unite: 'lux' },
+  { key: 'Pression',          label: 'Pression atmosphérique',    groupe: 'entree', unite: 'hPa' },
+  { key: 'Tendance_Pression', label: 'Tendance de pression',      groupe: 'entree' },
+  { key: 'Precipitation',     label: 'Précipitations',            groupe: 'entree', unite: 'mm' },
+  { key: 'Alarme_Humidite',   label: 'Alarme pluie/humidité',     groupe: 'entree' },
+  { key: 'Vent_Vitesse',      label: 'Vitesse du vent',           groupe: 'entree', unite: 'm/s' },
+  { key: 'Vent_Rafale',       label: 'Rafale de vent',            groupe: 'entree', unite: 'm/s' },
+  { key: 'Vent_Direction',    label: 'Direction du vent',         groupe: 'entree', unite: '°' },
+  { key: 'Etat_Capteur',      label: 'État',                      groupe: 'entree' },
+  { key: 'Angle_Inclinaison', label: 'Angle inclinaison',         groupe: 'entree', unite: '°' },
+  { key: 'Concentration_Gaz', label: 'Concentration gaz',         groupe: 'entree', unite: 'ppm' },
+  { key: 'Temp_Interne',      label: 'Température interne appareil', groupe: 'entree', unite: '°C' },
+  { key: 'Batterie',          label: 'Batterie',                  groupe: 'entree', unite: '%' },
+  { key: 'Batterie_V',        label: 'Tension batterie',          groupe: 'entree', unite: 'V' },
+  { key: 'Signal',            label: 'Signal (RSSI)',             groupe: 'entree', unite: 'dBm' },
   // --- Données calculées ---
   { key: 'kWh_PhA',           label: 'Cons.(kWh) Phase A',        groupe: 'calcule', unite: 'kWh' },
   { key: 'kWh_PhB',           label: 'Cons.(kWh) Phase B',        groupe: 'calcule', unite: 'kWh' },
@@ -245,6 +266,27 @@ export interface ShellyRow {
   nomAppareil?: string;
   deviceLocation?: string;
   deviceRoom?: string;
+  // ---- Capteurs environnementaux (CAPTEUR_ENV / ETAT) ----
+  temperature?: number;
+  humidite?: number;
+  ressenti?: number;
+  pointRosee?: number;
+  uvIndex?: number;
+  luminosite?: number;
+  pression?: number;
+  tendancePression?: string;
+  precipitation?: number;
+  alarmeHumidite?: boolean;
+  ventVitesse?: number;
+  ventRafale?: number;
+  ventDirection?: number;
+  etatCapteur?: string;
+  angleInclinaison?: number;
+  concentrationGaz?: number;
+  tempInterne?: number;
+  batterie?: number;
+  batterieV?: number;
+  signal?: number;
   // ---- Helpers ----
   kwhNet: number; // = kwhTotal - kwhRetourTotal
   isWeekend: boolean;

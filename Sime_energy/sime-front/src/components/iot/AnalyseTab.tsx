@@ -79,34 +79,56 @@ const PROFIL_MI_COLORS: Record<ProfilMi, string> = {
 
 const PROFILS_MI: ProfilMi[] = ['M1_SENELEC', 'M2_SELECTEUR', 'M3_CHARGE', 'M4_GROUPE', 'M5_PV'];
 
-const DEFAULT_SUPABASE_COLUMNS = [
-  'Temps',
-  // Énergie consommée par phase + total
-  'kWh_Total', 'kWh_PhA', 'kWh_PhB', 'kWh_PhC',
-  // Énergie retour réseau (injection PV)
-  'kWh_RetourTotal', 'kWh_RetourA', 'kWh_RetourB', 'kWh_RetourC',
-  // Puissance instantanée (kW)
-  'kW_Total', 'kW_PhA', 'kW_PhB', 'kW_PhC',
-  'kW_RetourTotal', 'kW_RetourA', 'kW_RetourB', 'kW_RetourC',
-  // Classifieurs
+// Colonnes par domaine — combinées dynamiquement selon les familles d'appareils
+// sélectionnées (voir recommendedColumns), pour que le template s'adapte
+// automatiquement (énergie triphasée ≠ capteur météo ≠ capteur d'état).
+const CLASSIFIEUR_COLUMNS = [
   'Date', 'Jour', 'Mois', 'Annee', 'Heure',
   'Jour_activites', 'Saison', 'Profil', 'Nom',
   'Appareil', 'Emplacement', 'Piece',
 ];
 
+const ENERGIE_COLUMNS = [
+  'kWh_Total', 'kWh_PhA', 'kWh_PhB', 'kWh_PhC',
+  'kWh_RetourTotal', 'kWh_RetourA', 'kWh_RetourB', 'kWh_RetourC',
+  'kW_Total', 'kW_PhA', 'kW_PhB', 'kW_PhC',
+  'kW_RetourTotal', 'kW_RetourA', 'kW_RetourB', 'kW_RetourC',
+];
+
+const ENV_COLUMNS = [
+  'Temperature', 'Humidite', 'Ressenti', 'Point_Rosee',
+  'UV_Index', 'Luminosite', 'Pression', 'Tendance_Pression',
+  'Precipitation', 'Alarme_Humidite',
+  'Vent_Vitesse', 'Vent_Rafale', 'Vent_Direction',
+  'Batterie', 'Batterie_V', 'Signal',
+];
+
+const ETAT_COLUMNS = ['Etat_Capteur', 'Angle_Inclinaison', 'Batterie', 'Signal'];
+
+const ENERGIE_FAMILIES = new Set(['ENERGIE_3PH', 'ENERGIE_2PH', 'ENERGIE_1PH']);
+
+/** Recommande un jeu de colonnes adapté aux familles d'appareils effectivement chargées. */
+function recommendedColumns(families: Set<string>): string[] {
+  const cols = new Set<string>(['Temps', ...CLASSIFIEUR_COLUMNS]);
+  let hasEnergie = false, hasEnv = false, hasEtat = false;
+  families.forEach(f => {
+    if (ENERGIE_FAMILIES.has(f)) hasEnergie = true;
+    else if (f === 'CAPTEUR_ENV') hasEnv = true;
+    else if (f === 'ETAT') hasEtat = true;
+  });
+  // Rien de sélectionné pour l'instant (ex. chargement des métadonnées) → preset énergie par défaut
+  if (families.size === 0 || hasEnergie) ENERGIE_COLUMNS.forEach(c => cols.add(c));
+  if (hasEnv) ENV_COLUMNS.forEach(c => cols.add(c));
+  if (hasEtat) ETAT_COLUMNS.forEach(c => cols.add(c));
+  return Array.from(cols);
+}
+
+const DEFAULT_SUPABASE_COLUMNS = recommendedColumns(new Set());
+
 const DEFAULT_COLUMN_GROUPS = {
-  entree: ['Temps'],
-  calcule: [
-    'kWh_Total', 'kWh_PhA', 'kWh_PhB', 'kWh_PhC',
-    'kWh_RetourTotal', 'kWh_RetourA', 'kWh_RetourB', 'kWh_RetourC',
-    'kW_Total', 'kW_PhA', 'kW_PhB', 'kW_PhC',
-    'kW_RetourTotal', 'kW_RetourA', 'kW_RetourB', 'kW_RetourC',
-  ],
-  classifieur: [
-    'Date', 'Jour', 'Mois', 'Annee', 'Heure',
-    'Jour_activites', 'Saison', 'Profil', 'Nom',
-    'Appareil', 'Emplacement', 'Piece',
-  ],
+  entree: ['Temps', ...ENV_COLUMNS, ...ETAT_COLUMNS],
+  calcule: ENERGIE_COLUMNS,
+  classifieur: CLASSIFIEUR_COLUMNS,
 } as const;
 
 const TOOLTIP_STYLE = {
@@ -534,9 +556,16 @@ function SupabaseExportPanel({
   const [selectedCols, setSelectedCols] = useState<Set<string>>(() =>
     new Set(DEFAULT_SUPABASE_COLUMNS)
   );
+  // Tant que l'utilisateur n'a pas personnalisé manuellement, les colonnes
+  // s'adaptent automatiquement aux familles d'appareils réellement chargées.
+  const [colsAuto, setColsAuto] = useState(true);
 
-  // Granularité des données
+  // Granularité des données — auto-forcée sur "minute" pour les capteurs
+  // environnementaux/état, car shelly_cl_horaire n'agrège que l'énergie
+  // (aucune colonne température/humidité/etc.), tant que l'utilisateur ne
+  // choisit pas explicitement une granularité.
   const [granularite, setGranularite] = useState<'horaire' | 'minute'>('horaire');
+  const [granulariteAuto, setGranulariteAuto] = useState(true);
 
   // Filtres — site vide = tous les sites
   const [site, setSite] = useState('');
@@ -597,6 +626,27 @@ function SupabaseExportPanel({
     return acc;
   }, {});
 
+  // Familles des appareils effectivement ciblés (sélection explicite sinon filtre courant)
+  // — sert à adapter automatiquement les colonnes proposées (énergie / météo / état).
+  const familiesActives = (selectedDeviceIds.length > 0
+    ? disponibles.devices.filter(d => selectedDeviceIds.includes(d.device_id))
+    : devicesFiltres
+  ).map(d => d.device_family).filter(Boolean) as string[];
+  const familiesKey = Array.from(new Set(familiesActives)).sort().join(',');
+
+  useEffect(() => {
+    if (!colsAuto) return;
+    setSelectedCols(new Set(recommendedColumns(new Set(familiesKey ? familiesKey.split(',') : []))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [familiesKey, colsAuto]);
+
+  useEffect(() => {
+    if (!granulariteAuto) return;
+    const families = new Set(familiesKey ? familiesKey.split(',') : []);
+    const needsMinute = families.has('CAPTEUR_ENV') || families.has('ETAT');
+    setGranularite(needsMinute ? 'minute' : 'horaire');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [familiesKey, granulariteAuto]);
 
   // Sources liées au profil Mi sélectionné (pour affichage / suggestion auto)
   const linkedSources = sources.filter(s =>
@@ -612,6 +662,7 @@ function SupabaseExportPanel({
   }, [site, deviceFamily, deviceRoom, deviceSearch, disponibles.devices]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleCol = (key: string) => {
+    setColsAuto(false);
     setSelectedCols(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
@@ -620,6 +671,7 @@ function SupabaseExportPanel({
   };
 
   const selectGroupe = (keys: string[], select: boolean) => {
+    setColsAuto(false);
     setSelectedCols(prev => {
       const next = new Set(prev);
       keys.forEach(k => select ? next.add(k) : next.delete(k));
@@ -650,7 +702,11 @@ function SupabaseExportPanel({
     }
   };
 
-  const resetToDefaultColumns = () => setSelectedCols(new Set(DEFAULT_SUPABASE_COLUMNS));
+  const resetToDefaultColumns = () => {
+    setColsAuto(true);
+    setGranulariteAuto(true);
+    setSelectedCols(new Set(recommendedColumns(new Set(familiesKey ? familiesKey.split(',') : []))));
+  };
   const toggleExpandedGroup = (group: 'entree' | 'calcule' | 'classifieur') =>
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
   const toggleDeviceId = (deviceId: string) =>
@@ -722,7 +778,7 @@ function SupabaseExportPanel({
                     {(['horaire', 'minute'] as const).map(g => (
                       <button
                         key={g}
-                        onClick={() => setGranularite(g)}
+                        onClick={() => { setGranulariteAuto(false); setGranularite(g); }}
                         className={`px-3 py-2 rounded-lg text-xs font-medium border transition-all
                           ${granularite === g
                             ? 'bg-green-600/30 text-green-300 border-green-500/50'
@@ -733,7 +789,9 @@ function SupabaseExportPanel({
                     ))}
                   </div>
                   <p className="text-slate-500 text-[11px] mt-1">
-                    {granularite === 'horaire' ? 'Recommandé pour l’analyse' : 'Plus lourd, données brutes'}
+                    {granulariteAuto
+                      ? (granularite === 'minute' ? 'Auto — requis pour les capteurs environnementaux/état' : 'Auto — recommandé pour l’analyse')
+                      : (granularite === 'horaire' ? 'Recommandé pour l’analyse' : 'Plus lourd, données brutes')}
                   </p>
                 </div>
 
@@ -896,8 +954,8 @@ function SupabaseExportPanel({
                 <Badge className="bg-blue-600/20 text-blue-300 border-0 text-xs">
                   {selectedCols.size} colonne(s)
                 </Badge>
-                <Badge className="bg-white/10 text-slate-300 border-0 text-xs">
-                  Preset habituel
+                <Badge className={colsAuto ? 'bg-green-600/20 text-green-300 border-0 text-xs' : 'bg-white/10 text-slate-300 border-0 text-xs'}>
+                  {colsAuto ? 'Adapté automatiquement' : 'Personnalisé'}
                 </Badge>
               </div>
 

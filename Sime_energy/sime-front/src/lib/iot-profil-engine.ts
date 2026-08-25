@@ -44,6 +44,13 @@ function getPeriodeClimatique(mois: number): ShellyRow['periodeclimatique'] {
   return fraicheur ? 'Période de fraîcheur' : 'Période chaude';
 }
 
+/** Convertit en nombre si la valeur est exploitable, sinon undefined (pour ne pas afficher 0 pour un capteur qui n'a jamais remonté cette donnée) */
+function numOrUndef(v: unknown): number | undefined {
+  if (v === null || v === undefined || v === '') return undefined;
+  const n = Number(v);
+  return isNaN(n) ? undefined : n;
+}
+
 // ============================================================
 // PARSE UNE LIGNE SHELLY depuis données brutes
 // Format attendu: Temps | Wh_Phase A | Wh_Phase B | Wh_Phase C | Wh_Total |
@@ -202,6 +209,27 @@ export function parseShellyRow(
     nomAppareil:    (raw['Appareil'] ?? raw['Nom'] ?? raw['name'] ?? raw['nomAppareil'] ?? raw['device_name']) as string | undefined,
     deviceLocation: (raw['Emplacement'] ?? raw['Site'] ?? raw['site'] ?? raw['deviceLocation']) as string | undefined,
     deviceRoom:     (raw['Piece'] ?? raw['Pièce'] ?? raw['Room'] ?? raw['room'] ?? raw['deviceRoom']) as string | undefined,
+    // Capteurs environnementaux (préservés si présents dans la source — colonnes PROFIL Mi)
+    temperature:      numOrUndef(raw['Temperature']),
+    humidite:         numOrUndef(raw['Humidite']),
+    ressenti:         numOrUndef(raw['Ressenti']),
+    pointRosee:       numOrUndef(raw['Point_Rosee']),
+    uvIndex:          numOrUndef(raw['UV_Index']),
+    luminosite:       numOrUndef(raw['Luminosite']),
+    pression:         numOrUndef(raw['Pression']),
+    tendancePression: (raw['Tendance_Pression'] ?? undefined) as string | undefined,
+    precipitation:    numOrUndef(raw['Precipitation']),
+    alarmeHumidite:   typeof raw['Alarme_Humidite'] === 'boolean' ? raw['Alarme_Humidite'] as boolean : undefined,
+    ventVitesse:      numOrUndef(raw['Vent_Vitesse']),
+    ventRafale:       numOrUndef(raw['Vent_Rafale']),
+    ventDirection:    numOrUndef(raw['Vent_Direction']),
+    etatCapteur:      (raw['Etat_Capteur'] ?? undefined) as string | undefined,
+    angleInclinaison: numOrUndef(raw['Angle_Inclinaison']),
+    concentrationGaz: numOrUndef(raw['Concentration_Gaz']),
+    tempInterne:      numOrUndef(raw['Temp_Interne']),
+    batterie:         numOrUndef(raw['Batterie']),
+    batterieV:        numOrUndef(raw['Batterie_V']),
+    signal:           numOrUndef(raw['Signal']),
   };
 }
 

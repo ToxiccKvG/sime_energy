@@ -64,10 +64,32 @@ interface ShellyRow {
   wh_c?: number | null;
   wh_tot?: number | null;            // = wh_a + wh_b + wh_c
 
+  // Compteurs Wh cumulatifs retour/injection (PV → réseau)
+  wh_ra?: number | null;
+  wh_rb?: number | null;
+  wh_rc?: number | null;
+  wh_rtot?: number | null;           // = wh_ra + wh_rb + wh_rc
+
   // Capteurs environnementaux
   temperature?: number | null;
   humidity?: number | null;
   battery_level?: number | null;
+  feels_like_c?: number | null;
+  dewpoint_c?: number | null;
+  uv_index?: number | null;
+  illuminance_lux?: number | null;
+  pressure_hpa?: number | null;
+  pressure_slope?: string | null;
+  precipitation_mm?: number | null;
+  moisture_alarm?: boolean | null;
+  wind_speed_ms?: number | null;
+  wind_gust_ms?: number | null;
+  wind_direction_deg?: number | null;
+  tilt_angle?: number | null;
+  concentration_ppm?: number | null;
+  device_temp_c?: number | null;
+  battery_voltage_v?: number | null;
+  signal_rssi?: number | null;
 }
 
 // ── Options d'export ──────────────────────────────────────────
@@ -183,8 +205,11 @@ export function transformRowsToProfilMi(
     const whC_cum    = n(m.wh_c);
     const whTot_cum  = n(m.wh_tot) || (whA_cum + whB_cum + whC_cum);
 
-    // ── Retour / injection ────────────────────────────────────
-    const whRA_cum = 0, whRB_cum = 0, whRC_cum = 0, whRTot_cum = 0;
+    // ── Retour / injection (PV → réseau, cumulatif Wh brut) ────
+    const whRA_cum   = n(m.wh_ra);
+    const whRB_cum   = n(m.wh_rb);
+    const whRC_cum   = n(m.wh_rc);
+    const whRTot_cum = n(m.wh_rtot) || (whRA_cum + whRB_cum + whRC_cum);
 
     // ── Incrémentaux (diff avec row précédent du même device) ─
     const diff = (cur: number, prevVal: number | null | undefined): number =>
@@ -195,7 +220,10 @@ export function transformRowsToProfilMi(
     const whC    = diff(whC_cum,   prev?.wh_c);
     const whTot  = diff(whTot_cum, prev?.wh_tot);
 
-    const whRA = 0, whRB = 0, whRC = 0, whRTot = 0;
+    const whRA   = diff(whRA_cum,   prev?.wh_ra);
+    const whRB   = diff(whRB_cum,   prev?.wh_rb);
+    const whRC   = diff(whRC_cum,   prev?.wh_rc);
+    const whRTot = diff(whRTot_cum, prev?.wh_rtot);
 
     // ── Puissance instantanée (W → kW) ────────────────────────
     const pA_W   = n(m.p_a);
@@ -260,6 +288,28 @@ export function transformRowsToProfilMi(
       kW_RetourB:         kW_RB,
       kW_RetourC:         kW_RC,
       kW_RetourTotal:     kW_RTot,
+
+      // ── Capteurs environnementaux (CAPTEUR_ENV / ETAT) ────────
+      Temperature:        m.temperature ?? null,
+      Humidite:           m.humidity ?? null,
+      Ressenti:           m.feels_like_c ?? null,
+      Point_Rosee:        m.dewpoint_c ?? null,
+      UV_Index:           m.uv_index ?? null,
+      Luminosite:         m.illuminance_lux ?? null,
+      Pression:           m.pressure_hpa ?? null,
+      Tendance_Pression:  m.pressure_slope ?? null,
+      Precipitation:      m.precipitation_mm ?? null,
+      Alarme_Humidite:    m.moisture_alarm ?? null,
+      Vent_Vitesse:       m.wind_speed_ms ?? null,
+      Vent_Rafale:        m.wind_gust_ms ?? null,
+      Vent_Direction:     m.wind_direction_deg ?? null,
+      Etat_Capteur:       m.state ?? null,
+      Angle_Inclinaison:  m.tilt_angle ?? null,
+      Concentration_Gaz:  m.concentration_ppm ?? null,
+      Temp_Interne:       m.device_temp_c ?? null,
+      Batterie:           m.battery_level ?? null,
+      Batterie_V:         m.battery_voltage_v ?? null,
+      Signal:             m.signal_rssi ?? null,
 
       // ── Classifieurs temporels ────────────────────────────────
       Date:           date.toLocaleDateString('fr-FR'),
@@ -445,6 +495,7 @@ export async function exporterDonneesSupabase(
         .from(SHELLY_TABLE)
         .select('device_id,room')
         .not('room', 'is', null)
+        .order('ts', { ascending: false })
         .limit(5000);
       if (site)                              roomQuery = roomQuery.eq('site', site);
       if (deviceIds && deviceIds.length > 0) roomQuery = roomQuery.in('device_id', deviceIds);
@@ -498,8 +549,9 @@ export async function exporterDonneesSupabase(
 // ── Catalogue des appareils Shelly intégrés ───────────────────
 export interface DisponiblesResult {
   sites: string[];
-  devices: { name: string; device_id: string; device_family: string; site: string }[];
+  devices: { name: string; device_id: string; device_family: string; site: string; room?: string | null }[];
   deviceFamilies: string[];
+  rooms: string[];
 }
 
 const KNOWN_SHELLY_DEVICES: DisponiblesResult['devices'] = [
@@ -566,23 +618,44 @@ const KNOWN_SHELLY_DEVICES: DisponiblesResult['devices'] = [
   { device_id: '34b7da8a47a0', name: 'Eclairage Disjoncteur 1', device_family: 'ENERGIE_1PH', site: 'Académie CER2E' },
   { device_id: '34b7da8a4aa0', name: 'Eclairage Disjoncteur 2', device_family: 'ENERGIE_1PH', site: 'Académie CER2E' },
   { device_id: '1720017229409', name: 'Appareil inconnu (fantome)', device_family: 'ETAT', site: 'Académie CER2E' },
+  { device_id: 'XB61819871591478', name: "Capteur d'ouverture de portes", device_family: 'ETAT', site: 'Donsin' },
+  { device_id: 'XB211299189491624', name: 'Station meteo_Donsin', device_family: 'CAPTEUR_ENV', site: 'Donsin' },
+  { device_id: '5432045b35d0', name: 'Shelly H&T_Donsin', device_family: 'CAPTEUR_ENV', site: 'Donsin' },
+  { device_id: '0892724e2c28', name: 'Shelly Plug M_Donsin', device_family: 'ENERGIE_1PH', site: 'Donsin' },
 ];
 
 export async function fetchDisponibles(): Promise<DisponiblesResult> {
   try {
     const sitesSet    = new Set<string>();
     const familiesSet = new Set<string>();
+    const roomsSet    = new Set<string>();
     const deviceMap   = new Map<string, DisponiblesResult['devices'][number]>();
+
+    // Mapping device_id → room, alimenté par le polling Shelly (colonne `room` de shelly_cl)
+    const roomMap = new Map<string, string>();
+    const { data: roomData, error: roomError } = await supabase
+      .from(SHELLY_TABLE)
+      .select('device_id,room')
+      .not('room', 'is', null)
+      .order('ts', { ascending: false })
+      .limit(5000);
+    if (roomError) throw roomError;
+    for (const r of (roomData ?? []) as { device_id: string; room: string | null }[]) {
+      if (r.room && !roomMap.has(r.device_id)) roomMap.set(r.device_id, r.room);
+    }
 
     for (const r of KNOWN_SHELLY_DEVICES) {
       if (r.site)          sitesSet.add(r.site);
       if (r.device_family) familiesSet.add(r.device_family);
+      const room = r.room ?? roomMap.get(r.device_id) ?? null;
+      if (room) roomsSet.add(room);
       if (r.device_id && !deviceMap.has(r.device_id)) {
         deviceMap.set(r.device_id, {
           name:          r.name          ?? r.device_id,
           device_id:     r.device_id,
           device_family: r.device_family ?? '',
           site:          r.site          ?? '',
+          room,
         });
       }
     }
@@ -591,9 +664,10 @@ export async function fetchDisponibles(): Promise<DisponiblesResult> {
       sites:          Array.from(sitesSet).sort(),
       devices:        Array.from(deviceMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
       deviceFamilies: Array.from(familiesSet).sort(),
+      rooms:          Array.from(roomsSet).sort(),
     };
   } catch {
-    return { sites: [], devices: [], deviceFamilies: [] };
+    return { sites: [], devices: [], deviceFamilies: [], rooms: [] };
   }
 }
 

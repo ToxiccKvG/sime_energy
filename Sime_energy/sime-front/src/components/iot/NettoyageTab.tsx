@@ -32,6 +32,38 @@ import { supabase } from '@/lib/supabase';
 // TYPES
 // ============================================================
 
+// ── Nom de fichier auto-généré depuis le site / la pièce / l'appareil détectés
+//    dans les données, pour distinguer les fichiers nettoyés entre eux au lieu
+//    du générique "données - nettoye" répété pour chaque site.
+type IdentiteRow = Pick<ShellyRow, 'deviceLocation' | 'deviceRoom' | 'nomAppareil'>;
+
+function pickStr(r: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+function buildCleanedFileName(rows: IdentiteRow[], fallback: string): string {
+  const uniq = (vals: (string | undefined)[]) =>
+    Array.from(new Set(vals.filter((v): v is string => Boolean(v && v.trim()))));
+  const sites     = uniq(rows.map(r => r.deviceLocation));
+  const pieces    = uniq(rows.map(r => r.deviceRoom));
+  const appareils = uniq(rows.map(r => r.nomAppareil));
+
+  const label = (vals: string[], pluriel: string) =>
+    vals.length === 1 ? vals[0] : vals.length > 1 ? `${vals.length} ${pluriel}` : null;
+
+  const parts = [
+    label(sites, 'sites'),
+    label(pieces, 'pièces'),
+    label(appareils, 'appareils'),
+  ].filter((p): p is string => Boolean(p));
+
+  return (parts.length > 0 ? parts.join(' - ') : fallback) + ' - nettoyé';
+}
+
 type ColType = 'date' | 'num' | 'text';
 type IssueType = 'duplicates_day' | 'duplicates_exact' | 'zeros' | 'outliers' | 'gaps' | 'negatives' | 'phase_mismatch';
 type FillMethod = 'zero' | 'mean' | 'forward' | 'linear';
@@ -100,6 +132,27 @@ const COLUMNS: ColDef[] = [
   { key: 'heuresTravail',       label: 'H. Travail',    type: 'text', editable: false, defaultVisible: false, width: 130 },
   { key: 'whTotal',             label: 'Wh Total',      type: 'num',  editable: true,  defaultVisible: false, width: 80  },
   { key: 'whRetourTotal',       label: 'Wh Retour',     type: 'num',  editable: true,  defaultVisible: false, width: 90  },
+  // ── Capteurs environnementaux (CAPTEUR_ENV / ETAT) ──
+  { key: 'temperature',         label: 'Température',   type: 'num',  editable: true,  defaultVisible: true,  width: 90  },
+  { key: 'humidite',            label: 'Humidité',      type: 'num',  editable: true,  defaultVisible: true,  width: 85  },
+  { key: 'etatCapteur',         label: 'État',           type: 'text', editable: false, defaultVisible: true,  width: 90  },
+  { key: 'batterie',            label: 'Batterie',      type: 'num',  editable: false, defaultVisible: true,  width: 80  },
+  { key: 'signal',              label: 'Signal',        type: 'num',  editable: false, defaultVisible: false, width: 75  },
+  { key: 'ressenti',            label: 'Ressenti',      type: 'num',  editable: true,  defaultVisible: false, width: 85  },
+  { key: 'pointRosee',          label: 'Pt. Rosée',     type: 'num',  editable: true,  defaultVisible: false, width: 85  },
+  { key: 'uvIndex',             label: 'UV',             type: 'num',  editable: true,  defaultVisible: false, width: 60  },
+  { key: 'luminosite',          label: 'Luminosité',    type: 'num',  editable: true,  defaultVisible: false, width: 95  },
+  { key: 'pression',            label: 'Pression',      type: 'num',  editable: true,  defaultVisible: false, width: 85  },
+  { key: 'tendancePression',    label: 'Tend. Press.',  type: 'text', editable: false, defaultVisible: false, width: 100 },
+  { key: 'precipitation',       label: 'Précip.',       type: 'num',  editable: true,  defaultVisible: false, width: 80  },
+  { key: 'alarmeHumidite',      label: 'Alarme Pluie',  type: 'text', editable: false, defaultVisible: false, width: 100 },
+  { key: 'ventVitesse',         label: 'Vent',           type: 'num',  editable: true,  defaultVisible: false, width: 75  },
+  { key: 'ventRafale',          label: 'Rafale',        type: 'num',  editable: true,  defaultVisible: false, width: 75  },
+  { key: 'ventDirection',       label: 'Dir. Vent',     type: 'num',  editable: true,  defaultVisible: false, width: 85  },
+  { key: 'angleInclinaison',    label: 'Inclinaison',   type: 'num',  editable: false, defaultVisible: false, width: 95  },
+  { key: 'concentrationGaz',    label: 'Gaz',            type: 'num',  editable: true,  defaultVisible: false, width: 75  },
+  { key: 'tempInterne',         label: 'Temp. Interne', type: 'num',  editable: false, defaultVisible: false, width: 100 },
+  { key: 'batterieV',           label: 'Batterie (V)',  type: 'num',  editable: false, defaultVisible: false, width: 100 },
 ];
 
 const ENUM_OPTIONS: Partial<Record<keyof ShellyRow, string[]>> = {
@@ -119,6 +172,9 @@ const NUM_COLS: (keyof ShellyRow)[] = [
   'whTotal', 'whRetourTotal',
 ];
 
+// Colonnes structurelles toujours affichées, quel que soit le contenu (identité + temps)
+const ALWAYS_VISIBLE_COLS = new Set<string>(['date', 'nomAppareil', 'deviceLocation', 'deviceRoom', 'jour', 'jourActivites']);
+
 const EMPTY_FILTERS: Filters = { dateFrom: '', dateTo: '', typeJour: [], kwhMin: '', kwhMax: '' };
 const PAGE_SIZE    = 50;
 const FILE_PAGE_SIZE = 50;
@@ -131,6 +187,7 @@ const OUTLIER_SIGMA  = 2.5;
 function formatCell(row: ShellyRow, col: keyof ShellyRow): string {
   const v = row[col];
   if (v instanceof Date) return v.toLocaleDateString('fr-FR');
+  if (typeof v === 'boolean') return v ? 'Oui' : 'Non';
   if (typeof v === 'number') {
     if (isNaN(v)) return '';
     const digits = 3;
@@ -435,6 +492,12 @@ export function NettoyageTab() {
   const [visibleCols, setVisibleCols] = useState<Set<string>>(
     new Set(COLUMNS.filter(c => c.defaultVisible).map(c => c.key as string))
   );
+  // Tant que l'utilisateur n'a pas personnalisé manuellement, les colonnes
+  // affichées s'adaptent au contenu réel des données chargées : masque les
+  // colonnes kWh/Puissance pour un jeu 100% capteurs environnementaux, et
+  // inversement masque température/humidité pour un jeu 100% énergie —
+  // au lieu de toujours montrer le même gabarit fixe.
+  const [colsAutoNettoyage, setColsAutoNettoyage] = useState(true);
   const [showColPicker, setShowColPicker] = useState(false);
   const [page, setPage]               = useState(0);
   const [editCell, setEditCell]       = useState<EditCell | null>(null);
@@ -448,6 +511,35 @@ export function NettoyageTab() {
   const [frCase, setFrCase]           = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const sortedRef    = useRef<ShellyRow[]>([]);
+
+  // ---- Colonnes pertinentes selon le contenu réel des données chargées ----
+  // (échantillon des 500 premières lignes — suffisant pour détecter si une
+  // colonne a de vraies valeurs, évite de scanner tout le dataset à chaque frappe)
+  const colsWithData = useMemo(() => {
+    const sample = activeRows.slice(0, 500);
+    const present = new Set<string>();
+    for (const col of COLUMNS) {
+      const key = col.key as string;
+      if (sample.some(r => {
+        const v = r[col.key];
+        return v !== undefined && v !== null && v !== '';
+      })) {
+        present.add(key);
+      }
+    }
+    return present;
+  }, [activeRows]);
+
+  useEffect(() => {
+    if (!colsAutoNettoyage || activeRows.length === 0) return;
+    const next = new Set<string>();
+    for (const col of COLUMNS) {
+      const key = col.key as string;
+      if (ALWAYS_VISIBLE_COLS.has(key) || colsWithData.has(key)) next.add(key);
+    }
+    setVisibleCols(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colsWithData, colsAutoNettoyage]);
 
   // ---- Fichiers importés ----
   const [expandedFileId, setExpandedFileId]     = useState<string | null>(null);
@@ -882,9 +974,8 @@ export function NettoyageTab() {
       const columns = serializedRows.length > 0 ? Object.keys(serializedRows[0]) : [];
       const preview = serializedRows.slice(0, 10);
       const sourceFile = localFileId ? state.files.find(f => f.id === localFileId) : null;
-      const cleanedName = sourceFile
-        ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') + ' - nettoye'
-        : `${localFileName} - nettoye`;
+      const fallbackName = sourceFile ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') : localFileName;
+      const cleanedName = buildCleanedFileName(rowsRecalculees, fallbackName);
       const existingCleaned = sourceFile
         ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
         : null;
@@ -1317,9 +1408,13 @@ export function NettoyageTab() {
           const columns = serialized.length > 0 ? Object.keys(serialized[0]) : [];
           const preview = serialized.slice(0, 10);
           const sourceFile = genericFileId ? state.files.find(f => f.id === genericFileId) : null;
-          const cleanedName = sourceFile
-            ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') + ' - nettoye'
-            : `${genericFileName} - nettoye`;
+          const fallbackName = sourceFile ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') : genericFileName;
+          const identiteRows: IdentiteRow[] = serialized.map(r => ({
+            deviceLocation: pickStr(r, ['Emplacement', 'Site', 'site', 'deviceLocation']),
+            deviceRoom:     pickStr(r, ['Piece', 'Pièce', 'room', 'Room', 'deviceRoom']),
+            nomAppareil:    pickStr(r, ['Appareil', 'Nom', 'name', 'nomAppareil']),
+          }));
+          const cleanedName = buildCleanedFileName(identiteRows, fallbackName);
           const existingCleaned = sourceFile
             ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
             : null;
@@ -1398,9 +1493,8 @@ export function NettoyageTab() {
                 const columns = serializedRows.length > 0 ? Object.keys(serializedRows[0]) : [];
                 const preview = serializedRows.slice(0, 10);
                 const sourceFile = localFileId ? state.files.find(f => f.id === localFileId) : null;
-                const cleanedName = sourceFile
-                  ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') + ' - nettoye'
-                  : `${localFileName ?? 'données'} - nettoye`;
+                const fallbackName = sourceFile ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') : (localFileName ?? 'données');
+                const cleanedName = buildCleanedFileName(rowsRecalculees, fallbackName);
                 const existingCleaned = sourceFile
                   ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
                   : null;
@@ -1899,16 +1993,21 @@ export function NettoyageTab() {
       {showColPicker && (
         <div className="bg-white/5 border border-white/10 rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-white text-sm font-medium">Colonnes visibles</h4>
+            <div className="flex items-center gap-2">
+              <h4 className="text-white text-sm font-medium">Colonnes visibles</h4>
+              <Badge className={colsAutoNettoyage ? 'bg-green-600/20 text-green-300 border-0 text-xs' : 'bg-white/10 text-slate-300 border-0 text-xs'}>
+                {colsAutoNettoyage ? 'Adapté automatiquement' : 'Personnalisé'}
+              </Badge>
+            </div>
             <div className="flex gap-2">
-              <button onClick={() => setVisibleCols(new Set(COLUMNS.map(c => c.key as string)))} className="text-xs text-blue-400 hover:text-blue-300">Tout afficher</button>
-              <button onClick={() => setVisibleCols(new Set(COLUMNS.filter(c => c.defaultVisible).map(c => c.key as string)))} className="text-xs text-slate-400 hover:text-slate-300">Par défaut</button>
+              <button onClick={() => { setColsAutoNettoyage(false); setVisibleCols(new Set(COLUMNS.map(c => c.key as string))); }} className="text-xs text-blue-400 hover:text-blue-300">Tout afficher</button>
+              <button onClick={() => setColsAutoNettoyage(true)} className="text-xs text-slate-400 hover:text-slate-300">Adapter aux données</button>
             </div>
           </div>
           <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
             {COLUMNS.map(col => (
               <label key={col.key as string} className="flex items-center gap-2 text-xs cursor-pointer">
-               <input type="checkbox" checked={visibleCols.has(col.key as string)} onChange={e => setVisibleCols(prev => { const n = new Set(prev); if (e.target.checked) { n.add(col.key as string); } else { n.delete(col.key as string); } return n; })} className="accent-blue-500" />
+               <input type="checkbox" checked={visibleCols.has(col.key as string)} onChange={e => { setColsAutoNettoyage(false); setVisibleCols(prev => { const n = new Set(prev); if (e.target.checked) { n.add(col.key as string); } else { n.delete(col.key as string); } return n; }); }} className="accent-blue-500" />
                 <span className="text-slate-300">{col.label}</span>
               </label>
             ))}
