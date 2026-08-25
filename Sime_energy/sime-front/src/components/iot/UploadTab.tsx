@@ -277,7 +277,7 @@ function TableauSheet({
 // COMPOSANT PRINCIPAL
 // ============================================================
 export function UploadTab() {
-  const { state, addFile, setShellyRows, removeFile, setSourceData } = useIOT();
+  const { state, addFile, setShellyRows, setSourceData } = useIOT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [pdfEntries, setPdfEntries] = useState<PDFEntry[]>([]);

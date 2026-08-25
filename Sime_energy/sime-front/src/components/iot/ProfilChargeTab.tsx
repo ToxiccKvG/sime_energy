@@ -106,15 +106,6 @@ function horaireToShellyRows(rows: HoraireRow[]): ShellyRow[] {
 type ViewMode = 'journalier' | 'mensuel' | 'phases';
 type ChartType = 'aire' | 'barres';
 
-const COLORS = {
-  total: '#3b82f6',
-  phaseA: '#22c55e',
-  phaseB: '#f59e0b',
-  phaseC: '#ec4899',
-  retour: '#a78bfa',
-  net: '#06b6d4',
-};
-
 function KPICard({ label, value, unit, sub, color = 'blue' }: {
   label: string; value: string; unit: string; sub?: string; color?: string;
 }) {
@@ -740,7 +731,7 @@ export function ProfilChargeTab() {
             </div>
           </div>
 
-          <ResponsiveContainer width="100%" height={360}>
+          <ResponsiveContainer key={`${viewMode}-${chartType}`} width="100%" height={360}>
             {viewMode === 'mensuel' ? (
               <BarChart data={chartDataMensuel} margin={{ top: 10, right: 30, bottom: 30, left: 30 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />

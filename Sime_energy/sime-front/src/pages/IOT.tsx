@@ -4,13 +4,13 @@ import {
 } from 'lucide-react';
 import { IOTProvider, useIOT } from '@/components/iot/IOTContext';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { DashboardTab }    from '@/components/iot/DashboardTab';
-import { SourcesTab }      from '@/components/iot/SourcesTab';
-import { FichiersTab }     from '@/components/iot/FichiersTab';
-import { AnalyseTab }      from '@/components/iot/AnalyseTab';
-import { NettoyageTab }    from '@/components/iot/NettoyageTab';
-import { ParametresTab }   from '@/components/iot/ParametresTab';
-import { Badge }           from '@/components/ui/badge';
+import { DashboardTab }      from '@/components/iot/DashboardTab';
+import { SourcesTab }        from '@/components/iot/SourcesTab';
+import { FichiersTab }       from '@/components/iot/FichiersTab';
+import { AnalyseTab }        from '@/components/iot/AnalyseTab';
+import { NettoyageTab }      from '@/components/iot/NettoyageTab';
+import { ParametresTab }     from '@/components/iot/ParametresTab';
+import { Badge }             from '@/components/ui/badge';
 
 // ---- Définition des onglets ----
 const TABS = [

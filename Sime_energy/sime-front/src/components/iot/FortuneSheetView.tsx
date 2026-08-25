@@ -71,7 +71,7 @@ function buildSheet(rows: ShellyRow[]): Sheet {
   // ── Data rows ──────────────────────────────────────────────
   display.forEach((row, ri) => {
     const bg = ri % 2 === 0 ? '#FFFFFF' : '#F0F7FF';
-    COLUMNS.forEach(({ getter, isNum }, c) => {
+    COLUMNS.forEach(({ getter }, c) => {
       const raw = getter(row);
       const isNumber = typeof raw === 'number';
       celldata.push({
