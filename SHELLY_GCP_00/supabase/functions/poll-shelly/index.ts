@@ -23,7 +23,10 @@ const FAMILY_BY_TYPE: Record<string, DeviceFamily> = {
   "S3PL-30110EU":"ENERGIE_1PH",
   "SHCB-1":"LUMIERE","SHBDUO-1":"LUMIERE","SHDM-2":"LUMIERE",
   "SBHT-003C":"CAPTEUR_ENV","S3SN-0U12A":"CAPTEUR_ENV","S3SN-0U53X":"CAPTEUR_ENV","SHGS-1":"CAPTEUR_ENV","SBWS-90CM":"CAPTEUR_ENV",
+  // Gen1 : ces capteurs remontent une température (`tmp`) au même titre qu'un H&T.
+  "SHHT-1":"CAPTEUR_ENV","SHWT-1":"CAPTEUR_ENV",
   "SBDW-002C":"ETAT","SBBT-002C":"ETAT","SBMO-003Z":"ETAT","SHMOS-02":"ETAT","S3SW-001P8EU":"ETAT","LOQED":"ETAT",
+  "SNSN-0031Z":"ETAT","SHSM-01":"ETAT",
 };
 
 function getFamilyStatic(type: string): DeviceFamily {
@@ -302,7 +305,12 @@ function extractEnergie3PH(base: Record<string,unknown>, s: Record<string,unknow
       i_a:safeNum(em0.a_current,0,1000),i_b:safeNum(em0.b_current,0,1000),i_c:safeNum(em0.c_current,0,1000),
       wh_a:safeCounter(wh_a,null),wh_b:safeCounter(wh_b,null),wh_c:safeCounter(wh_c,null),wh_tot:safeCounter(wh_tot,last?.wh_tot),
       wh_ra:safeCounter(wh_ra,null),wh_rb:safeCounter(wh_rb,null),wh_rc:safeCounter(wh_rc,null),wh_rtot:safeCounter(wh_rtot,null),
-      temperature:safeNum((s["temperature:0"] as any)?.tC,-40,85),
+      // `temperature:0` sur un compteur, c'est la température de son BOÎTIER,
+      // pas celle du local : elle ne va que dans device_temp_c. Écrite aussi
+      // dans `temperature`, elle polluait la colonne d'ambiance (Arrivée
+      // générale Donsin : 57,9 °C de moyenne, 71,4 °C au pic), déclenchait des
+      // alertes « température critique » permanentes et rendait ces compteurs
+      // éligibles à la carte « Capteurs environnementaux ».
       device_temp_c:safeNum((s["temperature:0"] as any)?.tC,-40,150),frequency_hz:safeNum(em0.freq,40,70),signal_rssi:(s.wifi as any)?.rssi!=null?Math.round((s.wifi as any).rssi):null,
     };
   }
@@ -361,6 +369,71 @@ function extractLumiere(base: Record<string,unknown>, s: Record<string,unknown>)
   return {...base};
 }
 
+// ── Métadonnées de mesure, communes à toutes les familles ───────────────────
+//
+//  `/device/all_status` accompagne chaque appareil de champs que l'on jetait :
+//   - `_updated`  : horodatage réel (UTC) du dernier relevé remonté au cloud.
+//     Indispensable pour les capteurs qui dorment : un H&T Gen3 se réveille
+//     toutes les 2 h (`sys.wakeup_period` = 7200 s) mais on l'écrit avec
+//     ts = now() à chaque minute → 120 lignes identiques et l'heure réelle de
+//     la mesure perdue. `measured_at` distingue « nouvelle mesure » de « même
+//     mesure relue ».
+//   - `_dev_info.online` / `cloud.connected` : l'appareil répond-il vraiment
+//     (un appareil injoignable n'écrit plus aucune ligne — voir la note sur les
+//     anciennes lignes de remplacement `state='offline'` dans pollAccount).
+//   - version de firmware et drapeau batterie faible.
+function extractDeviceMeta(s: Record<string,unknown>): Record<string,unknown> {
+  const info = s._dev_info as any;
+  const upd  = typeof s._updated === "string" ? s._updated : null;
+  // Format Shelly : "2026-08-28 13:35:26", en UTC (vérifié contre sys.unixtime).
+  const measuredAt = upd ? new Date(`${upd.replace(" ","T")}Z`) : null;
+  const bat = (s["devicepower:0"] as any)?.battery ?? (s.bat as any) ?? {};
+  const online = info?.online ?? (s.cloud as any)?.connected ?? (s.wifi_sta as any)?.connected ?? null;
+  return {
+    measured_at:      measuredAt && !isNaN(measuredAt.getTime()) ? measuredAt.toISOString() : null,
+    online:           typeof online === "boolean" ? online : null,
+    firmware_version: (s["fwversion:0"] as any)?.version ?? (s.fw_info as any)?.fw ?? null,
+    battery_low:      typeof bat?.low === "boolean" ? bat.low : null,
+  };
+}
+
+// ── Grandeurs physiques, quel que soit le firmware ──────────────────────────
+//
+//  Gen2+/BLU exposent des composants (`temperature:0.tC`, `humidity:0.rh`,
+//  `illuminance:0.lux`, `devicepower:0.battery`), Gen1 met tout à la racine
+//  (`tmp`, `hum`, `lux`, `bat`) avec des formes variables selon le modèle :
+//  `tmp` vaut {value,units} sur un SHMOS-02, {value,tC,tF} sur un SHWT-1.
+//  On lisait uniquement `tmp.tC` → la température des détecteurs Gen1 était
+//  perdue (détecteur d'eau Académie CER2E : 31 °C jamais stockés).
+function extractSensorValues(s: Record<string,unknown>): Record<string,unknown> {
+  const tmp = s.tmp as any, hum = s.hum as any, lux = s.lux as any;
+  const bat = (s["devicepower:0"] as any)?.battery ?? (s.bat as any) ?? {};
+  const rssi = (s.reporter as any)?.rssi ?? (s.wifi as any)?.rssi ?? (s.wifi_sta as any)?.rssi;
+
+  // `is_valid: false` = mesure non fiable côté capteur, on ne la stocke pas.
+  const gen1 = (v: any, field: string): unknown =>
+    v == null || v?.is_valid === false ? null : (typeof v === "object" ? v[field] ?? v.value : v);
+
+  const temperature = safeNum(
+    (s["temperature:0"] as any)?.tC ?? gen1(tmp, "tC"), -40, 85);
+  const humidity = safeNum(
+    (s["humidity:0"] as any)?.rh ?? gen1(hum, "rh"), 0, 100);
+
+  const illumination = (s["illuminance:0"] as any)?.illumination ?? (lux as any)?.illumination;
+
+  return {
+    temperature,
+    humidity,
+    illuminance_lux:   safeNum((s["illuminance:0"] as any)?.lux ?? gen1(lux, "lux"), 0, 200000),
+    // Shelly renvoie parfois une chaîne vide quand il n'a pas encore qualifié
+    // la luminosité : on ne stocke que les libellés réels.
+    illumination:      typeof illumination === "string" && illumination !== "" ? illumination : null,
+    battery_level:     safeNum(bat?.percent ?? bat?.value, 0, 100),
+    battery_voltage_v: safeNum(bat?.V ?? bat?.voltage, 0, 10),
+    signal_rssi:       rssi != null ? Math.round(rssi) : null,
+  };
+}
+
 function extractWeatherExtras(s: Record<string,unknown>, temperature: number|null, humidity: number|null): Record<string,unknown> {
   const uv=(s["UV:0"] as any)?.value, lux=(s["illuminance:0"] as any)?.lux;
   const windAvg=(s["speed:0"] as any)?.value, windGust=(s["speed:1"] as any)?.value, windDir=(s["direction:0"] as any)?.value;
@@ -379,44 +452,79 @@ function extractWeatherExtras(s: Record<string,unknown>, temperature: number|nul
   };
 }
 
+// État d'alarme des capteurs de sécurité (fumée, eau, gaz) — partagé entre les
+// familles CAPTEUR_ENV et ETAT, la frontière dépendant du modèle.
+function extractAlarmState(s: Record<string,unknown>): string | null {
+  const gas=s["gas_sensor"] as any;      if (gas!==undefined)   return gas.alarm_state??null;
+  const smoke=s["smoke:0"] as any;       if (smoke!==undefined) return smoke.alarm?"alarm":"ok";
+  const flood=s["flood"];                if (flood!==undefined) return flood?"flood":"dry";
+  const rain=s["rain_sensor"];           if (rain!==undefined)  return rain?"rain":"dry";
+  return null;
+}
+
 function extractCapteurEnv(base: Record<string,unknown>, s: Record<string,unknown>): Record<string,unknown> {
-  const rssi=(s.reporter as any)?.rssi??(s.wifi as any)?.rssi;
-  const tmp=s.tmp as any, hum=s.hum as any;
-  if (tmp!==undefined||hum!==undefined) {
-    const bat=(s["devicepower:0"] as any)?.battery??s.bat??{};
-    const temperature=safeNum(typeof tmp==="object"?tmp?.tC:tmp,-40,85), humidity=safeNum(typeof hum==="object"?hum?.value:hum,0,100);
-    return {...base,temperature,humidity,battery_level:safeNum(bat?.percent??bat?.value,0,100),battery_voltage_v:safeNum(bat?.V,0,10),signal_rssi:rssi!=null?Math.round(rssi):null,
-      ...extractWeatherExtras(s,temperature,humidity)};
+  const values = extractSensorValues(s);
+  const temperature = values.temperature as number|null;
+  const humidity    = values.humidity as number|null;
+  const alarm       = extractAlarmState(s);
+  if (temperature==null && humidity==null && alarm==null) {
+    console.warn(`[ENV inconnu] ${base.device_id}`); return {...base,...values};
   }
-  const t0=s["temperature:0"] as any, h0=s["humidity:0"] as any;
-  if (t0!==undefined||h0!==undefined) {
-    const bat=(s["devicepower:0"] as any)?.battery??{};
-    const temperature=safeNum(t0?.tC,-40,85), humidity=safeNum(h0?.rh,0,100);
-    return {...base,temperature,humidity,battery_level:safeNum(bat?.percent,0,100),battery_voltage_v:safeNum(bat?.V,0,10),signal_rssi:rssi!=null?Math.round(rssi):null,
-      ...extractWeatherExtras(s,temperature,humidity)};
-  }
-  const gas=s["gas_sensor"] as any;
-  if (gas!==undefined) return {...base,state:gas.alarm_state??null};
-  console.warn(`[ENV inconnu] ${base.device_id}`); return {...base};
+  // Un capteur d'eau/fumée remonte à la fois une alarme et une température :
+  // les deux sont conservées, on ne choisit plus l'une au détriment de l'autre.
+  return {...base,...values,...(alarm!=null?{state:alarm}:{}),
+    ...extractWeatherExtras(s,temperature,humidity)};
 }
 
 function extractEtat(base: Record<string,unknown>, s: Record<string,unknown>): Record<string,unknown> {
-  const bat=()=>(s["devicepower:0"] as any)?.battery??s.bat as any??{};
-  const batPct=()=>safeNum(bat()?.percent??bat()?.value,0,100);
-  const batV=()=>safeNum(bat()?.V,0,10);
-  const rssi=(s.reporter as any)?.rssi??(s.wifi as any)?.rssi;
-  const diag={battery_voltage_v:batV(),signal_rssi:rssi!=null?Math.round(rssi):null,illuminance_lux:safeNum((s["illuminance:0"] as any)?.lux,0,200000)};
-  const win0=s["window:0"] as any; if (win0!==undefined) return {...base,state:win0.open?"open":"closed",battery_level:batPct(),tilt_angle:safeNum((s["tilt:0"] as any)?.angle,-180,180),...diag};
-  const inp0=s["input:0"] as any; if (inp0!==undefined) return {...base,state:inp0.state?"pressed":"released",battery_level:batPct(),...diag};
-  const occup=s["occupancy:0"] as any; if (occup!==undefined) return {...base,state:occup.occupancy?"motion":"no_motion",battery_level:batPct(),...diag};
-  const sensor=s["sensor"] as any??s["motion"] as any; if (sensor!==undefined) return {...base,state:(sensor.motion||sensor===true)?"motion":"no_motion",battery_level:batPct(),...diag};
-  const sw0=s["switch:0"] as any; if (sw0!==undefined) return {...base,state:sw0.output?"on":"off",device_temp_c:safeNum(sw0.temperature?.tC,-40,150),signal_rssi:rssi!=null?Math.round(rssi):null};
-  const lock=s["lock"] as any??s["latch"] as any; if (lock!==undefined) return {...base,state:lock.locked?"locked":lock.open?"open":"closed",...diag};
-  console.warn(`[ETAT inconnu] ${base.device_id}`); return {...base};
+  // Les capteurs d'état embarquent aussi des grandeurs physiques (le détecteur
+  // de mouvement SHMOS-02 mesure température et luminosité) : on les collecte
+  // systématiquement, en plus de l'état lui-même.
+  const values = extractSensorValues(s);
+  const state = (): string|null => {
+    const win0=s["window:0"] as any;    if (win0!==undefined)  return win0.open?"open":"closed";
+    const inp0=s["input:0"] as any;     if (inp0!==undefined)  return inp0.state?"pressed":"released";
+    const occup=s["occupancy:0"] as any;if (occup!==undefined) return occup.occupancy?"motion":"no_motion";
+    // BLU Motion (SBMO-003Z) : composant `motion:0`, jamais reconnu jusqu'ici —
+    // l'appareil n'écrivait aucun champ exploitable.
+    const mo0=s["motion:0"] as any;     if (mo0!==undefined)   return mo0.motion?"motion":"no_motion";
+    const sensor=s["sensor"] as any??s["motion"] as any;
+    if (sensor!==undefined) {
+      if (sensor.motion===true||sensor===true) return "motion";
+      // Distincte du mouvement : une vibration n'atteste pas une présence.
+      if (sensor.vibration===true) return "vibration";
+      return "no_motion";
+    }
+    const lock=s["lock"] as any??s["latch"] as any;
+    if (lock!==undefined) return lock.locked?"locked":lock.open?"open":"closed";
+    // Serrure LOQED : état à la racine du status, hors composants Shelly.
+    if (typeof s.bolt_state === "string") return s.bolt_state;
+    return extractAlarmState(s);
+  };
+  const sw0=s["switch:0"] as any;
+  // Sur un relais, `temperature:0` est la température interne du boîtier et non
+  // une mesure d'ambiance : elle va dans device_temp_c, jamais dans temperature.
+  if (sw0!==undefined) return {...base,...values,temperature:null,state:sw0.output?"on":"off",
+    device_temp_c:safeNum(sw0.temperature?.tC ?? (s["temperature:0"] as any)?.tC,-40,150)};
+  const st = state();
+  const tilt = safeNum((s["tilt:0"] as any)?.angle,-180,180);
+  const sensor = s["sensor"] as any;
+  // `sensor.timestamp` = epoch (s) du dernier événement vu par le capteur. Il
+  // peut remonter à plusieurs semaines alors que l'appareil émet toujours :
+  // c'est ce qui distingue « rien ne bouge » de « le capteur ne répond plus ».
+  const evenement = typeof sensor?.timestamp === "number" && sensor.timestamp > 1_500_000_000
+    && sensor.timestamp < Date.now()/1000 + 86400
+    ? new Date(sensor.timestamp*1000).toISOString() : null;
+  if (st==null && tilt==null) { console.warn(`[ETAT inconnu] ${base.device_id}`); return {...base,...values}; }
+  return {...base,...values,state:st,tilt_angle:tilt,
+    vibration: typeof sensor?.vibration === "boolean" ? sensor.vibration : null,
+    last_event_at: evenement,
+    battery_level:values.battery_level ?? safeNum(s.battery_percentage,0,100)};
 }
 
 function extractReading(deviceId: string, site: string, meta: Meta, s: Record<string,unknown>, last: {wh_tot:number|null}|undefined): Record<string,unknown> {
-  const base={device_id:deviceId,site,name:meta.name,room:meta.room,device_type:meta.type,device_family:meta.family,ts:new Date().toISOString()};
+  const base={device_id:deviceId,site,name:meta.name,room:meta.room,device_type:meta.type,device_family:meta.family,ts:new Date().toISOString(),
+    ...extractDeviceMeta(s)};
   switch(meta.family) {
     case "ENERGIE_3PH": return extractEnergie3PH(base,s,last);
     case "ENERGIE_2PH": return extractEnergie2PH(base,s,last);
@@ -424,12 +532,16 @@ function extractReading(deviceId: string, site: string, meta: Meta, s: Record<st
     case "LUMIERE":     return extractLumiere(base,s);
     case "CAPTEUR_ENV": return extractCapteurEnv(base,s);
     case "ETAT":        return extractEtat(base,s);
-    default: console.warn(`[INCONNU] ${deviceId} type=${meta.type}`); return base;
+    // Type non encore classé (table shelly_device_types) : on conserve malgré
+    // tout les grandeurs reconnaissables plutôt que d'écrire une ligne vide.
+    default: console.warn(`[INCONNU] ${deviceId} type=${meta.type}`);
+      return {...base,...extractSensorValues(s),state:extractAlarmState(s)};
   }
 }
 
 function extractChannelReading(deviceId: string, site: string, meta: Meta, parentStatus: Record<string,unknown>, ch: number, last: {wh_tot:number|null}|undefined): Record<string,unknown> {
-  const base={device_id:deviceId,site,name:meta.name,room:meta.room,device_type:meta.type,device_family:meta.family,ts:new Date().toISOString()};
+  const base={device_id:deviceId,site,name:meta.name,room:meta.room,device_type:meta.type,device_family:meta.family,ts:new Date().toISOString(),
+    ...extractDeviceMeta(parentStatus)};
   const rssi=(parentStatus.wifi as any)?.rssi; const diag={signal_rssi:rssi!=null?Math.round(rssi):null};
   const sw=parentStatus[`switch:${ch}`] as any;
   if(sw!==undefined) return {...base,state:sw.output?"on":"off",power_w:safeNum(sw.apower,0,7500),voltage_v:safeNum(sw.voltage,0,500),current_a:safeNum(sw.current,0,1000),wh_tot:safeCounter(safeNum(sw.aenergy?.total,0,1e9),last?.wh_tot),wh_rtot:safeCounter(safeNum(sw.ret_aenergy?.total,0,1e9),null),device_temp_c:safeNum(sw.temperature?.tC,-40,150),frequency_hz:safeNum(sw.freq,40,70),...diag};
@@ -479,13 +591,24 @@ async function pollAccount(
     processed.add(virtualId);
   }
 
-  if (forceMetaRefresh) {
-    for (const [deviceId,fallback] of Object.entries(ID_FALLBACK)) {
-      if (processed.has(deviceId)) continue;
-      if (fallback.site !== account.site) continue;
-      rows.push({device_id:deviceId,site:account.site,name:fallback.name,room:null,device_type:fallback.type,device_family:fallback.family,ts:new Date().toISOString(),state:"offline"});
-    }
-  }
+  // NOTE — plus de lignes `state='offline'` de remplacement.
+  //
+  // Ce bloc insérait, tous les 10 min (forceMetaRefresh), une ligne vide pour
+  // chaque appareil d'ID_FALLBACK n'ayant pas répondu. Trois problèmes :
+  //
+  //  1. Un appareil définitivement retiré (ex. les compteurs FOUTA POIDS LOURDS,
+  //     débranchés le 2026-08-01) continuait d'écrire 144 lignes/jour sans
+  //     aucune mesure, indéfiniment.
+  //  2. Le front ne s'en sert pas : le statut hors-ligne se déduit de l'ABSENCE
+  //     de relevé récent (`computeAlerts` : « device dans le catalogue mais pas
+  //     dans le snapshot 5min », et StatusGridCard : `if (!r) status='offline'`).
+  //     Pire, une ligne de remplacement fait apparaître l'appareil dans le
+  //     snapshot : il était alors classé « Veille » au lieu de « Hors-ligne ».
+  //  3. Ces lignes rendaient tout appareil mort éternellement « vu aujourd'hui »,
+  //     déjouant le filtre de fraîcheur de shelly_devices_catalog.
+  //
+  // Seule la statistique `nb_offline` de shelly_cl_journalier s'appuyait encore
+  // dessus ; elle vaudra désormais 0.
 
   if (rows.length>0) {
     const {error}=await supabase.from("shelly_cl").insert(rows);
