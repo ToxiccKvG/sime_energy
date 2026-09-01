@@ -5,6 +5,7 @@
 import { useMemo } from 'react';
 import { Activity, Zap, CheckCircle2, AlertTriangle, BatteryCharging, Sun } from 'lucide-react';
 import { ACCOUNT_BY_SITE, isMainMeter, isPVMeter, type ShellyClRow, type Device, type EnergyAgg, type Period } from '@/lib/iot-dashboard-service';
+import type { ShellyDeviceRole } from '@/lib/shelly-device-role-service';
 
 const fmtFr = (n: number, d = 1) => n.toFixed(d).replace('.', ',');
 
@@ -14,34 +15,87 @@ interface Props {
   alertsBySite: Record<string, number>;
   period: Period;
   energyAgg: EnergyAgg[];
+  /** device_id → rattachement électrique (table shelly_device_roles). */
+  roles: Map<string, ShellyDeviceRole>;
 }
 
-export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg }: Props) {
+// Rôle d'un appareil dans le bilan du site.
+//
+//  Le rattachement explicite prime toujours ; la reconnaissance par nom
+//  (isMainMeter/isPVMeter) ne sert plus que de repli pour les sites pas encore
+//  rattachés. Elle est structurellement faillible : « Arrivée générale » à
+//  Donsin ne matche aucun motif, le site affichait donc 0,00 kW de compteurs
+//  principaux alors que son arrivée tourne en permanence.
+type Classe = 'M1' | 'M3' | 'PV' | 'MAIN' | 'SUB';
+
+function classer(deviceId: string, name: string, roles: Map<string, ShellyDeviceRole>): Classe {
+  const role = roles.get(deviceId)?.role;
+  if (role) {
+    if (role === 'M1_RESEAU') return 'M1';
+    if (role === 'M3_CHARGE')  return 'M3';
+    if (role === 'M5_PV')      return 'PV';
+    if (role === 'M2_SELECTEUR' || role === 'M4_GROUPE' || role === 'BESS') return 'MAIN';
+    return 'SUB';
+  }
+  if (isPVMeter(name)) return 'PV';
+  if (/M1[_\s]?SENELEC|EM-SENELEC|SENELEC/i.test(name)) return 'M1';
+  if (/M3[_\s]?CHARGE|CHARGE_CONSOMMATION|TGBT/i.test(name)) return 'M3';
+  if (isMainMeter(name)) return 'MAIN';
+  return 'SUB';
+}
+
+export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg, roles }: Props) {
   const isHistoric = period !== 'live';
 
   // Mode live : agrégat par site depuis le snapshot brut
+  //
+  //  `null` = puissance INCONNUE, distincte de 0 kW mesuré. Le `?? 0` d'origine
+  //  faisait passer un compteur débranché pour un compteur à l'arrêt.
   const liveBySite = useMemo(() => {
     const map = new Map<string, {
       totalDevices: number;
       onlineDevices: number;
-      mainPowerW: number;
-      allPowerW: number;
+      mainPowerW: number | null;
+      allPowerW: number | null;
+      nbMain: number;        // compteurs principaux identifiés sur le site
+      nbMainMesures: number; // ... dont ceux qui remontent réellement une valeur
     }>();
     const sites = new Set<string>();
     for (const d of allDevices) if (d.site) sites.add(d.site);
     for (const s of sites) {
-      map.set(s, { totalDevices: allDevices.filter(d => d.site === s).length, onlineDevices: 0, mainPowerW: 0, allPowerW: 0 });
+      const duSite = allDevices.filter(d => d.site === s);
+      map.set(s, {
+        totalDevices: duSite.length,
+        onlineDevices: 0, mainPowerW: null, allPowerW: null, nbMainMesures: 0,
+        // Compté sur le catalogue (fenêtre 7 j) et non sur le snapshot (5 min) :
+        // poll-shelly n'écrit les lignes « offline » qu'une fois toutes les
+        // 10 minutes, le libellé alternerait sinon entre « aucun compteur
+        // rattaché » et « compteurs hors ligne » d'un rafraîchissement à l'autre.
+        nbMain: duSite.filter(d => {
+          const c = classer(d.device_id, d.name, roles);
+          return c === 'M1' || c === 'M3' || c === 'MAIN';
+        }).length,
+      });
     }
     for (const r of snapshot) {
       const entry = map.get(r.site);
       if (!entry) continue;
       entry.onlineDevices += 1;
-      const p = Math.max(0, Number(r.power_w ?? 0));
-      entry.allPowerW += p;
-      if (isMainMeter(r.name)) entry.mainPowerW += p;
+      const classe = classer(r.device_id, r.name, roles);
+      const estPrincipal = classe === 'M1' || classe === 'M3' || classe === 'MAIN';
+
+      const injoignable = r.state === 'offline' || r.online === false || r.power_w == null;
+      if (injoignable) continue;
+
+      const p = Math.max(0, Number(r.power_w));
+      entry.allPowerW = (entry.allPowerW ?? 0) + p;
+      if (estPrincipal) {
+        entry.mainPowerW = (entry.mainPowerW ?? 0) + p;
+        entry.nbMainMesures += 1;
+      }
     }
     return Array.from(map.entries()).map(([site, v]) => ({ site, ...v }));
-  }, [snapshot, allDevices]);
+  }, [snapshot, allDevices, roles]);
 
   // Mode historique : séparer compteurs principaux et sous-appareils
   // ─ kwhImport   = M1 SENELEC (import réseau) → base du coût facturé
@@ -65,16 +119,13 @@ export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg 
         kwhImport: 0, kwhCharges: 0, kwhPV: 0,
         kwhFallback: 0, nbSubDevices: 0, nbMainMeters: 0,
       };
-      const isSenelec = /M1[_\s]?SENELEC|EM-SENELEC|SENELEC/i.test(e.name);
-      const isCharge  = /M3[_\s]?CHARGE|CHARGE_CONSOMMATION|TGBT/i.test(e.name);
-      const isPV      = isPVMeter(e.name);
-      const isMain    = isMainMeter(e.name);
-
-      if (isSenelec)      { cur.kwhImport  += e.kwh; cur.nbMainMeters++; }
-      else if (isCharge)  { cur.kwhCharges += e.kwh; cur.nbMainMeters++; }
-      else if (isPV)      { cur.kwhPV      += e.kwh; cur.nbMainMeters++; }
-      else if (isMain)    { cur.kwhFallback += e.kwh; cur.nbMainMeters++; }
-      else                { cur.nbSubDevices++; }
+      switch (classer(e.device_id, e.name, roles)) {
+        case 'M1':   cur.kwhImport   += e.kwh; cur.nbMainMeters++; break;
+        case 'M3':   cur.kwhCharges  += e.kwh; cur.nbMainMeters++; break;
+        case 'PV':   cur.kwhPV       += e.kwh; cur.nbMainMeters++; break;
+        case 'MAIN': cur.kwhFallback += e.kwh; cur.nbMainMeters++; break;
+        default:     cur.nbSubDevices++;
+      }
 
       map.set(e.site, cur);
     }
@@ -84,7 +135,7 @@ export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg 
       kwhImport: 0, kwhCharges: 0, kwhPV: 0,
       kwhFallback: 0, nbSubDevices: 0, nbMainMeters: 0,
     }) }));
-  }, [energyAgg, allDevices]);
+  }, [energyAgg, allDevices, roles]);
 
   const sites = isHistoric ? historicBySite : liveBySite;
 
@@ -170,7 +221,7 @@ export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg 
                           {fmtFr(hs.kwhImport, hs.kwhImport >= 100 ? 1 : 2)}
                           <span className="text-xs text-slate-400 font-normal ml-1">kWh</span>
                         </p>
-                        <p className="text-slate-500 text-[10px] mt-0.5">M1 — SENELEC</p>
+                        <p className="text-slate-500 text-[10px] mt-0.5">M1 — Réseau</p>
                       </div>
                     )}
 
@@ -223,23 +274,52 @@ export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg 
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3">
+              <div className={`rounded-lg p-3 border ${ls.mainPowerW == null
+                ? 'bg-slate-500/5 border-dashed border-slate-600/50'
+                : 'bg-blue-500/5 border-blue-500/20'}`}>
                 <p className="text-[10px] text-slate-400 uppercase tracking-wide flex items-center gap-1">
                   <Zap className="h-3 w-3" /> Puissance live
                 </p>
-                <p className="text-white text-xl font-bold mt-1">
-                  {fmtFr(ls.mainPowerW / 1000, 2)}
-                  <span className="text-xs text-slate-400 font-normal ml-1">kW</span>
-                </p>
-                <p className="text-slate-500 text-[10px] mt-0.5">Compteurs principaux</p>
+                {ls.mainPowerW == null ? (
+                  <>
+                    <p className="text-slate-600 text-xl font-bold mt-1">—</p>
+                    <p className="text-amber-500/80 text-[10px] mt-0.5">
+                      {ls.nbMain === 0
+                        ? 'aucun compteur principal rattaché'
+                        : 'compteurs principaux hors ligne'}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-white text-xl font-bold mt-1">
+                      {fmtFr(ls.mainPowerW / 1000, 2)}
+                      <span className="text-xs text-slate-400 font-normal ml-1">kW</span>
+                    </p>
+                    <p className="text-slate-500 text-[10px] mt-0.5">
+                      Compteurs principaux
+                      {ls.nbMainMesures < ls.nbMain && ` · ${ls.nbMain - ls.nbMainMesures} hors ligne`}
+                    </p>
+                  </>
+                )}
               </div>
-              <div className="rounded-lg bg-green-500/5 border border-green-500/20 p-3">
+              <div className={`rounded-lg p-3 border ${ls.allPowerW == null
+                ? 'bg-slate-500/5 border-dashed border-slate-600/50'
+                : 'bg-green-500/5 border-green-500/20'}`}>
                 <p className="text-[10px] text-slate-400 uppercase tracking-wide">Total appareils</p>
-                <p className="text-white text-xl font-bold mt-1">
-                  {fmtFr(ls.allPowerW / 1000, 2)}
-                  <span className="text-xs text-slate-400 font-normal ml-1">kW</span>
-                </p>
-                <p className="text-slate-500 text-[10px] mt-0.5">Toutes familles confondues</p>
+                {ls.allPowerW == null ? (
+                  <>
+                    <p className="text-slate-600 text-xl font-bold mt-1">—</p>
+                    <p className="text-amber-500/80 text-[10px] mt-0.5">aucun appareil joignable</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-white text-xl font-bold mt-1">
+                      {fmtFr(ls.allPowerW / 1000, 2)}
+                      <span className="text-xs text-slate-400 font-normal ml-1">kW</span>
+                    </p>
+                    <p className="text-slate-500 text-[10px] mt-0.5">Toutes familles confondues</p>
+                  </>
+                )}
               </div>
             </div>
           </div>

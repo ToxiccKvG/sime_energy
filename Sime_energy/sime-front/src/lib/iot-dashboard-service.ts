@@ -127,6 +127,12 @@ export interface ShellyClRow {
   device_type: string | null;
   device_family: string | null;
   state: string | null;
+  // Métadonnées de mesure (migration 20260828_add_shelly_measurement_metadata) :
+  // `ts` est l'instant du polling, `measured_at` celui du relevé lui-même.
+  measured_at: string | null;
+  online: boolean | null;
+  firmware_version: string | null;
+  battery_low: boolean | null;
   power_w: number | null;
   voltage_v: number | null;
   current_a: number | null;
@@ -134,6 +140,8 @@ export interface ShellyClRow {
   v_a: number | null; v_b: number | null; v_c: number | null;
   i_a: number | null; i_b: number | null; i_c: number | null;
   wh_a: number | null; wh_b: number | null; wh_c: number | null; wh_tot: number | null;
+  // Compteur retour/injection — nécessaire pour les TC montés à l'envers (sens_inverse)
+  wh_rtot: number | null;
   temperature: number | null;
   humidity: number | null;
   battery_level: number | null;
@@ -152,6 +160,12 @@ export interface ShellyClRow {
   signal_rssi: number | null;
   // Capteurs porte/fenêtre
   tilt_angle: number | null;
+  // Détecteurs de présence (migration 20260901_add_shelly_presence_fields) :
+  // last_event_at = dernier événement vu par le capteur, à distinguer de ts
+  // (polling) et measured_at (dernier envoi au cloud).
+  last_event_at: string | null;
+  vibration: boolean | null;
+  illumination: string | null;
   // Compteurs d'énergie
   device_temp_c: number | null;
   frequency_hz: number | null;
@@ -406,29 +420,31 @@ function toHoraireTs(iso: string): string {
 }
 
 export async function fetchCalendarActivity(filters: Filters): Promise<CalendarDay[]> {
-  // Live → 90 derniers jours ; historique → plage sélectionnée (élargie si besoin)
+  // Live → 90 derniers jours ; historique → plage sélectionnée (élargie si besoin).
+  // La RPC attend des timestamptz : on garde l'ISO complet avec son Z, la
+  // conversion vers le TIMESTAMP nu de ts_heure se fait côté fonction.
   const since = filters.period === 'live'
-    ? toHoraireTs(new Date(Date.now() - 90 * 24 * 60 * 60_000).toISOString())
-    : toHoraireTs(getHistoricRange(filters).since);
+    ? new Date(Date.now() - 90 * 24 * 60 * 60_000).toISOString()
+    : getHistoricRange(filters).since;
   const until = filters.period === 'live'
-    ? toHoraireTs(new Date().toISOString())
-    : toHoraireTs(getHistoricRange(filters).until);
-  let q = supabase
-    .from('shelly_cl_horaire')
-    .select('ts_heure,wh_conso')
-    .gte('ts_heure', since)
-    .lte('ts_heure', until)
-    .limit(50000);
-  if (filters.sites.length > 0)     q = q.in('site', filters.sites);
-  if (filters.families.length > 0)  q = q.in('device_family', filters.families);
-  if (filters.deviceIds.length > 0) q = q.in('device_id', filters.deviceIds);
-  const { data, error } = await q;
+    ? new Date().toISOString()
+    : getHistoricRange(filters).until;
+  // Agrégation SERVEUR : 90 jours représentent ~155 000 lignes horaires, très
+  // au-delà du plafond de PostgREST. L'ancienne version les ramenait avec un
+  // `.limit(50000)` sans `order()` : le calendrier n'affichait qu'un
+  // sous-ensemble arbitraire de jours. La RPC ne renvoie que ~90 lignes.
+  const { data, error } = await supabase.rpc('fn_energy_by_day', {
+    p_since:      since,
+    p_until:      until,
+    p_sites:      filters.sites.length      > 0 ? filters.sites      : null,
+    p_families:   filters.families.length   > 0 ? filters.families   : null,
+    p_device_ids: filters.deviceIds.length  > 0 ? filters.deviceIds  : null,
+  });
   if (error) throw error;
 
   const byDay = new Map<string, number>();
-  for (const r of data ?? []) {
-    const day = r.ts_heure.slice(0, 10);
-    byDay.set(day, (byDay.get(day) ?? 0) + (Number(r.wh_conso ?? 0) / 1000));
+  for (const r of (data ?? []) as { jour: string; kwh: number }[]) {
+    byDay.set(r.jour, Number(r.kwh ?? 0));
   }
 
   // Gap-fill : compléter avec shelly_cl si horaire n'a pas de données récentes

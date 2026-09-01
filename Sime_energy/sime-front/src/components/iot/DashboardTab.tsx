@@ -15,6 +15,7 @@ import {
   type Filters,
 } from '@/lib/iot-dashboard-service';
 import { fetchAccounts, type ShellyAccount } from '@/lib/shelly-account-service';
+import { fetchDeviceRoles, indexRolesByDevice, type ShellyDeviceRole } from '@/lib/shelly-device-role-service';
 import { useIOT } from '@/components/iot/IOTContext';
 import { FilterBar } from './dashboard/FilterBar';
 import { KPIBand } from './dashboard/KPIBand';
@@ -42,6 +43,9 @@ export function DashboardTab() {
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accountAlerts, setAccountAlerts] = useState<ShellyAccount[]>([]);
+  // Rattachement appareil → rôle électrique : alimente le schéma de flux, qui
+  // n'est plus câblé sur un site ni sur des noms d'appareils.
+  const [deviceRoles, setDeviceRoles] = useState<Map<string, ShellyDeviceRole>>(new Map());
   const { setActiveTab } = useIOT();
 
   // Compteur "il y a Xs"
@@ -70,6 +74,12 @@ export function DashboardTab() {
     checkAccounts();
     const id = setInterval(checkAccounts, 60_000);
     return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    fetchDeviceRoles()
+      .then(roles => setDeviceRoles(indexRolesByDevice(roles)))
+      .catch(() => { /* pas de rattachement → pas de schéma de flux, sans bloquer le reste */ });
   }, []);
 
   const filtersKey = useMemo(() => JSON.stringify(filters), [filters]);
@@ -136,7 +146,6 @@ export function DashboardTab() {
   const alertDeviceIds = useMemo(() => new Set(alerts.map(a => a.device_id)), [alerts]);
 
   const isHistoric = filters.period !== 'live';
-  const showAcademy = filters.sites.length === 0 || filters.sites.includes('Académie CER2E');
   const ageSec = lastUpdate ? Math.floor((Date.now() - lastUpdate.getTime()) / 1000) : null;
 
   return (
@@ -244,15 +253,14 @@ export function DashboardTab() {
         alertsBySite={alertsBySite}
         period={filters.period}
         energyAgg={energyAgg}
+        roles={deviceRoles}
       />
 
-      {/* Section 4 + 5 : Flux PV (Académie) + Qualité réseau */}
-      {showAcademy && (
-        <div className="grid grid-cols-1 xl:grid-cols-[2fr,1fr] gap-3">
-          <EnergyFlowCard snapshot={snapshot} energyAgg={energyAgg} period={filters.period} />
-          <PhaseQualityCard snapshot={snapshot} />
-        </div>
-      )}
+      {/* Section 4 + 5 : Flux énergétique par site + Qualité 3 phases */}
+      <div className="grid grid-cols-1 xl:grid-cols-[2fr,1fr] gap-3">
+        <EnergyFlowCard snapshot={snapshot} energyAgg={energyAgg} period={filters.period} roles={deviceRoles} />
+        <PhaseQualityCard snapshot={snapshot} />
+      </div>
 
       {/* Section 2 + 9 : Top consommateurs + Alertes */}
       <div className="grid grid-cols-1 xl:grid-cols-[2fr,1fr] gap-3">
