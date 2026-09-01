@@ -13,14 +13,24 @@ import { useMemo, useState } from 'react';
 import { Gauge } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { ShellyClRow } from '@/lib/iot-dashboard-service';
+import type { PlageDetail } from '@/lib/iot-energy-detail-service';
+import { EnergyDetailDialog, type EnergyMetricKey, type EnergySubject } from './EnergyDetailDialog';
 
 const fmtFr = (n: number, d = 1) => n.toFixed(d).replace('.', ',');
 
 interface Props {
   snapshot: ShellyClRow[];
+  /** Période analysée par la popup de détail. */
+  plage: PlageDetail;
 }
 
-export function PhaseQualityCard({ snapshot }: Props) {
+// Une tuile de phase est un bouton : elle ouvre l'historique de la grandeur.
+const TUILE_CLIC =
+  'text-center w-full cursor-pointer transition-shadow hover:ring-1 hover:ring-white/25 ' +
+  'focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40';
+
+export function PhaseQualityCard({ snapshot, plage }: Props) {
+  const [detail, setDetail] = useState<EnergySubject | null>(null);
   const meters3PH = useMemo(
     () => snapshot.filter(r => r.device_family === 'ENERGIE_3PH' && r.v_a != null),
     [snapshot],
@@ -47,6 +57,33 @@ export function PhaseQualityCard({ snapshot }: Props) {
 
   const PHASES = ['A', 'B', 'C'];
   const COLORS_V = ['#22c55e', '#f59e0b', '#ec4899'];
+
+  /**
+   * Détail d'une grandeur du compteur affiché.
+   *
+   * Le courant n'a pas d'agrégat horaire : shelly_cl_horaire ne stocke que
+   * puissance et tension. Cliquer un courant ouvre donc la puissance par
+   * phase — c'est la même information à un facteur de tension près — et la
+   * note le dit, plutôt que de tracer un courant reconstitué en le faisant
+   * passer pour mesuré.
+   */
+  const ouvrir = (metrique: EnergyMetricKey, titre: string, notes?: string[]) => setDetail({
+    titre,
+    sousTitre: `${c.name} · ${c.site}${c.room ? ' · ' + c.room : ''}`,
+    couleur: '#22d3ee',
+    plage,
+    series: [{
+      label: c.name,
+      couleur: '#22d3ee',
+      devices: [{ device_id: c.device_id, name: c.name, site: c.site, room: c.room }],
+    }],
+    metriqueInitiale: metrique,
+    notes,
+    instantane: [
+      { label: 'Maintenant', valeur: `${fmtFr(v[0], 0)} / ${fmtFr(v[1], 0)} / ${fmtFr(v[2], 0)} V` },
+      { label: '·', valeur: `${fmtFr(i[0], 1)} / ${fmtFr(i[1], 1)} / ${fmtFr(i[2], 1)} A` },
+    ],
+  });
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -78,7 +115,10 @@ export function PhaseQualityCard({ snapshot }: Props) {
           const warn = (val >= 200 && val < 220) || (val > 245 && val <= 250);
           const color = val === 0 ? '#64748b' : ok ? '#22c55e' : warn ? '#f59e0b' : '#ef4444';
           return (
-            <div key={`v-${idx}`} className="rounded-lg border bg-white/5 border-white/10 p-3 text-center">
+            <button key={`v-${idx}`} type="button"
+              onClick={() => ouvrir('tension', `Tensions — ${c.name}`)}
+              title="Voir l'historique des tensions"
+              className={`rounded-lg border bg-white/5 border-white/10 p-3 ${TUILE_CLIC}`}>
               <p className="text-[10px] text-slate-400 uppercase">Tension Phase {PHASES[idx]}</p>
               <p className="text-2xl font-bold mt-1" style={{ color }}>
                 {fmtFr(val, 1)} <span className="text-xs font-normal text-slate-400">V</span>
@@ -87,22 +127,32 @@ export function PhaseQualityCard({ snapshot }: Props) {
                 <div className="h-full" style={{ width: `${Math.min(100, val / 260 * 100)}%`, backgroundColor: color }} />
               </div>
               <p className="text-[10px] text-slate-500 mt-1">cible 220-245 V</p>
-            </div>
+            </button>
           );
         })}
 
         {/* Courants */}
         {i.map((val, idx) => (
-          <div key={`i-${idx}`} className="rounded-lg border bg-white/5 border-white/10 p-3 text-center">
+          <button key={`i-${idx}`} type="button"
+            onClick={() => ouvrir('phases', `Puissance par phase — ${c.name}`, [
+              "Le courant n'est pas agrégé à l'heure : la courbe montre la puissance par phase, dont le courant se déduit à tension quasi constante (I ≈ P / U)",
+            ])}
+            title="Voir l'historique de la charge par phase"
+            className={`rounded-lg border bg-white/5 border-white/10 p-3 ${TUILE_CLIC}`}>
             <p className="text-[10px] text-slate-400 uppercase">Courant Phase {PHASES[idx]}</p>
             <p className="text-2xl font-bold mt-1" style={{ color: COLORS_V[idx] }}>
               {fmtFr(val, 1)} <span className="text-xs font-normal text-slate-400">A</span>
             </p>
             <p className="text-[10px] text-slate-500 mt-2">{fmtFr(p[idx], 1)} W</p>
-          </div>
+          </button>
         ))}
 
-        <div className={`col-span-2 sm:col-span-3 rounded-lg p-3 text-center border ${
+        <button type="button"
+          onClick={() => ouvrir('tension', `Déséquilibre de tension — ${c.name}`, [
+            'Déséquilibre = (max − min) / moyenne des trois tensions, calculé heure par heure',
+          ])}
+          title="Voir l'historique du déséquilibre"
+          className={`col-span-2 sm:col-span-3 rounded-lg p-3 border ${TUILE_CLIC} ${
           desequilibre > 5 ? 'bg-amber-500/10 border-amber-500/30' :
           desequilibre > 2 ? 'bg-yellow-500/5 border-yellow-500/20' :
                               'bg-green-500/5 border-green-500/20'
@@ -116,8 +166,10 @@ export function PhaseQualityCard({ snapshot }: Props) {
           <p className="text-[10px] text-slate-500 mt-1">
             (max - min) / moyenne · alerte si &gt; 5%
           </p>
-        </div>
+        </button>
       </div>
+
+      <EnergyDetailDialog sujet={detail} onClose={() => setDetail(null)} />
     </div>
   );
 }

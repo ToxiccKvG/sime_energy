@@ -16,6 +16,7 @@ import {
 } from '@/lib/iot-dashboard-service';
 import { fetchAccounts, type ShellyAccount } from '@/lib/shelly-account-service';
 import { fetchDeviceRoles, indexRolesByDevice, type ShellyDeviceRole } from '@/lib/shelly-device-role-service';
+import { plageDetail } from '@/lib/iot-energy-detail-service';
 import { useIOT } from '@/components/iot/IOTContext';
 import { FilterBar } from './dashboard/FilterBar';
 import { KPIBand } from './dashboard/KPIBand';
@@ -145,6 +146,11 @@ export function DashboardTab() {
 
   const alertDeviceIds = useMemo(() => new Set(alerts.map(a => a.device_id)), [alerts]);
 
+  // Plage analysée par les popups de détail. Calculée ici et non dans chaque
+  // carte : les trois cartes cliquables doivent parler de la MÊME période que
+  // les chiffres qu'elles affichent.
+  const plage = useMemo(() => plageDetail(filters), [filtersKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const isHistoric = filters.period !== 'live';
   const ageSec = lastUpdate ? Math.floor((Date.now() - lastUpdate.getTime()) / 1000) : null;
 
@@ -254,12 +260,20 @@ export function DashboardTab() {
         period={filters.period}
         energyAgg={energyAgg}
         roles={deviceRoles}
+        plage={plage}
       />
 
       {/* Section 4 + 5 : Flux énergétique par site + Qualité 3 phases */}
       <div className="grid grid-cols-1 xl:grid-cols-[2fr,1fr] gap-3">
-        <EnergyFlowCard snapshot={snapshot} energyAgg={energyAgg} period={filters.period} roles={deviceRoles} />
-        <PhaseQualityCard snapshot={snapshot} />
+        <EnergyFlowCard
+          snapshot={snapshot}
+          energyAgg={energyAgg}
+          period={filters.period}
+          roles={deviceRoles}
+          allDevices={allDevices}
+          plage={plage}
+        />
+        <PhaseQualityCard snapshot={snapshot} plage={plage} />
       </div>
 
       {/* Section 2 + 9 : Top consommateurs + Alertes */}
