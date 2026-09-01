@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
+import { useMemo, useState, useRef, useCallback, useEffect, Fragment } from 'react';
 import { parseExcelBuffer, rowsToObjects, exportJsonToXlsx } from '@/lib/excel-utils';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -6,7 +6,7 @@ import {
   ScatterChart, Scatter, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, ReferenceLine, AreaChart, Area, Legend,
-  PieChart, Pie,
+  PieChart, Pie, ComposedChart,
 } from 'recharts';
 import {
   Filter, BarChart2, TrendingUp, Activity, Upload,
@@ -26,10 +26,13 @@ import { useIOT } from './IOTContext';
 import { ProfilChargeTab } from './ProfilChargeTab';
 import { parseShellyRow, profilMiToShellyRow, calculerStats, detecterFormatShelly, parseShellySectionCSV } from '@/lib/iot-profil-engine';
 import { transformRowsToProfilMi, transformHoraireToProfilMi, exporterDonneesSupabase, getColonnesParGroupe, fetchDisponibles } from '@/lib/iot-supabase-service';
-import { JOURS_SEMAINE, MOIS_FR, PROFIL_MI_LABELS, COLONNES_PROFIL_SHELLY } from './shared';
-import type { ShellyRow, ProfilMi } from './shared';
+import { JOURS_SEMAINE, MOIS_FR, COLONNES_PROFIL_SHELLY } from './shared';
+import type { ShellyRow } from './shared';
 
-type AnalyseMode = 'courbe' | 'tcd' | 'profil_semaine' | 'distribution' | 'correlation' | 'serie';
+type AnalyseMode = 'courbe' | 'tcd' | 'profil_semaine' | 'distribution' | 'correlation' | 'serie'
+  | 'env_bande' | 'env_heatmap' | 'env_profil24' | 'signature';
+
+const ENV_MODES: AnalyseMode[] = ['env_bande', 'env_heatmap', 'env_profil24'];
 type ChartType = 'bar' | 'line' | 'area' | 'pie';
 
 const COULEURS = ['#a78bfa', '#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#f97316', '#06b6d4'];
@@ -66,18 +69,33 @@ const METRIQUES: { key: MetricKey; label: string; unit: string; color: string; g
   { key: 'montantEnergieRetour', label: 'Crédit retour réseau',      unit: 'FCFA', color: '#a3e635', group: 'Coût' },
 ];
 
+// ── Grandeurs environnementales (CAPTEUR_ENV / ETAT) ──────────
+// Contrairement aux kWh, ces grandeurs ne se somment pas : elles s'observent
+// en min / max / moyenne. Les vues env_* utilisent donc leurs propres agrégats.
+type EnvMetricKey =
+  | 'temperature' | 'humidite' | 'ressenti' | 'pointRosee'
+  | 'uvIndex' | 'luminosite' | 'pression' | 'precipitation'
+  | 'ventVitesse' | 'ventRafale' | 'batterie' | 'signal';
+
+const METRIQUES_ENV: { key: EnvMetricKey; label: string; unit: string; color: string }[] = [
+  { key: 'temperature',   label: 'Température',     unit: '°C',  color: '#f97316' },
+  { key: 'humidite',      label: 'Humidité',        unit: '%',   color: '#3b82f6' },
+  { key: 'ressenti',      label: 'Ressenti',        unit: '°C',  color: '#fb923c' },
+  { key: 'pointRosee',    label: 'Point de rosée',  unit: '°C',  color: '#22d3ee' },
+  { key: 'uvIndex',       label: 'Indice UV',       unit: '',    color: '#a855f7' },
+  { key: 'luminosite',    label: 'Luminosité',      unit: 'lux', color: '#eab308' },
+  { key: 'pression',      label: 'Pression',        unit: 'hPa', color: '#94a3b8' },
+  { key: 'precipitation', label: 'Précipitations',  unit: 'mm',  color: '#38bdf8' },
+  { key: 'ventVitesse',   label: 'Vent',            unit: 'm/s', color: '#34d399' },
+  { key: 'ventRafale',    label: 'Rafale',          unit: 'm/s', color: '#10b981' },
+  { key: 'batterie',      label: 'Batterie',        unit: '%',   color: '#84cc16' },
+  { key: 'signal',        label: 'Signal',          unit: 'dBm', color: '#64748b' },
+];
+
+const ACCENT_COLOR = '#3b82f6';
+
 const RAW_PAGE_SIZE = 50;
 const FS_PAGE_SIZE = 100;
-
-const PROFIL_MI_COLORS: Record<ProfilMi, string> = {
-  M1_SENELEC: '#3b82f6',
-  M2_SELECTEUR: '#a855f7',
-  M3_CHARGE: '#ef4444',
-  M4_GROUPE: '#f97316',
-  M5_PV: '#eab308',
-};
-
-const PROFILS_MI: ProfilMi[] = ['M1_SENELEC', 'M2_SELECTEUR', 'M3_CHARGE', 'M4_GROUPE', 'M5_PV'];
 
 // Colonnes par domaine — combinées dynamiquement selon les familles d'appareils
 // sélectionnées (voir recommendedColumns), pour que le template s'adapte
@@ -250,7 +268,7 @@ function TcdTooltip({ active, payload, label }: {
 // qui ne diffèrent que par la taille/densité (police, marges, rayons).
 function TcdChart({
   data, chartType, metrics, primaryMetric, units, crossFilter, onBarClick, onPieClick,
-  metricAxis, unitAxis, primaryUnit, profilColor, angled, height, bottomMargin, xAxisHeight,
+  metricAxis, unitAxis, primaryUnit, accentColor, angled, height, bottomMargin, xAxisHeight,
   xAxisLabel, compact,
 }: {
   data: Record<string, unknown>[];
@@ -264,7 +282,7 @@ function TcdChart({
   metricAxis: (mk: MetricKey) => 'left' | 'right';
   unitAxis: (unit?: string) => 'left' | 'right';
   primaryUnit?: string;
-  profilColor: string;
+  accentColor: string;
   angled: boolean;
   height: number;
   bottomMargin: number;
@@ -299,7 +317,7 @@ function TcdChart({
           {Array.from(metrics).map(mk => {
             const meta = METRIQUES.find(m => m.key === mk);
             return (
-              <Bar key={mk} yAxisId={metricAxis(mk)} dataKey={mk} name={meta?.label ?? mk} radius={barRadius} fill={meta?.color ?? profilColor} cursor="pointer" opacity={0.85}>
+              <Bar key={mk} yAxisId={metricAxis(mk)} dataKey={mk} name={meta?.label ?? mk} radius={barRadius} fill={meta?.color ?? accentColor} cursor="pointer" opacity={0.85}>
                 {mk === primaryMetric && data.map((entry, i) => (
                   <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : meta?.color ?? COULEURS[i % COULEURS.length]} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} />
                 ))}
@@ -319,7 +337,7 @@ function TcdChart({
           <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
           {Array.from(metrics).map(mk => {
             const meta = METRIQUES.find(m => m.key === mk);
-            return <Line key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} strokeWidth={2} dot={{ r: dotRadius }} />;
+            return <Line key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? accentColor} strokeWidth={2} dot={{ r: dotRadius }} />;
           })}
           <Line yAxisId={unitAxis(primaryUnit)} type="monotone" dataKey="moyenne" name={avgLabel} stroke="#06b6d4" strokeWidth={1} strokeDasharray="4 4" dot={false} />
         </LineChart>
@@ -335,7 +353,7 @@ function TcdChart({
           <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
           {Array.from(metrics).map(mk => {
             const meta = METRIQUES.find(m => m.key === mk);
-            return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} fill={(meta?.color ?? profilColor) + '20'} strokeWidth={2} />;
+            return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? accentColor} fill={(meta?.color ?? accentColor) + '20'} strokeWidth={2} />;
           })}
         </AreaChart>
       ) : (
@@ -353,6 +371,284 @@ function TcdChart({
         </PieChart>
       )}
     </ResponsiveContainer>
+  );
+}
+
+// ============================================================
+// VUES ENVIRONNEMENTALES
+// ============================================================
+
+interface EnvDayAgg { jour: string; ts: number; range: [number, number]; moy: number; n: number }
+
+function aggEnvByDay(rows: ShellyRow[], metric: EnvMetricKey): EnvDayAgg[] {
+  const byDay = new Map<string, { ts: number; vals: number[] }>();
+  for (const r of rows) {
+    const v = r[metric];
+    if (typeof v !== 'number' || !isFinite(v)) continue;
+    const d = r.date instanceof Date ? r.date : new Date(r.date);
+    const key = d.toISOString().slice(0, 10);
+    const cur = byDay.get(key) ?? { ts: new Date(key).getTime(), vals: [] };
+    cur.vals.push(v);
+    byDay.set(key, cur);
+  }
+  return [...byDay.entries()]
+    .map(([key, { ts, vals }]) => ({
+      jour: new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
+      ts,
+      range: [Math.min(...vals), Math.max(...vals)] as [number, number],
+      moy: vals.reduce((s, v) => s + v, 0) / vals.length,
+      n: vals.length,
+    }))
+    .sort((a, b) => a.ts - b.ts);
+}
+
+// Vue 1 — Bande min/max journalière + moyenne
+function EnvBandeView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
+  const meta = METRIQUES_ENV.find(m => m.key === metric)!;
+  const data = useMemo(() => aggEnvByDay(rows, metric), [rows, metric]);
+  if (data.length === 0) {
+    return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <p className="text-slate-300 text-sm font-medium">{meta.label} — min / max / moyenne par jour</p>
+        <span className="text-slate-500 text-xs">{data.length} jour{data.length > 1 ? 's' : ''}</span>
+      </div>
+      <ResponsiveContainer width="100%" height={340}>
+        <ComposedChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+          <XAxis dataKey="jour" tick={{ fill: '#cbd5e1', fontSize: 11 }} />
+          <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} domain={['auto', 'auto']}
+            label={{ value: meta.unit ? `${meta.label} (${meta.unit})` : meta.label, angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11 }} />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
+            formatter={(value: number | [number, number], name: string) => {
+              if (Array.isArray(value)) return [`${fmtFr(value[0], 1)} → ${fmtFr(value[1], 1)} ${meta.unit}`, 'Min → Max'];
+              return [`${fmtFr(value, 1)} ${meta.unit}`, name];
+            }} />
+          <Area dataKey="range" name="Min → Max" stroke="none" fill={meta.color} fillOpacity={0.18} connectNulls />
+          <Line dataKey="moy" name="Moyenne" stroke={meta.color} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// Vue 2 — Heatmap heures × jours (couleur = moyenne horaire)
+function EnvHeatmapView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
+  const meta = METRIQUES_ENV.find(m => m.key === metric)!;
+  const { days, grid, vmin, vmax } = useMemo(() => {
+    // (jour, heure) → moyenne
+    const acc = new Map<string, { ts: number; sums: number[]; counts: number[] }>();
+    for (const r of rows) {
+      const v = r[metric];
+      if (typeof v !== 'number' || !isFinite(v)) continue;
+      const d = r.date instanceof Date ? r.date : new Date(r.date);
+      const key = d.toISOString().slice(0, 10);
+      const cur = acc.get(key) ?? { ts: new Date(key).getTime(), sums: Array(24).fill(0), counts: Array(24).fill(0) };
+      cur.sums[d.getHours()] += v;
+      cur.counts[d.getHours()]++;
+      acc.set(key, cur);
+    }
+    const entries = [...acc.entries()].sort((a, b) => a[1].ts - b[1].ts);
+    const days = entries.map(([key]) => new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }));
+    const grid = entries.map(([, { sums, counts }]) =>
+      sums.map((s, h) => (counts[h] > 0 ? s / counts[h] : null)));
+    const flat = grid.flat().filter((v): v is number => v !== null);
+    return { days, grid, vmin: Math.min(...flat), vmax: Math.max(...flat) };
+  }, [rows, metric]);
+
+  if (days.length === 0) {
+    return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
+  }
+
+  // Échelle bleu (froid/min) → rouge (chaud/max) via teinte HSL 220 → 10
+  const colorFor = (v: number | null): string => {
+    if (v === null) return 'rgba(255,255,255,0.03)';
+    const t = vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5;
+    return `hsl(${220 - t * 210} 75% ${35 + t * 15}%)`;
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between px-1 flex-wrap gap-2">
+        <p className="text-slate-300 text-sm font-medium">{meta.label} — moyenne par heure et par jour</p>
+        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          {fmtFr(vmin, 1)} {meta.unit}
+          <span className="inline-block h-2.5 w-24 rounded-full"
+            style={{ background: 'linear-gradient(90deg, hsl(220 75% 35%), hsl(115 75% 42%), hsl(10 75% 50%))' }} />
+          {fmtFr(vmax, 1)} {meta.unit}
+        </div>
+      </div>
+      <div className="overflow-x-auto pb-1">
+        <div className="inline-grid gap-px" style={{ gridTemplateColumns: `2.4rem repeat(${days.length}, minmax(1.4rem, 1fr))`, minWidth: '100%' }}>
+          <div />
+          {days.map((d, i) => (
+            <div key={i} className="text-[10px] text-slate-500 text-center pb-1 whitespace-nowrap">{d}</div>
+          ))}
+          {Array.from({ length: 24 }, (_, h) => (
+            <Fragment key={h}>
+              <div className="text-[10px] text-slate-500 pr-1.5 text-right leading-4">{String(h).padStart(2, '0')}h</div>
+              {grid.map((day, di) => (
+                <div key={di} className="h-4 rounded-[2px]"
+                  style={{ backgroundColor: colorFor(day[h]) }}
+                  title={day[h] !== null ? `${days[di]} ${String(h).padStart(2, '0')}h — ${fmtFr(day[h]!, 1)} ${meta.unit}` : `${days[di]} ${String(h).padStart(2, '0')}h — pas de données`} />
+              ))}
+            </Fragment>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Vue 4 — Profil journalier moyen sur 24 h (moyenne par heure + bande ±1σ)
+function EnvProfil24View({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
+  const meta = METRIQUES_ENV.find(m => m.key === metric)!;
+  const data = useMemo(() => {
+    const byHour: number[][] = Array.from({ length: 24 }, () => []);
+    for (const r of rows) {
+      const v = r[metric];
+      if (typeof v !== 'number' || !isFinite(v)) continue;
+      const d = r.date instanceof Date ? r.date : new Date(r.date);
+      byHour[d.getHours()].push(v);
+    }
+    return byHour.map((vals, h) => {
+      if (vals.length === 0) return { heure: `${String(h).padStart(2, '0')}h`, moy: null, range: null, n: 0 };
+      const moy = vals.reduce((s, v) => s + v, 0) / vals.length;
+      const std = Math.sqrt(vals.reduce((s, v) => s + (v - moy) ** 2, 0) / vals.length);
+      return {
+        heure: `${String(h).padStart(2, '0')}h`,
+        moy: +moy.toFixed(2),
+        range: [+(moy - std).toFixed(2), +(moy + std).toFixed(2)] as [number, number],
+        n: vals.length,
+      };
+    });
+  }, [rows, metric]);
+
+  if (data.every(d => d.n === 0)) {
+    return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <p className="text-slate-300 text-sm font-medium">{meta.label} — cycle journalier moyen (bande ±1σ)</p>
+        <span className="text-slate-500 text-xs">{data.reduce((s, d) => s + d.n, 0).toLocaleString('fr-FR')} relevés</span>
+      </div>
+      <ResponsiveContainer width="100%" height={340}>
+        <ComposedChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+          <XAxis dataKey="heure" tick={{ fill: '#cbd5e1', fontSize: 11 }} interval={1} />
+          <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} domain={['auto', 'auto']}
+            label={{ value: meta.unit ? `${meta.label} (${meta.unit})` : meta.label, angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11 }} />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
+            formatter={(value: number | [number, number], name: string) => {
+              if (Array.isArray(value)) return [`${fmtFr(value[0], 1)} → ${fmtFr(value[1], 1)} ${meta.unit}`, '±1σ'];
+              return [`${fmtFr(value, 1)} ${meta.unit}`, name];
+            }} />
+          <Area dataKey="range" name="±1σ" stroke="none" fill={meta.color} fillOpacity={0.18} connectNulls />
+          <Line dataKey="moy" name="Moyenne" stroke={meta.color} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// Vue 3 — Signature énergétique : consommation journalière vs température
+// moyenne extérieure. Nuage de points + droite de régression : la pente
+// (kWh/°C) mesure la sensibilité thermique du site (clim/chauffage).
+function SignatureView({ envRows, energyRows }: { envRows: ShellyRow[]; energyRows: ShellyRow[] }) {
+  const { points, reg } = useMemo(() => {
+    const byDay = new Map<string, { temps: number[]; kwh: number }>();
+    for (const r of envRows) {
+      if (typeof r.temperature !== 'number' || !isFinite(r.temperature)) continue;
+      const key = (r.date instanceof Date ? r.date : new Date(r.date)).toISOString().slice(0, 10);
+      const cur = byDay.get(key) ?? { temps: [], kwh: 0 };
+      cur.temps.push(r.temperature);
+      byDay.set(key, cur);
+    }
+    for (const r of energyRows) {
+      const key = (r.date instanceof Date ? r.date : new Date(r.date)).toISOString().slice(0, 10);
+      const cur = byDay.get(key);
+      if (cur) cur.kwh += r.kwhTotal ?? 0;
+    }
+    const points = [...byDay.entries()]
+      .filter(([, v]) => v.temps.length > 0 && v.kwh > 0)
+      .map(([key, v]) => ({
+        x: +(v.temps.reduce((s, t) => s + t, 0) / v.temps.length).toFixed(2),
+        y: +v.kwh.toFixed(3),
+        jour: new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
+      }))
+      .sort((a, b) => a.x - b.x);
+
+    // Régression linéaire y = a·x + b, et R²
+    let reg: { a: number; b: number; r2: number; line: { x: number; y: number }[] } | null = null;
+    if (points.length >= 3) {
+      const n = points.length;
+      const mx = points.reduce((s, p) => s + p.x, 0) / n;
+      const my = points.reduce((s, p) => s + p.y, 0) / n;
+      const sxy = points.reduce((s, p) => s + (p.x - mx) * (p.y - my), 0);
+      const sxx = points.reduce((s, p) => s + (p.x - mx) ** 2, 0);
+      const syy = points.reduce((s, p) => s + (p.y - my) ** 2, 0);
+      if (sxx > 0 && syy > 0) {
+        const a = sxy / sxx;
+        const b = my - a * mx;
+        const r2 = (sxy * sxy) / (sxx * syy);
+        const xMin = points[0].x, xMax = points[points.length - 1].x;
+        reg = { a, b, r2, line: [{ x: xMin, y: a * xMin + b }, { x: xMax, y: a * xMax + b }] };
+      }
+    }
+    return { points, reg };
+  }, [envRows, energyRows]);
+
+  if (points.length === 0) {
+    return (
+      <p className="text-slate-500 text-sm py-10 text-center">
+        Aucun jour ne combine température et consommation — vérifiez que la période chargée couvre les deux types d'appareils.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between px-1 flex-wrap gap-2">
+        <p className="text-slate-300 text-sm font-medium">Consommation journalière vs température moyenne</p>
+        {reg && (
+          <div className="flex items-center gap-2 text-xs">
+            <Badge className="bg-orange-500/20 text-orange-300 border-0">
+              Pente : {fmtFr(reg.a, 2)} kWh/°C
+            </Badge>
+            <Badge className={`border-0 ${reg.r2 >= 0.5 ? 'bg-green-500/20 text-green-300' : 'bg-white/10 text-slate-400'}`}>
+              R² = {fmtFr(reg.r2, 2)}{reg.r2 < 0.5 ? ' (corrélation faible)' : ''}
+            </Badge>
+          </div>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={360}>
+        <ComposedChart data={points} margin={{ top: 5, right: 20, bottom: 15, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+          <XAxis dataKey="x" type="number" domain={['auto', 'auto']} tick={{ fill: '#cbd5e1', fontSize: 11 }}
+            label={{ value: 'Température moyenne du jour (°C)', position: 'insideBottom', offset: -8, fill: '#94a3b8', fontSize: 11 }} />
+          <YAxis dataKey="y" tick={{ fill: '#cbd5e1', fontSize: 10 }} domain={['auto', 'auto']}
+            label={{ value: 'Consommation (kWh/jour)', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11 }} />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
+            formatter={(value: number, name: string) =>
+              name === 'Consommation' ? [`${fmtFr(value, 2)} kWh`, name] : [`${fmtFr(value, 1)} °C`, name]}
+            labelFormatter={(_, payload) => (payload?.[0]?.payload as { jour?: string })?.jour ?? ''} />
+          <Scatter dataKey="y" name="Consommation" fill="#f97316" />
+          {reg && (
+            <Line data={reg.line} dataKey="y" name="Régression" stroke="#22d3ee"
+              strokeWidth={2} strokeDasharray="6 3" dot={false} legendType="none" />
+          )}
+        </ComposedChart>
+      </ResponsiveContainer>
+      <p className="text-slate-500 text-xs px-1">
+        Chaque point = 1 jour. Une pente positive élevée indique une consommation sensible à la chaleur
+        (climatisation) : la pente chiffre le surcoût en kWh par degré supplémentaire.
+      </p>
+    </div>
   );
 }
 
@@ -429,96 +725,6 @@ function genericToShellyRow(
   return parseShellyRow(remapped, joursFerier as import('@/components/iot/shared').JourFerie[]);
 }
 
-// ============================================================
-// PANNEAU : Sélecteur de profil Mi
-// ============================================================
-function ProfilMiSelector({
-  selected,
-  onChange,
-  sources,
-}: {
-  selected: ProfilMi | 'tous';
-  onChange: (p: ProfilMi | 'tous') => void;
-  sources: import('./shared').Source[];
-}) {
-  // Sources par profil Mi (pour afficher quelles sources correspondent)
-  const sourcesByProfil: Partial<Record<ProfilMi, import('./shared').Source[]>> = {};
-  for (const s of sources) {
-    if (!s.actif) continue;
-    if (s.profilMi) {
-      if (!sourcesByProfil[s.profilMi]) sourcesByProfil[s.profilMi] = [];
-      sourcesByProfil[s.profilMi]!.push(s);
-    }
-  }
-
-  return (
-    <div className="bg-white/5 rounded-xl border border-white/10 p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <BarChart2 className="h-4 w-4 text-blue-400" />
-        <h4 className="text-white font-medium text-sm">Profil d'analyse (Mi)</h4>
-        <span className="text-slate-500 text-xs ml-1">— lié aux sources configurées</span>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {/* Tous les profils */}
-        <button
-          onClick={() => onChange('tous')}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
-            ${selected === 'tous'
-              ? 'bg-slate-600 text-white border-slate-500'
-              : 'text-slate-400 border-white/15 hover:bg-white/5 hover:text-white'}`}
-        >
-          Tous
-        </button>
-        {/* Profils Mi */}
-        {PROFILS_MI.map(p => {
-          const isActive = selected === p;
-          const nbSources = sourcesByProfil[p]?.length ?? 0;
-          const color = PROFIL_MI_COLORS[p];
-          return (
-            <button
-              key={p}
-              onClick={() => onChange(p)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
-                ${isActive ? 'text-white' : 'text-slate-400 border-white/15 hover:bg-white/5 hover:text-white'}`}
-              style={isActive
-                ? { backgroundColor: color + '30', borderColor: color + '60', color }
-                : {}}
-            >
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-              {p.split('_')[0]}
-              <span className="hidden md:inline text-slate-500 font-normal">
-                &nbsp;— {PROFIL_MI_LABELS[p].split('—')[1]?.trim()}
-              </span>
-              {nbSources > 0 && (
-                <Badge
-                  className="text-xs border-0 ml-1 h-4 px-1"
-                  style={{ backgroundColor: color + '30', color }}
-                >
-                  {nbSources}
-                </Badge>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      {/* Sources du profil sélectionné */}
-      {selected !== 'tous' && sourcesByProfil[selected] && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {sourcesByProfil[selected]!.map(s => (
-            <Badge key={s.id} className="text-xs bg-white/10 text-slate-300 border-0">
-              <span className="w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: s.couleur }} />
-              {s.nom} · {s.capteur}
-            </Badge>
-          ))}
-        </div>
-      )}
-      {selected !== 'tous' && !sourcesByProfil[selected] && (
-        <p className="text-slate-600 text-xs mt-2">Aucune source n'est configurée pour ce profil</p>
-      )}
-    </div>
-  );
-}
-
 // ── Familles d'appareils connues (schema.sql SHELLY_GCP_00) ────
 const DEVICE_FAMILY_OPTIONS = [
   { value: '', label: 'Toutes les familles' },
@@ -534,12 +740,8 @@ const DEVICE_FAMILY_OPTIONS = [
 // PANNEAU : Export Supabase
 // ============================================================
 function SupabaseExportPanel({
-  profilMi,
-  sources,
   onDataLoaded,
 }: {
-  profilMi: ProfilMi | 'tous';
-  sources: import('./shared').Source[];
   onDataLoaded: (rows: Record<string, unknown>[], colonnes: string[]) => void;
 }) {
   // ── Dates par défaut : 7 derniers jours ──────────────────────
@@ -637,21 +839,22 @@ function SupabaseExportPanel({
   useEffect(() => {
     if (!colsAuto) return;
     setSelectedCols(new Set(recommendedColumns(new Set(familiesKey ? familiesKey.split(',') : []))));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [familiesKey, colsAuto]);
 
   useEffect(() => {
     if (!granulariteAuto) return;
     const families = new Set(familiesKey ? familiesKey.split(',') : []);
-    const needsMinute = families.has('CAPTEUR_ENV') || families.has('ETAT');
-    setGranularite(needsMinute ? 'minute' : 'horaire');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // La table horaire agrège désormais aussi les capteurs (temperature_moy,
+    // humidity_moy…), donc une sélection mixte énergie + capteurs reste en
+    // horaire : c'est la seule granularité qui permet de croiser consommation
+    // et température. La minute ne s'impose que pour une sélection composée
+    // uniquement de capteurs, où l'on veut le relevé brut.
+    const hasEnergie = Array.from(families).some(f => ENERGIE_FAMILIES.has(f) || f === 'LUMIERE');
+    const hasCapteur = families.has('CAPTEUR_ENV') || families.has('ETAT');
+    setGranularite(hasCapteur && !hasEnergie ? 'minute' : 'horaire');
+     
   }, [familiesKey, granulariteAuto]);
-
-  // Sources liées au profil Mi sélectionné (pour affichage / suggestion auto)
-  const linkedSources = sources.filter(s =>
-    profilMi !== 'tous' ? (s.profilMi === profilMi && s.actif) : false
-  );
 
   const groupes = getColonnesParGroupe();
   const GROUPE_LABELS = { entree: "Données d'entrée", calcule: 'Données calculées', classifieur: 'Classifieurs' };
@@ -735,42 +938,6 @@ function SupabaseExportPanel({
         <div className="border-t border-white/10 p-4 space-y-4">
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4">
             <div className="space-y-4">
-              {/* Suggestion depuis profil Mi */}
-              {profilMi !== 'tous' && linkedSources.length > 0 && (
-                <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 flex flex-wrap items-center gap-2">
-                  <span className="text-blue-300 text-xs font-medium">Sources liées à {profilMi} :</span>
-                  {linkedSources.map(s => (
-                    <button
-                      key={s.id}
-                      onClick={() => {
-                        const linked = (s.linkedSourceIds ?? [])
-                          .map(id => sources.find(x => x.id === id))
-                          .filter((x): x is import('./shared').Source => Boolean(x))
-                          .filter(x => x.actif);
-
-                        // Source groupée : PV+ -> (PV+, PV1, PV2...) | SENELEC+ -> (SENELEC, SENELEC1, ...)
-                        const expandedNameSet = new Set([s, ...linked].map(x => x.nom).filter(Boolean));
-
-                        const matches = disponibles.devices
-                          .filter(d => (!site || d.site === site) && expandedNameSet.has(d.name))
-                          .map(d => d.device_id);
-                        if (matches.length > 0) {
-                          setSelectedDeviceIds(prev => Array.from(new Set([...prev, ...matches])));
-                        } else {
-                          setDeviceSearch(s.nom || [...expandedNameSet][0] || '');
-                        }
-                      }}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-blue-600/20 text-blue-300 border border-blue-500/30 hover:bg-blue-600/30"
-                      title={`Filtrer par nom : ${s.nom}`}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: s.couleur }} />
-                      {s.nom}
-                    </button>
-                  ))}
-                  <span className="text-slate-500 text-xs">Cliquez pour pré-remplir l'appareil</span>
-                </div>
-              )}
-
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                 <div className="md:col-span-2 xl:col-span-1">
                   <Label className="text-slate-400 text-xs mb-1 block">Granularité</Label>
@@ -790,7 +957,7 @@ function SupabaseExportPanel({
                   </div>
                   <p className="text-slate-500 text-[11px] mt-1">
                     {granulariteAuto
-                      ? (granularite === 'minute' ? 'Auto — requis pour les capteurs environnementaux/état' : 'Auto — recommandé pour l’analyse')
+                      ? (granularite === 'minute' ? 'Auto — relevés bruts des capteurs sélectionnés' : 'Auto — moyennes horaires, capteurs inclus')
                       : (granularite === 'horaire' ? 'Recommandé pour l’analyse' : 'Plus lourd, données brutes')}
                   </p>
                 </div>
@@ -1172,10 +1339,9 @@ function MultiSelectFilter({ label, icon, options, selected, onChange }: {
 // ============================================================
 export function AnalyseTab() {
   const { state, setActiveTab, setShellyRows } = useIOT();
-  const { shellyRows, joursFerier, sources, files, selectedFileId } = state;
+  const { shellyRows, joursFerier, files, selectedFileId } = state;
 
   // ---- Profil Mi actif ----
-  const [profilMiActif, setProfilMiActif] = useState<ProfilMi | 'tous'>('tous');
 
   // ---- Ref graphiques + export PDF ----
   const chartRef = useRef<HTMLDivElement>(null);
@@ -1267,7 +1433,6 @@ export function AnalyseTab() {
   const [crossFilter, setCrossFilter] = useState<string | null>(null);
   const [drillMonth, setDrillMonth] = useState<string | null>(null);
   const [slicerSaison, setSlicerSaison] = useState<string[]>([]);
-  const [slicerPeriode, setSlicerPeriode] = useState<string[]>([]);
   const [slicerTypeJour, setSlicerTypeJour] = useState<string[]>([]);
   // Filtres globaux Appareil / Pièce (s'appliquent à TOUS les graphiques)
   const [slicerAppareil, setSlicerAppareil] = useState<string[]>([]);
@@ -1542,13 +1707,9 @@ export function AnalyseTab() {
       .filter((r): r is ShellyRow => r !== null);
     if (parsed.length > 0) {
       setSupabaseRows(parsed);
-      setSupabaseFileName(
-        profilMiActif !== 'tous'
-          ? `Supabase — ${PROFIL_MI_LABELS[profilMiActif]}`
-          : 'Supabase — Tous appareils',
-      );
+      setSupabaseFileName('Supabase — Tous appareils');
     }
-  }, [joursFerier, profilMiActif]);
+  }, [joursFerier]);
 
   // ---- Parse fichier ----
   const parseFile = useCallback((file: File) => {
@@ -1686,12 +1847,11 @@ export function AnalyseTab() {
         'Phase A': fmt3(r.kwhA),
         'Phase B': fmt3(r.kwhB),
         'Phase C': fmt3(r.kwhC),
-        Profil: profilMiActif !== 'tous' ? profilMiActif : 'Tous',
         Ferié: r.isJourFerie ? 'Oui' : '',
         Weekend: r.isWeekend ? 'Oui' : '',
       })),
       'Données',
-      `tcd_${profilMiActif}_${fileName || 'export'}.xlsx`
+      `tcd_${fileName || 'export'}.xlsx`
     );
   };
 
@@ -1724,11 +1884,57 @@ export function AnalyseTab() {
     return rows;
   }, [activeRows, showFeries, showWeekends, slicerAppareil, slicerPiece]);
 
+  // ── Base des vues environnementales ──────────────────────────
+  // filteredRows exclut les lignes 100% nulles côté énergie : en jeu mixte
+  // (compteurs + météo), les relevés des capteurs env en sont donc absents.
+  // Les vues env_* partent d'activeRows avec les mêmes filtres globaux, en ne
+  // gardant que les lignes portant au moins une grandeur environnementale.
+  const envRows = useMemo(() => {
+    let rows = activeRows.filter(r => METRIQUES_ENV.some(m => typeof r[m.key] === 'number'));
+    if (!showFeries) rows = rows.filter(r => !r.isJourFerie);
+    if (!showWeekends) rows = rows.filter(r => !r.isWeekend);
+    if (slicerAppareil.length) rows = rows.filter(r => slicerAppareil.includes(r.nomAppareil ?? ''));
+    if (slicerPiece.length) rows = rows.filter(r => slicerPiece.includes(r.deviceRoom ?? ''));
+    return rows;
+  }, [activeRows, showFeries, showWeekends, slicerAppareil, slicerPiece]);
+
+  // Grandeurs env réellement présentes → pilote l'affichage des modes env_*
+  const envMetricsAvailable = useMemo(
+    () => METRIQUES_ENV.filter(m => envRows.some(r => typeof r[m.key] === 'number')),
+    [envRows]);
+  const hasEnvData = envMetricsAvailable.length > 0;
+  // Données énergie réelles (au moins un relevé non nul) → pilote les modes énergie
+  const hasEnergyData = useMemo(
+    () => activeRows.some(r =>
+      (r.kwhTotal ?? 0) > 0 || (r.kwhRetourTotal ?? 0) > 0 || (r.puissKwTotal ?? 0) > 0 || (r.whTotal ?? 0) > 0),
+    [activeRows]);
+
+  const [envMetric, setEnvMetric] = useState<EnvMetricKey>('temperature');
+  // Grandeur sélectionnée absente des données chargées → retomber sur la première dispo
+  useEffect(() => {
+    if (envMetricsAvailable.length > 0 && !envMetricsAvailable.some(m => m.key === envMetric)) {
+      setEnvMetric(envMetricsAvailable[0].key);
+    }
+  }, [envMetricsAvailable, envMetric]);
+
+  // Mode actif indisponible pour ces données (ex. mode énergie sur un jeu 100%
+  // météo, ou Signature sans les deux types de données) → basculer sur le
+  // premier mode pertinent
+  useEffect(() => {
+    const isEnvMode = ENV_MODES.includes(mode);
+    if (mode === 'signature' && !(hasEnergyData && hasEnvData)) {
+      setMode(hasEnergyData ? 'courbe' : 'env_bande');
+    } else if (isEnvMode && !hasEnvData && hasEnergyData) {
+      setMode('courbe');
+    } else if (!isEnvMode && mode !== 'signature' && !hasEnergyData && hasEnvData) {
+      setMode('env_bande');
+    }
+  }, [mode, hasEnvData, hasEnergyData]);
+
   // Slicers Power BI (saison, tranche, type de jour)
   const slicerRows = useMemo(() => {
     let rows = filteredRows;
     if (slicerSaison.length) rows = rows.filter(r => slicerSaison.includes(r.saison ?? ''));
-    if (slicerPeriode.length) rows = rows.filter(r => slicerPeriode.includes(r.trancheTarification));
     if (slicerTypeJour.length) {
       rows = rows.filter(r => {
         const t = r.isJourFerie ? 'Jours fériés'
@@ -1739,7 +1945,7 @@ export function AnalyseTab() {
       });
     }
     return rows;
-  }, [filteredRows, slicerSaison, slicerPeriode, slicerTypeJour]);
+  }, [filteredRows, slicerSaison, slicerTypeJour]);
 
   // Cross-filter : lignes correspondant au label sélectionné
   const crossFilteredRows = useMemo(() => {
@@ -1984,27 +2190,13 @@ export function AnalyseTab() {
     filteredRows.map(r => ({ x: toDate(r.date).getDay(), y: +safeNum(r.kwhNet, 0).toFixed(2) })),
     [filteredRows]);
 
-  // ---- Couleur du profil actif ----
-  const profilColor = profilMiActif !== 'tous' ? PROFIL_MI_COLORS[profilMiActif] : '#3b82f6';
-
   // ============================================================
   return (
     <>
       <div className="space-y-4">
 
-        {/* ---- Sélecteur de profil Mi ---- */}
-        <ProfilMiSelector
-          selected={profilMiActif}
-          onChange={setProfilMiActif}
-          sources={sources}
-        />
-
         {/* ---- Export Supabase ---- */}
-        <SupabaseExportPanel
-          profilMi={profilMiActif}
-          sources={sources}
-          onDataLoaded={handleSupabaseData}
-        />
+        <SupabaseExportPanel onDataLoaded={handleSupabaseData} />
 
         {/* ---- Rapport qualité + solutions ---- */}
         {activeRows.length > 0 && showQualityPanel && (
@@ -2266,21 +2458,46 @@ export function AnalyseTab() {
           <>
             {/* Barre mode + filtres */}
             <div className="flex flex-wrap items-center gap-3 bg-white/5 rounded-xl border border-white/10 p-3">
-              <div className="flex gap-1 flex-wrap">
-                {[
+              <div className="flex gap-1 flex-wrap items-center">
+                {/* Modes proposés selon le contenu réellement chargé : vues énergie
+                    si des compteurs remontent des kWh, vues environnement si des
+                    capteurs remontent température/humidité/etc. En jeu mixte, les
+                    deux groupes sont visibles, séparés par un trait. */}
+                {(hasEnergyData ? [
                   { key: 'courbe', icon: <Zap className="h-3.5 w-3.5" />, label: 'Courbe de charge' },
                   { key: 'serie', icon: <Activity className="h-3.5 w-3.5" />, label: 'Série temp.' },
                   { key: 'tcd', icon: <BarChart2 className="h-3.5 w-3.5" />, label: 'TCD' },
                   { key: 'profil_semaine', icon: <TrendingUp className="h-3.5 w-3.5" />, label: 'Semaine' },
                   { key: 'distribution', icon: <Filter className="h-3.5 w-3.5" />, label: 'Distribution' },
                   { key: 'correlation', icon: <Activity className="h-3.5 w-3.5" />, label: 'Corrélation' },
-                ].map(({ key, icon, label }) => (
+                ] : []).map(({ key, icon, label }) => (
                   <button
                     key={key}
                     onClick={() => setMode(key as AnalyseMode)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
                     ${mode === key ? 'text-white' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
-                    style={mode === key ? { backgroundColor: profilColor + '40', color: profilColor } : {}}
+                    style={mode === key ? { backgroundColor: ACCENT_COLOR + '40', color: ACCENT_COLOR } : {}}
+                  >
+                    {icon} {label}
+                  </button>
+                ))}
+                {hasEnergyData && hasEnvData && <div className="h-5 w-px bg-white/15 mx-1" />}
+                {([
+                  ...(hasEnvData ? [
+                    { key: 'env_bande', icon: <Activity className="h-3.5 w-3.5" />, label: 'Min/Max jour' },
+                    { key: 'env_heatmap', icon: <Layers className="h-3.5 w-3.5" />, label: 'Heatmap' },
+                    { key: 'env_profil24', icon: <TrendingUp className="h-3.5 w-3.5" />, label: 'Profil 24 h' },
+                  ] : []),
+                  // Croisement conso ↔ température : uniquement en jeu mixte
+                  ...(hasEnergyData && hasEnvData ? [
+                    { key: 'signature', icon: <Zap className="h-3.5 w-3.5" />, label: 'Signature énergétique' },
+                  ] : []),
+                ]).map(({ key, icon, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setMode(key as AnalyseMode)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+                    ${mode === key ? 'bg-orange-500/25 text-orange-300' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
                   >
                     {icon} {label}
                   </button>
@@ -2303,16 +2520,9 @@ export function AnalyseTab() {
                   <Switch id="we2" checked={showWeekends} onCheckedChange={setShowWeekends} className="data-[state=checked]:bg-yellow-500 scale-75" />
                   <Label htmlFor="we2" className="text-slate-400 text-xs">WE</Label>
                 </div>
-                {/* Source badge */}
-                {dataSource && (
-                  <Badge
-                    className="text-xs border-0"
-                    style={{ backgroundColor: profilColor + '20', color: profilColor }}
-                  >
-                    {profilMiActif !== 'tous' ? profilMiActif.split('_')[0] : 'Tous'}
-                  </Badge>
-                )}
-                <Badge variant="outline" className="border-white/20 text-slate-400 text-xs">{filteredRows.length} pts</Badge>
+                <Badge variant="outline" className="border-white/20 text-slate-400 text-xs">
+                  {(ENV_MODES.includes(mode) ? envRows.length : filteredRows.length).toLocaleString('fr-FR')} pts
+                </Badge>
                 <Button size="sm" variant="ghost" className="text-slate-400 hover:text-white h-7 px-2" onClick={exportCSV} title="Exporter CSV">
                   <Download className="h-3.5 w-3.5" />
                 </Button>
@@ -2417,6 +2627,37 @@ export function AnalyseTab() {
                 </div>
               )}
 
+              {/* ---- Vues environnementales ---- */}
+              {ENV_MODES.includes(mode) && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+                  {/* Sélecteur de grandeur — équivalent env du sélecteur de métriques kWh */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {envMetricsAvailable.map(m => (
+                      <button key={m.key}
+                        onClick={() => setEnvMetric(m.key)}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all
+                          ${envMetric === m.key ? 'text-white' : 'text-slate-400 border-white/15 hover:text-white hover:bg-white/5'}`}
+                        style={envMetric === m.key
+                          ? { backgroundColor: m.color + '30', borderColor: m.color + '60', color: m.color }
+                          : {}}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.color }} />
+                        {m.label}{m.unit ? ` (${m.unit})` : ''}
+                      </button>
+                    ))}
+                  </div>
+                  {mode === 'env_bande' && <EnvBandeView rows={envRows} metric={envMetric} />}
+                  {mode === 'env_heatmap' && <EnvHeatmapView rows={envRows} metric={envMetric} />}
+                  {mode === 'env_profil24' && <EnvProfil24View rows={envRows} metric={envMetric} />}
+                </div>
+              )}
+
+              {/* ---- Signature énergétique (jeu mixte uniquement) ---- */}
+              {mode === 'signature' && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                  <SignatureView envRows={envRows} energyRows={filteredRows} />
+                </div>
+              )}
+
               {/* ---- Série temporelle ---- */}
               {mode === 'serie' && (
                 <div className="space-y-4">
@@ -2445,7 +2686,7 @@ export function AnalyseTab() {
                   )}
                   <div className="bg-white/5 rounded-xl border border-white/10 p-4">
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-white font-semibold text-sm">Série temporelle — {profilMiActif !== 'tous' ? PROFIL_MI_LABELS[profilMiActif] : 'Tous profils'}</h3>
+                      <h3 className="text-white font-semibold text-sm">Série temporelle</h3>
                       <span className="text-slate-500 text-xs">{serieMetrics.size} métrique{serieMetrics.size > 1 ? 's' : ''}</span>
                     </div>
                     <ResponsiveContainer width="100%" height={520}>
@@ -2553,8 +2794,6 @@ export function AnalyseTab() {
                       { label: 'Jours ouvrés', set: setSlicerTypeJour, arr: slicerTypeJour },
                       { label: 'Samedis', set: setSlicerTypeJour, arr: slicerTypeJour },
                       { label: 'Dimanches', set: setSlicerTypeJour, arr: slicerTypeJour },
-                      { label: 'Heure de pointe', set: setSlicerPeriode, arr: slicerPeriode },
-                      { label: 'Heure creuse', set: setSlicerPeriode, arr: slicerPeriode },
                     ].map(({ label, set, arr }) => {
                       const active = arr.includes(label);
                       return (
@@ -2563,8 +2802,8 @@ export function AnalyseTab() {
                         >{label}</button>
                       );
                     })}
-                    {(slicerSaison.length + slicerTypeJour.length + slicerPeriode.length) > 0 && (
-                      <button onClick={() => { setSlicerSaison([]); setSlicerTypeJour([]); setSlicerPeriode([]); }}
+                    {(slicerSaison.length + slicerTypeJour.length) > 0 && (
+                      <button onClick={() => { setSlicerSaison([]); setSlicerTypeJour([]); }}
                         className="px-2 py-0.5 rounded-full border border-red-500/30 text-red-400 hover:text-red-300 text-xs">✕ Reset</button>
                     )}
                   </div>
@@ -2597,7 +2836,7 @@ export function AnalyseTab() {
                       metricAxis={metricAxis}
                       unitAxis={unitAxis}
                       primaryUnit={primaryTcdUnit}
-                      profilColor={profilColor}
+                      accentColor={ACCENT_COLOR}
                       angled={tcdAngled}
                       height={tcdChartHeight}
                       bottomMargin={tcdBottomMargin}
@@ -2733,7 +2972,7 @@ export function AnalyseTab() {
                       <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4" />
                       <Bar dataKey="kwhMoyen" name="kwhNet" radius={[4, 4, 0, 0]}>
                         {profilSemaineData.map((_, i) => (
-                          <Cell key={i} fill={i === 0 || i === 6 ? '#a78bfa' : profilColor} />
+                          <Cell key={i} fill={i === 0 || i === 6 ? '#a78bfa' : ACCENT_COLOR} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -2770,7 +3009,7 @@ export function AnalyseTab() {
                       <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
                       <Bar dataKey="count" name="Nb jours" radius={[4, 4, 0, 0]}>
                         {distributionData.map((d, i) => (
-                          <Cell key={i} fill={d.min < safeNum(stats.p25, 0) ? '#a78bfa' : d.min < safeNum(stats.p75, 0) ? profilColor : '#f59e0b'} />
+                          <Cell key={i} fill={d.min < safeNum(stats.p25, 0) ? '#a78bfa' : d.min < safeNum(stats.p75, 0) ? ACCENT_COLOR : '#f59e0b'} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -2779,7 +3018,7 @@ export function AnalyseTab() {
                 <div className="flex gap-3 text-xs">
                   {[
                     { color: 'bg-purple-500', label: `Faible (< ${fmt0(stats.p25)})` },
-                    { color: '', label: 'Normal (P25–P75)', style: { backgroundColor: profilColor } },
+                    { color: '', label: 'Normal (P25–P75)', style: { backgroundColor: ACCENT_COLOR } },
                     { color: 'bg-yellow-500', label: `Élevé (> ${fmt0(stats.p75)})` },
                   ].map(l => (
                     <div key={l.label} className="flex items-center gap-1.5 text-slate-400">
@@ -2810,7 +3049,7 @@ export function AnalyseTab() {
                           name === 'y' ? 'Énergie nette' : 'Jour',
                         ]}
                       />
-                      <Scatter data={correlationData} fill={profilColor} opacity={0.7} r={3} />
+                      <Scatter data={correlationData} fill={ACCENT_COLOR} opacity={0.7} r={3} />
                       <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4" />
                     </ScatterChart>
                   </ResponsiveContainer>
@@ -2823,7 +3062,7 @@ export function AnalyseTab() {
                       <XAxis dataKey="jour" tick={{ fill: '#cbd5e1', fontSize: 12 }} />
                       <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
-                      <Line type="monotone" dataKey="kwhMoyen" name="kwhNet" stroke={profilColor} strokeWidth={2} dot={{ fill: profilColor, r: 4 }} />
+                      <Line type="monotone" dataKey="kwhMoyen" name="kwhNet" stroke={ACCENT_COLOR} strokeWidth={2} dot={{ fill: ACCENT_COLOR, r: 4 }} />
                       <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4" />
                     </LineChart>
                   </ResponsiveContainer>
@@ -2882,8 +3121,6 @@ export function AnalyseTab() {
               { label: 'Samedis', set: setSlicerTypeJour, arr: slicerTypeJour },
               { label: 'Dimanches', set: setSlicerTypeJour, arr: slicerTypeJour },
               { label: 'Jours fériés', set: setSlicerTypeJour, arr: slicerTypeJour },
-              { label: 'Heure de pointe', set: setSlicerPeriode, arr: slicerPeriode },
-              { label: 'Heure creuse', set: setSlicerPeriode, arr: slicerPeriode },
             ].map(({ label, set, arr }) => {
               const active = arr.includes(label);
               return (
@@ -2892,8 +3129,8 @@ export function AnalyseTab() {
                 >{label}</button>
               );
             })}
-            {(slicerSaison.length + slicerTypeJour.length + slicerPeriode.length) > 0 && (
-              <button onClick={() => { setSlicerSaison([]); setSlicerTypeJour([]); setSlicerPeriode([]); }}
+            {(slicerSaison.length + slicerTypeJour.length) > 0 && (
+              <button onClick={() => { setSlicerSaison([]); setSlicerTypeJour([]); }}
                 className="px-2.5 py-0.5 rounded-full border border-red-500/30 text-red-400 hover:text-red-300">✕ Reset</button>
             )}
             {crossFilter && (
@@ -2954,7 +3191,7 @@ export function AnalyseTab() {
                   metricAxis={metricAxis}
                   unitAxis={unitAxis}
                   primaryUnit={primaryTcdUnit}
-                  profilColor={profilColor}
+                  accentColor={ACCENT_COLOR}
                   angled={tcdAngled}
                   height={fsChartHeight}
                   bottomMargin={fsBottomMargin}
@@ -3022,7 +3259,7 @@ export function AnalyseTab() {
                     <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
                     {Array.from(tcdMetrics).map(mk => {
                       const meta = METRIQUES.find(m => m.key === mk);
-                      return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? profilColor} fill={(meta?.color ?? profilColor) + '15'} strokeWidth={2} dot={false} />;
+                      return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? ACCENT_COLOR} fill={(meta?.color ?? ACCENT_COLOR) + '15'} strokeWidth={2} dot={false} />;
                     })}
                   </AreaChart>
                 </ResponsiveContainer>
@@ -3096,7 +3333,7 @@ export function AnalyseTab() {
               <div className="overflow-x-auto max-h-72">
                 <table className="min-w-full text-xs">
                   <thead className="bg-white/5 sticky top-0">
-                    <tr>{['Date', 'Heure', 'Jour', 'Saison', 'Tranche', 'kWh Net', 'kWh Total', 'Ph A (kWh)', 'Ph B (kWh)', 'Ph C (kWh)', 'Puiss. (kW)'].map(h => (
+                    <tr>{['Date', 'Heure', 'Jour', 'Saison', 'kWh Net', 'kWh Total', 'Ph A (kWh)', 'Ph B (kWh)', 'Ph C (kWh)', 'Puiss. (kW)'].map(h => (
                       <th key={h} className="px-3 py-2 text-left text-slate-400 font-medium whitespace-nowrap">{h}</th>
                     ))}</tr>
                   </thead>
@@ -3107,7 +3344,6 @@ export function AnalyseTab() {
                         <td className="px-3 py-1.5 text-slate-500">{toDate(r.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</td>
                         <td className="px-3 py-1.5 text-slate-400">{r.jourSemaine}</td>
                         <td className="px-3 py-1.5 text-slate-400">{r.saison}</td>
-                        <td className="px-3 py-1.5 text-slate-500">{r.trancheTarification}</td>
                         <td className="px-3 py-1.5 text-purple-400 font-medium">{fmt3(r.kwhNet)}</td>
                         <td className="px-3 py-1.5 text-blue-400">{fmt3(r.kwhTotal)}</td>
                         <td className="px-3 py-1.5 text-green-400">{fmt3(r.kwhA)}</td>

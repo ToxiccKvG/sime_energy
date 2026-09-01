@@ -186,7 +186,14 @@ const OUTLIER_SIGMA  = 2.5;
 
 function formatCell(row: ShellyRow, col: keyof ShellyRow): string {
   const v = row[col];
-  if (v instanceof Date) return v.toLocaleDateString('fr-FR');
+  // Afficher l'heure dès que le relevé n'est pas à minuit : sinon les séries
+  // infra-journalières (relevés à la minute) semblaient toutes porter la même date.
+  if (v instanceof Date) {
+    const hasTime = v.getHours() !== 0 || v.getMinutes() !== 0 || v.getSeconds() !== 0;
+    return hasTime
+      ? `${v.toLocaleDateString('fr-FR')} ${v.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+      : v.toLocaleDateString('fr-FR');
+  }
   if (typeof v === 'boolean') return v ? 'Oui' : 'Non';
   if (typeof v === 'number') {
     if (isNaN(v)) return '';
@@ -245,15 +252,54 @@ function deviceKey(r: ShellyRow): string {
   return `${r.nomAppareil ?? ''}|${r.deviceLocation ?? ''}|${r.deviceRoom ?? ''}`;
 }
 
+/**
+ * Vrai si le jeu de données est infra-journalier (plusieurs relevés par jour
+ * pour un même appareil, à des heures différentes).
+ *
+ * Le contrôle « doublons par (date, appareil) » ne vaut que pour les exports
+ * journaliers historiques (une ligne par jour et par appareil). Sur des relevés
+ * à la minute ou à l'heure — cas des exports Supabase — deux lignes du même jour
+ * ne sont pas des doublons mais une série temporelle : les traiter comme tels
+ * réduisait 1440 relevés/jour à une seule ligne (celle de 23:59).
+ */
+function isSubDaily(rows: ShellyRow[]): boolean {
+  const firstTimeByDay = new Map<string, string>();
+  for (const r of rows) {
+    const d = toDate(r.date);
+    const iso = d.toISOString();
+    const dayKey  = `${iso.slice(0, 10)}|${deviceKey(r)}`;
+    const timeKey = iso.slice(11, 19);
+    const seen = firstTimeByDay.get(dayKey);
+    if (seen === undefined) firstTimeByDay.set(dayKey, timeKey);
+    else if (seen !== timeKey) return true;
+  }
+  return false;
+}
+
 function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
   const issues: Omit<Issue, 'ignored'>[] = [];
   if (rows.length === 0) return issues;
 
-  // 1. Doublons par (date, appareil)
-  const dateMap = new Map<string, number>();
+  // Appareils qui mesurent réellement de l'énergie (au moins un relevé non nul).
+  // Les contrôles portant sur les kWh ne s'appliquent qu'à eux : sur un capteur
+  // de température ou d'ouverture de porte, une consommation nulle est normale.
+  const energyDevices = new Set<string>();
   for (const r of rows) {
-    const k = `${toDate(r.date).toISOString().slice(0, 10)}|${deviceKey(r)}`;
-    dateMap.set(k, (dateMap.get(k) ?? 0) + 1);
+    if (r.kwhTotal !== 0 || r.whTotal !== 0 || r.puissKwTotal !== 0 || r.kwhRetourTotal !== 0) {
+      energyDevices.add(deviceKey(r));
+    }
+  }
+
+  // 1. Doublons par (date, appareil) — uniquement sur des données journalières.
+  //    Sur une série infra-journalière, plusieurs relevés le même jour sont
+  //    attendus : seul le contrôle « doublons exacts » ci-dessous s'applique.
+  const subDaily = isSubDaily(rows);
+  const dateMap = new Map<string, number>();
+  if (!subDaily) {
+    for (const r of rows) {
+      const k = `${toDate(r.date).toISOString().slice(0, 10)}|${deviceKey(r)}`;
+      dateMap.set(k, (dateMap.get(k) ?? 0) + 1);
+    }
   }
   const dupDates = [...dateMap.entries()].filter(([, c]) => c > 1);
   if (dupDates.length > 0) {
@@ -282,7 +328,11 @@ function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
   }
 
   // 3. Lignes vides (kwhTotal=0 ET kwhNet=0)
-  const zeros = rows.filter(r => r.kwhTotal === 0 && r.kwhNet === 0);
+  //    Restreint aux appareils qui mesurent effectivement de l'énergie : pour un
+  //    capteur environnemental ou d'état, kWh = 0 est la valeur normale et non une
+  //    donnée manquante. Les signaler invitait à les « remplir » par moyenne ou
+  //    interpolation, ce qui aurait fabriqué de la consommation inexistante.
+  const zeros = rows.filter(r => energyDevices.has(deviceKey(r)) && r.kwhTotal === 0 && r.kwhNet === 0);
   if (zeros.length > 0) {
     issues.push({
       id: 'zeros',
@@ -345,8 +395,9 @@ function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
     });
   }
 
-  // 7. Incohérence phases vs total
+  // 7. Incohérence phases vs total (appareils énergie uniquement)
   const phaseMismatch = rows.filter(r => {
+    if (!energyDevices.has(deviceKey(r))) return false;
     const sum = r.kwhA + r.kwhB + r.kwhC;
     return r.kwhTotal > 0 && Math.abs(sum - r.kwhTotal) > 0.05;
   });
@@ -522,7 +573,12 @@ export function NettoyageTab() {
       const key = col.key as string;
       if (sample.some(r => {
         const v = r[col.key];
-        return v !== undefined && v !== null && v !== '';
+        if (v === undefined || v === null || v === '') return false;
+        // Les colonnes énergie sont toujours remplies à 0 par parseShellyRow,
+        // même pour un capteur qui ne mesure pas d'énergie : une colonne
+        // numérique entièrement à zéro n'est donc pas une vraie donnée.
+        if (typeof v === 'number') return v !== 0;
+        return true;
       })) {
         present.add(key);
       }
@@ -1152,19 +1208,26 @@ export function NettoyageTab() {
       }
       return updated;
     }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [trCol, trOp, trParam, trScope, trColType, activeRows, selectedIndices, pushUndo, setActiveRows]);
 
   // Aperçu : nb de lignes qui seront modifiées
   const trPreviewCount = trScope === 'selected' ? selectedIndices.size : activeRows.length;
 
   const doExport = useCallback(async (format: 'xlsx' | 'csv_semicolon' | 'csv_comma' | 'csv_fr' | 'pdf') => {
+    // N'exporter que les colonnes affichées : elles s'adaptent déjà au contenu
+    // réel, ce qui évite de sortir toutes les colonnes énergie (vides) pour un
+    // jeu de données de capteurs environnementaux.
+    const exportedCols = COLUMNS.filter(c => visibleCols.has(c.key as string));
     const data = sortedRef.current.map(r => {
       const obj: Record<string, unknown> = {};
-      COLUMNS.forEach(c => {
-        obj[c.label] = c.type === 'date' && r[c.key] instanceof Date
-          ? (r[c.key] as Date).toLocaleDateString('fr-FR')
-          : r[c.key];
+      exportedCols.forEach(c => {
+        const v = r[c.key];
+        // Conserver l'heure : la formater en date seule écrasait la résolution
+        // horaire/minute des relevés Supabase.
+        obj[c.label] = c.type === 'date' && v instanceof Date
+          ? v.toLocaleString('fr-FR')
+          : v;
       });
       return obj;
     });
@@ -1205,8 +1268,10 @@ export function NettoyageTab() {
       a.href = url; a.download = 'iot_donnees_nettoyees.csv'; a.click();
       URL.revokeObjectURL(url);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // sortedRef est une ref (toujours à jour) ; visibleCols doit en revanche être
+  // une dépendance, sinon l'export reste figé sur les colonnes du premier rendu.
+   
+  }, [visibleCols]);
 
   // ============================================================
   // DONNÉES DÉRIVÉES
@@ -1468,19 +1533,23 @@ export function NettoyageTab() {
       {fichiersPannel}
 
       {/* ---- Bannière mode fichier local ---- */}
-      {hasLocalData && (
+      {/* Barre de sauvegarde : disponible dès qu'il y a des données à l'écran,
+          y compris celles arrivées depuis l'onglet Analyse via le contexte
+          (auparavant conditionnée à un import local, ce qui privait de toute
+          sauvegarde un jeu de données déjà propre venu d'Analyse). */}
+      {activeRows.length > 0 && (
         <div className="flex items-center justify-between bg-green-500/10 border border-green-500/30 rounded-xl px-4 py-2.5">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="h-4 w-4 text-green-400 shrink-0" />
             <span className="text-green-300 text-sm font-medium">Nettoyage : {localFileName ?? 'Données importées'}</span>
-            <Badge className="bg-green-600/20 text-green-300 border-0 text-xs">{localRows.length.toLocaleString('fr-FR')} lignes</Badge>
+            <Badge className="bg-green-600/20 text-green-300 border-0 text-xs">{activeRows.length.toLocaleString('fr-FR')} lignes</Badge>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-500 text-white"
               onClick={() => {
                 // 1. Recalculer kwhNet et cumuls sur les lignes nettoyées
                 const rowsRecalculees = ajouterCumulatifs(
-                  localRows.map(r => ({
+                  activeRows.map(r => ({
                     ...r,
                     kwhNet: Math.max(0, r.kwhTotal - r.kwhRetourTotal),
                   }))
@@ -1537,7 +1606,12 @@ export function NettoyageTab() {
               Sauvegarder et stocker
             </Button>
             <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-400 hover:text-white"
-              onClick={() => { setLocalRows([]); setLocalFileName(null); setLocalFileId(null); }}>
+              onClick={() => {
+                setLocalRows([]); setLocalFileName(null); setLocalFileId(null);
+                // Données venues d'Analyse (contexte) : les vider aussi, sinon le
+                // bouton n'aurait aucun effet visible et la barre resterait affichée.
+                if (!hasLocalData) setShellyRows([]);
+              }}>
               Annuler
             </Button>
           </div>

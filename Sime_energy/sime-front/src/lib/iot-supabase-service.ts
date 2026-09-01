@@ -16,7 +16,6 @@
 // ============================================================
 
 import { supabase } from '@/lib/supabase';
-import type { ProfilMi } from '@/components/iot/shared';
 import { COLONNES_PROFIL_SHELLY } from '@/components/iot/shared';
 
 // ── Nom de la table ───────────────────────────────────────────
@@ -112,8 +111,6 @@ export interface SupabaseExportOptions {
   deviceName?: string;
   /** Filtrer par device_id(s) Shelly */
   deviceIds?: string[];
-  /** Profil Mi sélectionné (info contextuelle uniquement) */
-  profilMi?: ProfilMi;
   /** Date de début ISO */
   dateDebut?: string;
   /** Date de fin ISO */
@@ -143,6 +140,33 @@ interface ShellyHoraireRow {
   v_c_moy?: number | null;
   voltage_v_moy?: number | null;
   nb_mesures?: number | null;
+
+  // Agrégats capteurs (migration 20260828_add_shelly_horaire_env_columns)
+  temperature_moy?: number | null;
+  temperature_min?: number | null;
+  temperature_max?: number | null;
+  humidity_moy?: number | null;
+  feels_like_c_moy?: number | null;
+  dewpoint_c_moy?: number | null;
+  uv_index_moy?: number | null;
+  uv_index_max?: number | null;
+  illuminance_lux_moy?: number | null;
+  illuminance_lux_max?: number | null;
+  pressure_hpa_moy?: number | null;
+  pressure_slope_dernier?: string | null;
+  precipitation_mm?: number | null;
+  moisture_alarm?: boolean | null;
+  wind_speed_ms_moy?: number | null;
+  wind_gust_ms_max?: number | null;
+  wind_direction_deg_moy?: number | null;
+  device_temp_c_moy?: number | null;
+  tilt_angle_moy?: number | null;
+  concentration_ppm_moy?: number | null;
+  battery_level_min?: number | null;
+  battery_voltage_v_moy?: number | null;
+  signal_rssi_moy?: number | null;
+  state_dernier?: string | null;
+  nb_mesures_env?: number | null;
 }
 
 // Toutes les clés PROFIL Mi valides
@@ -420,6 +444,31 @@ export function transformHoraireToProfilMi(
       kW_RetourC:         kW_RC,
       kW_RetourTotal:     kW_RA + kW_RB + kW_RC,
 
+      // ── Capteurs environnementaux (moyennes de l'heure) ───────
+      // Sans ces lignes, toute analyse en granularité horaire — la valeur par
+      // défaut — rendait les capteurs comme des lignes vides : la station météo
+      // et les H&T n'apparaissaient qu'avec des zéros d'énergie.
+      Temperature:        m.temperature_moy ?? null,
+      Humidite:           m.humidity_moy ?? null,
+      Ressenti:           m.feels_like_c_moy ?? null,
+      Point_Rosee:        m.dewpoint_c_moy ?? null,
+      UV_Index:           m.uv_index_moy ?? null,
+      Luminosite:         m.illuminance_lux_moy ?? null,
+      Pression:           m.pressure_hpa_moy ?? null,
+      Tendance_Pression:  m.pressure_slope_dernier ?? null,
+      Precipitation:      m.precipitation_mm ?? null,
+      Alarme_Humidite:    m.moisture_alarm ?? null,
+      Vent_Vitesse:       m.wind_speed_ms_moy ?? null,
+      Vent_Rafale:        m.wind_gust_ms_max ?? null,
+      Vent_Direction:     m.wind_direction_deg_moy ?? null,
+      Etat_Capteur:       m.state_dernier ?? null,
+      Angle_Inclinaison:  m.tilt_angle_moy ?? null,
+      Concentration_Gaz:  m.concentration_ppm_moy ?? null,
+      Temp_Interne:       m.device_temp_c_moy ?? null,
+      Batterie:           m.battery_level_min ?? null,
+      Batterie_V:         m.battery_voltage_v_moy ?? null,
+      Signal:             m.signal_rssi_moy ?? null,
+
       Date:           date.toLocaleDateString('fr-FR'),
       Date_longue:    date.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
       Jour:           date.toLocaleDateString('fr-FR', { weekday: 'long' }),
@@ -451,6 +500,131 @@ export function transformHoraireToProfilMi(
   });
 }
 
+// ── Pagination ────────────────────────────────────────────────
+// PostgREST plafonne toute réponse à 1000 lignes. Sans pagination, choisir
+// "Illimité" ne renvoyait que les 1000 lignes les plus anciennes — soit
+// quelques heures au lieu de la période demandée, et (le tri se faisant
+// ensuite par appareil) souvent les données d'un seul capteur.
+const PAGE_ROWS = 1000;
+const MAX_ROWS  = 200_000; // garde-fou mémoire navigateur
+
+interface RangeableQuery<T> {
+  range(from: number, to: number): PromiseLike<{ data: T[] | null; error: unknown }>;
+}
+
+/** Pagination par OFFSET — réservée aux volumes modérés (table horaire). */
+async function fetchAllPaginated<T>(
+  buildQuery: () => RangeableQuery<T>,
+  limit?: number,
+): Promise<T[]> {
+  const out: T[] = [];
+  const hardCap = Math.min(limit ?? MAX_ROWS, MAX_ROWS);
+  let from = 0;
+  while (from < hardCap) {
+    const to = Math.min(from + PAGE_ROWS, hardCap) - 1;
+    const { data, error } = await buildQuery().range(from, to);
+    if (error) throw error;
+    const batch = data ?? [];
+    out.push(...batch);
+    if (batch.length < to - from + 1) break; // dernière page atteinte
+    from = to + 1;
+  }
+  return out;
+}
+
+/**
+ * Pagination « keyset » (curseur sur `ts`) appareil par appareil.
+ *
+ * La table shelly_cl porte l'index `(device_id, ts)`. Toute lecture qui s'en
+ * écarte devient très coûteuse sur des centaines de milliers de lignes — mesuré
+ * sur une sélection réelle de 94 000 lignes :
+ *   - pagination OFFSET (tous appareils, tri par ts) → 4,6 s à l'offset 90 000,
+ *     soit ~4 min pour parcourir l'ensemble (le coût croît à chaque page) ;
+ *   - curseur sur la clé primaire `id`              → 6,4 s/page (tri complet,
+ *     l'index (device_id, ts) ne fournit pas l'ordre des id) ;
+ *   - curseur sur `ts`, un seul appareil à la fois  → 76 ms/page.
+ *
+ * On interroge donc chaque appareil séparément, ce qui laisse Postgres suivre
+ * l'index, et on parallélise modérément les appareils.
+ */
+const DEVICE_CONCURRENCY = 4;
+
+interface TsKeysetQuery<T> {
+  eq(column: string, value: string): {
+    gt(column: string, value: string): {
+      order(column: string, opts: { ascending: boolean }): {
+        limit(n: number): PromiseLike<{ data: T[] | null; error: unknown }>;
+      };
+    };
+  };
+}
+
+async function fetchDeviceKeyset<T extends { ts?: string }>(
+  buildQuery: () => TsKeysetQuery<T>,
+  deviceId: string,
+  cap: number,
+  dateDebut?: string,
+): Promise<T[]> {
+  const out: T[] = [];
+  // Curseur initial : borne basse de la période (ou epoch si non bornée)
+  let cursor = dateDebut ?? '1970-01-01T00:00:00Z';
+  while (out.length < cap) {
+    const pageSize = Math.min(PAGE_ROWS, cap - out.length);
+    const { data, error } = await buildQuery()
+      .eq('device_id', deviceId)
+      .gt('ts', cursor)
+      .order('ts', { ascending: true })
+      .limit(pageSize);
+    if (error) throw error;
+    const batch = data ?? [];
+    if (batch.length === 0) break;
+    out.push(...batch);
+    const last = batch[batch.length - 1].ts;
+    // Curseur bloqué (horodatages identiques sur toute la page) : on arrête
+    // plutôt que de boucler indéfiniment.
+    if (typeof last !== 'string' || last === cursor) break;
+    cursor = last;
+    if (batch.length < pageSize) break; // dernière page pour cet appareil
+  }
+  return out;
+}
+
+async function fetchAllDevicesKeyset<T extends { ts?: string }>(
+  buildQuery: () => TsKeysetQuery<T>,
+  deviceIds: string[],
+  limit?: number,
+  dateDebut?: string,
+): Promise<T[]> {
+  const hardCap = Math.min(limit ?? MAX_ROWS, MAX_ROWS);
+  const out: T[] = [];
+  for (let i = 0; i < deviceIds.length; i += DEVICE_CONCURRENCY) {
+    if (out.length >= hardCap) break;
+    const lot = deviceIds.slice(i, i + DEVICE_CONCURRENCY);
+    const perDeviceCap = Math.max(1, Math.floor((hardCap - out.length) / lot.length));
+    const results = await Promise.all(
+      lot.map(id => fetchDeviceKeyset(buildQuery, id, perDeviceCap, dateDebut)),
+    );
+    for (const r of results) out.push(...r);
+  }
+  return out;
+}
+
+/** Liste des appareils concernés — nécessaire pour interroger appareil par appareil. */
+async function resolveDeviceIds(opts: {
+  deviceIds?: string[]; site?: string; deviceFamily?: string;
+  deviceType?: string; deviceName?: string;
+}): Promise<string[]> {
+  if (opts.deviceIds && opts.deviceIds.length > 0) return opts.deviceIds;
+  let q = supabase.from('shelly_devices_catalog').select('device_id');
+  if (opts.site)         q = q.eq('site', opts.site);
+  if (opts.deviceFamily) q = q.eq('device_family', opts.deviceFamily);
+  if (opts.deviceType)   q = q.eq('device_type', opts.deviceType);
+  if (opts.deviceName)   q = q.eq('name', opts.deviceName);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []).map(d => (d as { device_id: string }).device_id);
+}
+
 // ── Fonction principale d'export ──────────────────────────────
 export async function exporterDonneesSupabase(
   options: SupabaseExportOptions,
@@ -476,19 +650,21 @@ export async function exporterDonneesSupabase(
   try {
     if (granularite === 'horaire') {
       // ── Table shelly_cl_horaire : wh_conso déjà incrémental ──
-      let query = supabase
-        .from('shelly_cl_horaire')
-        .select('*')
-        .order('ts_heure', { ascending: true });
-      if (limit) query = query.limit(limit);
+      const buildHoraireQuery = () => {
+        let query = supabase
+          .from('shelly_cl_horaire')
+          .select('*')
+          .order('ts_heure', { ascending: true });
 
-      if (site)         query = query.eq('site', site);
-      if (deviceFamily) query = query.eq('device_family', deviceFamily);
-      if (deviceType)   query = query.eq('device_type', deviceType);
-      if (deviceName)   query = query.eq('name', deviceName);
-      if (deviceIds && deviceIds.length > 0) query = query.in('device_id', deviceIds);
-      if (dateDebut)    query = query.gte('ts_heure', dateDebut);
-      if (dateFin)      query = query.lte('ts_heure', dateFin);
+        if (site)         query = query.eq('site', site);
+        if (deviceFamily) query = query.eq('device_family', deviceFamily);
+        if (deviceType)   query = query.eq('device_type', deviceType);
+        if (deviceName)   query = query.eq('name', deviceName);
+        if (deviceIds && deviceIds.length > 0) query = query.in('device_id', deviceIds);
+        if (dateDebut)    query = query.gte('ts_heure', dateDebut);
+        if (dateFin)      query = query.lte('ts_heure', dateFin);
+        return query;
+      };
 
       // En parallèle : mapping device_id → room (absent de shelly_cl_horaire)
       let roomQuery = supabase
@@ -500,14 +676,16 @@ export async function exporterDonneesSupabase(
       if (site)                              roomQuery = roomQuery.eq('site', site);
       if (deviceIds && deviceIds.length > 0) roomQuery = roomQuery.in('device_id', deviceIds);
 
-      const [{ data, error }, { data: roomData }] = await Promise.all([query, roomQuery]);
-      if (error) throw error;
+      const [data, { data: roomData }] = await Promise.all([
+        fetchAllPaginated<ShellyHoraireRow>(buildHoraireQuery, limit),
+        roomQuery,
+      ]);
 
       const roomMap = new Map<string, string>();
       for (const r of roomData ?? []) {
         if (r.room && !roomMap.has(r.device_id)) roomMap.set(r.device_id, r.room);
       }
-      const enriched = ((data ?? []) as ShellyHoraireRow[]).map(m => ({
+      const enriched = data.map(m => ({
         ...m,
         room: m.room ?? roomMap.get(m.device_id) ?? null,
       }));
@@ -517,27 +695,23 @@ export async function exporterDonneesSupabase(
 
     } else {
       // ── Table shelly_cl : compteurs cumulatifs, diff LAG côté client ──
-      let query = supabase
-        .from(SHELLY_TABLE)
-        .select('*')
-        .order('ts', { ascending: true });
-      if (limit) query = query.limit(limit);
+      // Interrogation appareil par appareil (voir fetchAllDevicesKeyset) : le
+      // filtre device_id et l'ordre sur ts sont posés par la pagination.
+      const buildMinuteQuery = () => {
+        let query = supabase
+          .from(SHELLY_TABLE)
+          .select('*');
+        if (dateFin) query = query.lte('ts', dateFin);
+        return query;
+      };
 
-      if (site)         query = query.eq('site', site);
-      if (deviceFamily) query = query.eq('device_family', deviceFamily);
-      if (deviceType)   query = query.eq('device_type', deviceType);
-      if (deviceName)   query = query.eq('name', deviceName);
-      if (deviceIds && deviceIds.length > 0) query = query.in('device_id', deviceIds);
-      if (dateDebut)    query = query.gte('ts', dateDebut);
-      if (dateFin)      query = query.lte('ts', dateFin);
+      const ids = await resolveDeviceIds({ deviceIds, site, deviceFamily, deviceType, deviceName });
+      if (ids.length === 0) {
+        return { rows: [], total: 0, erreur: 'Aucun appareil ne correspond aux filtres sélectionnés' };
+      }
+      const data = await fetchAllDevicesKeyset<ShellyRow>(buildMinuteQuery, ids, limit, dateDebut);
 
-      const { data, error } = await query;
-      if (error) throw error;
-
-      const rows = transformRowsToProfilMi(
-        (data ?? []) as ShellyRow[],
-        colonnesValides,
-      );
+      const rows = transformRowsToProfilMi(data, colonnesValides);
       return { rows, total: rows.length };
     }
   } catch (err) {
@@ -631,23 +805,23 @@ export async function fetchDisponibles(): Promise<DisponiblesResult> {
     const roomsSet    = new Set<string>();
     const deviceMap   = new Map<string, DisponiblesResult['devices'][number]>();
 
-    // Mapping device_id → room, alimenté par le polling Shelly (colonne `room` de shelly_cl)
-    const roomMap = new Map<string, string>();
-    const { data: roomData, error: roomError } = await supabase
-      .from(SHELLY_TABLE)
-      .select('device_id,room')
-      .not('room', 'is', null)
-      .order('ts', { ascending: false })
-      .limit(5000);
-    if (roomError) throw roomError;
-    for (const r of (roomData ?? []) as { device_id: string; room: string | null }[]) {
-      if (r.room && !roomMap.has(r.device_id)) roomMap.set(r.device_id, r.room);
-    }
+    // Catalogue live : une ligne par appareil avec ses métadonnées les plus
+    // récentes (vue shelly_devices_catalog). KNOWN_SHELLY_DEVICES ne sert plus
+    // que de filet si la vue est indisponible : cette liste codée en dur ne
+    // suit ni les renommages ni les changements de site côté Shelly Cloud
+    // (ex. 441d6475d44c = "Arrivée générale"/Donsin, listé "Compteur 2"/Académie).
+    const { data: catalogData, error: catalogError } = await supabase
+      .from('shelly_devices_catalog')
+      .select('device_id,name,site,room,device_family');
+    if (catalogError) throw catalogError;
 
-    for (const r of KNOWN_SHELLY_DEVICES) {
+    const catalogue = (catalogData ?? []) as DisponiblesResult['devices'];
+    const source = catalogue.length > 0 ? catalogue : KNOWN_SHELLY_DEVICES;
+
+    for (const r of source) {
       if (r.site)          sitesSet.add(r.site);
       if (r.device_family) familiesSet.add(r.device_family);
-      const room = r.room ?? roomMap.get(r.device_id) ?? null;
+      const room = r.room ?? null;
       if (room) roomsSet.add(room);
       if (r.device_id && !deviceMap.has(r.device_id)) {
         deviceMap.set(r.device_id, {
