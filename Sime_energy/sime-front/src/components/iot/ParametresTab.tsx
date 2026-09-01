@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import {
   Settings, Plus, Pencil, Trash2, Wifi, WifiOff, RefreshCw,
   CheckCircle2, XCircle, Eye, EyeOff, Server, KeyRound, Tag,
-  AlertTriangle, Clock, Zap, Split,
+  AlertTriangle, Clock, Zap, Split, PlugZap,
 } from 'lucide-react';
 import { Button }   from '@/components/ui/button';
 import { Input }    from '@/components/ui/input';
@@ -23,14 +23,16 @@ import {
 } from '@/lib/shelly-account-service';
 import { forceMetadataRefresh } from '@/lib/shelly-device-config-service';
 import { ShellyDeviceTypesPanel } from './ShellyDeviceTypesPanel';
+import { ShellyDeviceRolesPanel } from './ShellyDeviceRolesPanel';
 import { ShellyDeviceChannelsPanel } from './ShellyDeviceChannelsPanel';
 
-type SubTab = 'comptes' | 'types' | 'canaux';
+type SubTab = 'comptes' | 'types' | 'canaux' | 'roles';
 
 const SUB_TABS: { id: SubTab; label: string; icon: typeof Settings }[] = [
   { id: 'comptes', label: 'Comptes Shelly Cloud',  icon: Settings },
   { id: 'types',   label: 'Types de dispositifs',  icon: Tag },
   { id: 'canaux',  label: 'Canaux multi-relais',   icon: Split },
+  { id: 'roles',   label: 'Rôles des appareils',   icon: PlugZap },
 ];
 
 // ── Types locaux ──────────────────────────────────────────────
@@ -236,6 +238,7 @@ export function ParametresTab() {
 
       {subTab === 'types' && <ShellyDeviceTypesPanel />}
       {subTab === 'canaux' && <ShellyDeviceChannelsPanel />}
+      {subTab === 'roles'  && <ShellyDeviceRolesPanel />}
 
       {subTab === 'comptes' && <>
       {/* En-tête */}
