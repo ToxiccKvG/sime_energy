@@ -1,22 +1,30 @@
 // ============================================================
 // Dashboard IOT — Capteurs environnementaux (T°, humidité, batterie)
 // + Station météo (UV, luminosité, vent, pression, pluie, ressenti)
+//
+// Les tuiles sont cliquables : chacune ouvre la popup de détail sur
+// la grandeur choisie (voir SensorDetailDialog).
+//
+// Elles sont désormais construites depuis SENSOR_METRICS et n'affichent
+// que les grandeurs réellement mesurées. L'ancienne règle
+// `isWeatherStation = uv || lux || wind || pres` faisait passer le
+// détecteur de mouvement pour une station météo dès qu'on a commencé à
+// capter sa luminosité : il s'affichait avec sept tuiles vides.
 // ============================================================
 
-import { useMemo } from 'react';
-import {
-  Thermometer, Droplets, Battery, BatteryLow, Sun, Lightbulb,
-  Wind, Gauge, CloudRain, Droplet, Signal, SignalLow,
-} from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Thermometer, Battery, BatteryLow, Signal, SignalLow } from 'lucide-react';
 import type { ShellyClRow } from '@/lib/iot-dashboard-service';
-
-const fmtFr = (n: number, d = 1) => n.toFixed(d).replace('.', ',');
+import { metriquesDisponibles, formatValeur, type MetricKey } from './sensorMetrics';
+import { SensorDetailDialog } from './SensorDetailDialog';
 
 interface Props {
   snapshot: ShellyClRow[];
 }
 
 export function SensorsCard({ snapshot }: Props) {
+  const [ouvert, setOuvert] = useState<{ capteur: ShellyClRow; metrique: MetricKey } | null>(null);
+
   const sensors = useMemo(() =>
     snapshot
       .filter(r => r.device_family === 'CAPTEUR_ENV' || r.temperature != null || r.humidity != null)
@@ -40,35 +48,30 @@ export function SensorsCard({ snapshot }: Props) {
     <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
       <h3 className="text-white font-semibold text-sm flex items-center gap-2 mb-3">
         <Thermometer className="h-4 w-4 text-cyan-400" /> Capteurs environnementaux · {sensors.length}
+        <span className="text-slate-500 text-xs font-normal ml-1">— cliquez une valeur pour le détail</span>
       </h3>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
         {sensors.map(r => {
-          const t   = typeof r.temperature === 'number' ? r.temperature : null;
-          const h   = typeof r.humidity === 'number' ? r.humidity : null;
-          const bat = typeof r.battery_level === 'number' ? r.battery_level : null;
-          const batV  = typeof r.battery_voltage_v === 'number' ? r.battery_voltage_v : null;
-          const rssi  = typeof r.signal_rssi === 'number' ? r.signal_rssi : null;
-          const weak  = rssi != null && rssi < -85;
+          const metriques = metriquesDisponibles(r);
+          const bat  = typeof r.battery_level === 'number' ? r.battery_level : null;
+          const batV = typeof r.battery_voltage_v === 'number' ? r.battery_voltage_v : null;
+          const rssi = typeof r.signal_rssi === 'number' ? r.signal_rssi : null;
+          const weak = rssi != null && rssi < -85;
 
-          const uv    = typeof r.uv_index === 'number' ? r.uv_index : null;
-          const lux   = typeof r.illuminance_lux === 'number' ? r.illuminance_lux : null;
-          const wind  = typeof r.wind_speed_ms === 'number' ? r.wind_speed_ms : null;
-          const gust  = typeof r.wind_gust_ms === 'number' ? r.wind_gust_ms : null;
-          const dir   = typeof r.wind_direction_deg === 'number' ? r.wind_direction_deg : null;
-          const pres  = typeof r.pressure_hpa === 'number' ? r.pressure_hpa : null;
-          const rain  = typeof r.precipitation_mm === 'number' ? r.precipitation_mm : null;
-          const dew   = typeof r.dewpoint_c === 'number' ? r.dewpoint_c : null;
-          const feels = typeof r.feels_like_c === 'number' ? r.feels_like_c : null;
-          const isWeatherStation = uv != null || lux != null || wind != null || pres != null;
-
+          const t = typeof r.temperature === 'number' ? r.temperature : null;
+          const h = typeof r.humidity === 'number' ? r.humidity : null;
           const tCrit  = t != null && (t < 15 || t > 35);
           const hCrit  = h != null && h > 80;
           const batLow = bat != null && bat < 20;
 
+          // Une carte large dès que le capteur dépasse quatre grandeurs
+          // (station météo), pour que les tuiles restent lisibles.
+          const large = metriques.length > 4;
+
           return (
             <div key={r.device_id}
-              className={`rounded-lg border bg-white/5 p-3 ${isWeatherStation ? 'col-span-2' : ''} ${tCrit || hCrit || batLow ? 'border-amber-500/40' : 'border-white/10'}`}>
+              className={`rounded-lg border bg-white/5 p-3 ${large ? 'col-span-2' : ''} ${tCrit || hCrit || batLow ? 'border-amber-500/40' : 'border-white/10'}`}>
               <div className="flex items-start justify-between gap-2 mb-2">
                 <div className="min-w-0">
                   <p className="text-white text-xs font-medium truncate" title={r.name}>{r.name}</p>
@@ -90,94 +93,49 @@ export function SensorsCard({ snapshot }: Props) {
                 </div>
               </div>
 
-              <div className={`grid gap-1.5 ${isWeatherStation ? 'grid-cols-3 sm:grid-cols-4' : 'grid-cols-2'}`}>
-                <div className={`rounded p-1.5 ${tCrit ? 'bg-amber-500/10' : 'bg-blue-500/10'}`}>
-                  <p className="text-[9px] text-slate-400 uppercase flex items-center gap-1">
-                    <Thermometer className="h-2.5 w-2.5" /> Temp.
-                  </p>
-                  <p className={`text-base font-bold ${tCrit ? 'text-amber-400' : 'text-blue-300'}`}>
-                    {t == null ? '—' : `${fmtFr(t, 1)}°`}
-                  </p>
-                </div>
-                <div className={`rounded p-1.5 ${hCrit ? 'bg-amber-500/10' : 'bg-cyan-500/10'}`}>
-                  <p className="text-[9px] text-slate-400 uppercase flex items-center gap-1">
-                    <Droplets className="h-2.5 w-2.5" /> Hum.
-                  </p>
-                  <p className={`text-base font-bold ${hCrit ? 'text-amber-400' : 'text-cyan-300'}`}>
-                    {h == null ? '—' : `${fmtFr(h, 0)}%`}
-                  </p>
-                </div>
-
-                {isWeatherStation && (
-                  <>
-                    <div className="rounded p-1.5 bg-orange-500/10">
-                      <p className="text-[9px] text-slate-400 uppercase flex items-center gap-1">
-                        <Thermometer className="h-2.5 w-2.5" /> Ressenti
+              <div className={`grid gap-1.5 ${large ? 'grid-cols-3 sm:grid-cols-4' : 'grid-cols-2'}`}>
+                {metriques.map(m => {
+                  const valeur = m.valeur(r);
+                  const alerte = (m.key === 'temperature' && tCrit) || (m.key === 'humidity' && hCrit);
+                  return (
+                    <button
+                      key={m.key}
+                      type="button"
+                      onClick={() => setOuvert({ capteur: r, metrique: m.key })}
+                      title={`${m.label} — voir le détail`}
+                      className={`rounded p-1.5 text-left transition-colors hover:ring-1 hover:ring-white/25 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${alerte ? 'bg-amber-500/10' : m.fond}`}
+                    >
+                      <p className="text-[9px] text-slate-400 uppercase truncate">{m.labelCourt}</p>
+                      <p className={`text-base font-bold ${alerte ? 'text-amber-400' : m.texte}`}>
+                        {formatValeur(m, valeur)}
+                        {m.unite && <span className="text-[10px] font-normal text-slate-400 ml-0.5">{m.unite}</span>}
                       </p>
-                      <p className="text-base font-bold text-orange-300">
-                        {feels == null ? '—' : `${fmtFr(feels, 1)}°`}
-                      </p>
-                    </div>
-                    <div className="rounded p-1.5 bg-yellow-500/10">
-                      <p className="text-[9px] text-slate-400 uppercase flex items-center gap-1">
-                        <Sun className="h-2.5 w-2.5" /> UV
-                      </p>
-                      <p className="text-base font-bold text-yellow-300">
-                        {uv == null ? '—' : fmtFr(uv, 0)}
-                      </p>
-                    </div>
-                    <div className="rounded p-1.5 bg-amber-500/10">
-                      <p className="text-[9px] text-slate-400 uppercase flex items-center gap-1">
-                        <Lightbulb className="h-2.5 w-2.5" /> Luminosité
-                      </p>
-                      <p className="text-base font-bold text-amber-300">
-                        {lux == null ? '—' : lux >= 1000 ? `${fmtFr(lux / 1000, 1)}k` : fmtFr(lux, 0)} <span className="text-[10px] font-normal text-slate-400">lx</span>
-                      </p>
-                    </div>
-                    <div className="rounded p-1.5 bg-sky-500/10">
-                      <p className="text-[9px] text-slate-400 uppercase flex items-center gap-1">
-                        <Wind className="h-2.5 w-2.5" /> Vent
-                      </p>
-                      <p className="text-base font-bold text-sky-300">
-                        {wind == null ? '—' : fmtFr(wind * 3.6, 1)} <span className="text-[10px] font-normal text-slate-400">km/h</span>
-                      </p>
-                      {(gust != null || dir != null) && (
-                        <p className="text-[9px] text-slate-500 mt-0.5">
-                          {gust != null && `raf. ${fmtFr(gust * 3.6, 0)} km/h`}{gust != null && dir != null && ' · '}{dir != null && `${fmtFr(dir, 0)}°`}
-                        </p>
-                      )}
-                    </div>
-                    <div className="rounded p-1.5 bg-violet-500/10">
-                      <p className="text-[9px] text-slate-400 uppercase flex items-center gap-1">
-                        <Gauge className="h-2.5 w-2.5" /> Pression
-                      </p>
-                      <p className="text-base font-bold text-violet-300">
-                        {pres == null ? '—' : fmtFr(pres, 0)} <span className="text-[10px] font-normal text-slate-400">hPa</span>
-                      </p>
-                    </div>
-                    <div className="rounded p-1.5 bg-blue-500/10">
-                      <p className="text-[9px] text-slate-400 uppercase flex items-center gap-1">
-                        <CloudRain className="h-2.5 w-2.5" /> Pluie
-                      </p>
-                      <p className="text-base font-bold text-blue-300">
-                        {rain == null ? '—' : fmtFr(rain, 1)} <span className="text-[10px] font-normal text-slate-400">mm</span>
-                      </p>
-                    </div>
-                    <div className="rounded p-1.5 bg-teal-500/10">
-                      <p className="text-[9px] text-slate-400 uppercase flex items-center gap-1">
-                        <Droplet className="h-2.5 w-2.5" /> Rosée
-                      </p>
-                      <p className="text-base font-bold text-teal-300">
-                        {dew == null ? '—' : `${fmtFr(dew, 1)}°`}
-                      </p>
-                    </div>
-                  </>
-                )}
+                      {m.key === 'wind' && (() => {
+                        const gust = typeof r.wind_gust_ms === 'number' ? r.wind_gust_ms * 3.6 : null;
+                        const dir  = typeof r.wind_direction_deg === 'number' ? r.wind_direction_deg : null;
+                        if (gust == null && dir == null) return null;
+                        return (
+                          <span className="block text-[9px] text-slate-500 mt-0.5">
+                            {gust != null && `raf. ${gust.toFixed(0)} km/h`}
+                            {gust != null && dir != null && ' · '}
+                            {dir != null && `${dir.toFixed(0)}°`}
+                          </span>
+                        );
+                      })()}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           );
         })}
       </div>
+
+      <SensorDetailDialog
+        capteur={ouvert?.capteur ?? null}
+        metriqueInitiale={ouvert?.metrique ?? null}
+        onClose={() => setOuvert(null)}
+      />
     </div>
   );
 }
