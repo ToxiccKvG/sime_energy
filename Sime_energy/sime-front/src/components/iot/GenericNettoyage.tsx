@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
+import { exportJsonToXlsx } from '@/lib/excel-utils';
 import {
   AlertTriangle, CheckCircle2, Columns, Download, Eraser, Filter, Replace,
   RotateCcw, ScanLine, Search, Trash2, Wand2, X,
@@ -381,12 +381,9 @@ export function GenericNettoyage({
     setPage(0);
   }, [rows, columns, colTypes, pushUndo, ignoreIssue]);
 
-  const exportFile = useCallback((format: 'xlsx' | 'csv_fr') => {
+  const exportFile = useCallback(async (format: 'xlsx' | 'csv_fr') => {
     if (format === 'xlsx') {
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(rows);
-      XLSX.utils.book_append_sheet(wb, ws, 'Nettoyage');
-      XLSX.writeFile(wb, `nettoyage_${fileName}.xlsx`);
+      await exportJsonToXlsx(rows, 'Nettoyage', `nettoyage_${fileName}.xlsx`);
     } else {
       const sep = ';';
       const headers = columns.join(sep);

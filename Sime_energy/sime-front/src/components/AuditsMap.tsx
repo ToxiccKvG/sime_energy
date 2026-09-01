@@ -27,12 +27,6 @@ const statusLabels = {
   completed: "Terminé"
 };
 
-const statusColors = {
-  planned: "bg-muted",
-  in_progress: "bg-primary/10",
-  completed: "bg-success/10"
-};
-
 export function AuditsMap({ sites }: AuditsMapProps) {
   // Centre par défaut sur Dakar
   const defaultCenter: [number, number] = [14.6928, -17.4467];

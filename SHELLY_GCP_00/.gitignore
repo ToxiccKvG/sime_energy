@@ -12,3 +12,5 @@ __pycache__/
 
 # Supabase temp
 supabase/.temp/
+# Artefact créé quand le CLI Supabase est lancé depuis supabase/ au lieu de la racine
+supabase/supabase/

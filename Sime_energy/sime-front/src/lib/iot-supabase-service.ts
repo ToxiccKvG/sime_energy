@@ -16,7 +16,6 @@
 // ============================================================
 
 import { supabase } from '@/lib/supabase';
-import type { ProfilMi } from '@/components/iot/shared';
 import { COLONNES_PROFIL_SHELLY } from '@/components/iot/shared';
 
 // ── Nom de la table ───────────────────────────────────────────
@@ -64,10 +63,32 @@ interface ShellyRow {
   wh_c?: number | null;
   wh_tot?: number | null;            // = wh_a + wh_b + wh_c
 
+  // Compteurs Wh cumulatifs retour/injection (PV → réseau)
+  wh_ra?: number | null;
+  wh_rb?: number | null;
+  wh_rc?: number | null;
+  wh_rtot?: number | null;           // = wh_ra + wh_rb + wh_rc
+
   // Capteurs environnementaux
   temperature?: number | null;
   humidity?: number | null;
   battery_level?: number | null;
+  feels_like_c?: number | null;
+  dewpoint_c?: number | null;
+  uv_index?: number | null;
+  illuminance_lux?: number | null;
+  pressure_hpa?: number | null;
+  pressure_slope?: string | null;
+  precipitation_mm?: number | null;
+  moisture_alarm?: boolean | null;
+  wind_speed_ms?: number | null;
+  wind_gust_ms?: number | null;
+  wind_direction_deg?: number | null;
+  tilt_angle?: number | null;
+  concentration_ppm?: number | null;
+  device_temp_c?: number | null;
+  battery_voltage_v?: number | null;
+  signal_rssi?: number | null;
 }
 
 // ── Options d'export ──────────────────────────────────────────
@@ -90,8 +111,6 @@ export interface SupabaseExportOptions {
   deviceName?: string;
   /** Filtrer par device_id(s) Shelly */
   deviceIds?: string[];
-  /** Profil Mi sélectionné (info contextuelle uniquement) */
-  profilMi?: ProfilMi;
   /** Date de début ISO */
   dateDebut?: string;
   /** Date de fin ISO */
@@ -121,6 +140,33 @@ interface ShellyHoraireRow {
   v_c_moy?: number | null;
   voltage_v_moy?: number | null;
   nb_mesures?: number | null;
+
+  // Agrégats capteurs (migration 20260828_add_shelly_horaire_env_columns)
+  temperature_moy?: number | null;
+  temperature_min?: number | null;
+  temperature_max?: number | null;
+  humidity_moy?: number | null;
+  feels_like_c_moy?: number | null;
+  dewpoint_c_moy?: number | null;
+  uv_index_moy?: number | null;
+  uv_index_max?: number | null;
+  illuminance_lux_moy?: number | null;
+  illuminance_lux_max?: number | null;
+  pressure_hpa_moy?: number | null;
+  pressure_slope_dernier?: string | null;
+  precipitation_mm?: number | null;
+  moisture_alarm?: boolean | null;
+  wind_speed_ms_moy?: number | null;
+  wind_gust_ms_max?: number | null;
+  wind_direction_deg_moy?: number | null;
+  device_temp_c_moy?: number | null;
+  tilt_angle_moy?: number | null;
+  concentration_ppm_moy?: number | null;
+  battery_level_min?: number | null;
+  battery_voltage_v_moy?: number | null;
+  signal_rssi_moy?: number | null;
+  state_dernier?: string | null;
+  nb_mesures_env?: number | null;
 }
 
 // Toutes les clés PROFIL Mi valides
@@ -183,8 +229,11 @@ export function transformRowsToProfilMi(
     const whC_cum    = n(m.wh_c);
     const whTot_cum  = n(m.wh_tot) || (whA_cum + whB_cum + whC_cum);
 
-    // ── Retour / injection ────────────────────────────────────
-    const whRA_cum = 0, whRB_cum = 0, whRC_cum = 0, whRTot_cum = 0;
+    // ── Retour / injection (PV → réseau, cumulatif Wh brut) ────
+    const whRA_cum   = n(m.wh_ra);
+    const whRB_cum   = n(m.wh_rb);
+    const whRC_cum   = n(m.wh_rc);
+    const whRTot_cum = n(m.wh_rtot) || (whRA_cum + whRB_cum + whRC_cum);
 
     // ── Incrémentaux (diff avec row précédent du même device) ─
     const diff = (cur: number, prevVal: number | null | undefined): number =>
@@ -195,7 +244,10 @@ export function transformRowsToProfilMi(
     const whC    = diff(whC_cum,   prev?.wh_c);
     const whTot  = diff(whTot_cum, prev?.wh_tot);
 
-    const whRA = 0, whRB = 0, whRC = 0, whRTot = 0;
+    const whRA   = diff(whRA_cum,   prev?.wh_ra);
+    const whRB   = diff(whRB_cum,   prev?.wh_rb);
+    const whRC   = diff(whRC_cum,   prev?.wh_rc);
+    const whRTot = diff(whRTot_cum, prev?.wh_rtot);
 
     // ── Puissance instantanée (W → kW) ────────────────────────
     const pA_W   = n(m.p_a);
@@ -260,6 +312,28 @@ export function transformRowsToProfilMi(
       kW_RetourB:         kW_RB,
       kW_RetourC:         kW_RC,
       kW_RetourTotal:     kW_RTot,
+
+      // ── Capteurs environnementaux (CAPTEUR_ENV / ETAT) ────────
+      Temperature:        m.temperature ?? null,
+      Humidite:           m.humidity ?? null,
+      Ressenti:           m.feels_like_c ?? null,
+      Point_Rosee:        m.dewpoint_c ?? null,
+      UV_Index:           m.uv_index ?? null,
+      Luminosite:         m.illuminance_lux ?? null,
+      Pression:           m.pressure_hpa ?? null,
+      Tendance_Pression:  m.pressure_slope ?? null,
+      Precipitation:      m.precipitation_mm ?? null,
+      Alarme_Humidite:    m.moisture_alarm ?? null,
+      Vent_Vitesse:       m.wind_speed_ms ?? null,
+      Vent_Rafale:        m.wind_gust_ms ?? null,
+      Vent_Direction:     m.wind_direction_deg ?? null,
+      Etat_Capteur:       m.state ?? null,
+      Angle_Inclinaison:  m.tilt_angle ?? null,
+      Concentration_Gaz:  m.concentration_ppm ?? null,
+      Temp_Interne:       m.device_temp_c ?? null,
+      Batterie:           m.battery_level ?? null,
+      Batterie_V:         m.battery_voltage_v ?? null,
+      Signal:             m.signal_rssi ?? null,
 
       // ── Classifieurs temporels ────────────────────────────────
       Date:           date.toLocaleDateString('fr-FR'),
@@ -370,6 +444,31 @@ export function transformHoraireToProfilMi(
       kW_RetourC:         kW_RC,
       kW_RetourTotal:     kW_RA + kW_RB + kW_RC,
 
+      // ── Capteurs environnementaux (moyennes de l'heure) ───────
+      // Sans ces lignes, toute analyse en granularité horaire — la valeur par
+      // défaut — rendait les capteurs comme des lignes vides : la station météo
+      // et les H&T n'apparaissaient qu'avec des zéros d'énergie.
+      Temperature:        m.temperature_moy ?? null,
+      Humidite:           m.humidity_moy ?? null,
+      Ressenti:           m.feels_like_c_moy ?? null,
+      Point_Rosee:        m.dewpoint_c_moy ?? null,
+      UV_Index:           m.uv_index_moy ?? null,
+      Luminosite:         m.illuminance_lux_moy ?? null,
+      Pression:           m.pressure_hpa_moy ?? null,
+      Tendance_Pression:  m.pressure_slope_dernier ?? null,
+      Precipitation:      m.precipitation_mm ?? null,
+      Alarme_Humidite:    m.moisture_alarm ?? null,
+      Vent_Vitesse:       m.wind_speed_ms_moy ?? null,
+      Vent_Rafale:        m.wind_gust_ms_max ?? null,
+      Vent_Direction:     m.wind_direction_deg_moy ?? null,
+      Etat_Capteur:       m.state_dernier ?? null,
+      Angle_Inclinaison:  m.tilt_angle_moy ?? null,
+      Concentration_Gaz:  m.concentration_ppm_moy ?? null,
+      Temp_Interne:       m.device_temp_c_moy ?? null,
+      Batterie:           m.battery_level_min ?? null,
+      Batterie_V:         m.battery_voltage_v_moy ?? null,
+      Signal:             m.signal_rssi_moy ?? null,
+
       Date:           date.toLocaleDateString('fr-FR'),
       Date_longue:    date.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
       Jour:           date.toLocaleDateString('fr-FR', { weekday: 'long' }),
@@ -401,6 +500,131 @@ export function transformHoraireToProfilMi(
   });
 }
 
+// ── Pagination ────────────────────────────────────────────────
+// PostgREST plafonne toute réponse à 1000 lignes. Sans pagination, choisir
+// "Illimité" ne renvoyait que les 1000 lignes les plus anciennes — soit
+// quelques heures au lieu de la période demandée, et (le tri se faisant
+// ensuite par appareil) souvent les données d'un seul capteur.
+const PAGE_ROWS = 1000;
+const MAX_ROWS  = 200_000; // garde-fou mémoire navigateur
+
+interface RangeableQuery<T> {
+  range(from: number, to: number): PromiseLike<{ data: T[] | null; error: unknown }>;
+}
+
+/** Pagination par OFFSET — réservée aux volumes modérés (table horaire). */
+async function fetchAllPaginated<T>(
+  buildQuery: () => RangeableQuery<T>,
+  limit?: number,
+): Promise<T[]> {
+  const out: T[] = [];
+  const hardCap = Math.min(limit ?? MAX_ROWS, MAX_ROWS);
+  let from = 0;
+  while (from < hardCap) {
+    const to = Math.min(from + PAGE_ROWS, hardCap) - 1;
+    const { data, error } = await buildQuery().range(from, to);
+    if (error) throw error;
+    const batch = data ?? [];
+    out.push(...batch);
+    if (batch.length < to - from + 1) break; // dernière page atteinte
+    from = to + 1;
+  }
+  return out;
+}
+
+/**
+ * Pagination « keyset » (curseur sur `ts`) appareil par appareil.
+ *
+ * La table shelly_cl porte l'index `(device_id, ts)`. Toute lecture qui s'en
+ * écarte devient très coûteuse sur des centaines de milliers de lignes — mesuré
+ * sur une sélection réelle de 94 000 lignes :
+ *   - pagination OFFSET (tous appareils, tri par ts) → 4,6 s à l'offset 90 000,
+ *     soit ~4 min pour parcourir l'ensemble (le coût croît à chaque page) ;
+ *   - curseur sur la clé primaire `id`              → 6,4 s/page (tri complet,
+ *     l'index (device_id, ts) ne fournit pas l'ordre des id) ;
+ *   - curseur sur `ts`, un seul appareil à la fois  → 76 ms/page.
+ *
+ * On interroge donc chaque appareil séparément, ce qui laisse Postgres suivre
+ * l'index, et on parallélise modérément les appareils.
+ */
+const DEVICE_CONCURRENCY = 4;
+
+interface TsKeysetQuery<T> {
+  eq(column: string, value: string): {
+    gt(column: string, value: string): {
+      order(column: string, opts: { ascending: boolean }): {
+        limit(n: number): PromiseLike<{ data: T[] | null; error: unknown }>;
+      };
+    };
+  };
+}
+
+async function fetchDeviceKeyset<T extends { ts?: string }>(
+  buildQuery: () => TsKeysetQuery<T>,
+  deviceId: string,
+  cap: number,
+  dateDebut?: string,
+): Promise<T[]> {
+  const out: T[] = [];
+  // Curseur initial : borne basse de la période (ou epoch si non bornée)
+  let cursor = dateDebut ?? '1970-01-01T00:00:00Z';
+  while (out.length < cap) {
+    const pageSize = Math.min(PAGE_ROWS, cap - out.length);
+    const { data, error } = await buildQuery()
+      .eq('device_id', deviceId)
+      .gt('ts', cursor)
+      .order('ts', { ascending: true })
+      .limit(pageSize);
+    if (error) throw error;
+    const batch = data ?? [];
+    if (batch.length === 0) break;
+    out.push(...batch);
+    const last = batch[batch.length - 1].ts;
+    // Curseur bloqué (horodatages identiques sur toute la page) : on arrête
+    // plutôt que de boucler indéfiniment.
+    if (typeof last !== 'string' || last === cursor) break;
+    cursor = last;
+    if (batch.length < pageSize) break; // dernière page pour cet appareil
+  }
+  return out;
+}
+
+async function fetchAllDevicesKeyset<T extends { ts?: string }>(
+  buildQuery: () => TsKeysetQuery<T>,
+  deviceIds: string[],
+  limit?: number,
+  dateDebut?: string,
+): Promise<T[]> {
+  const hardCap = Math.min(limit ?? MAX_ROWS, MAX_ROWS);
+  const out: T[] = [];
+  for (let i = 0; i < deviceIds.length; i += DEVICE_CONCURRENCY) {
+    if (out.length >= hardCap) break;
+    const lot = deviceIds.slice(i, i + DEVICE_CONCURRENCY);
+    const perDeviceCap = Math.max(1, Math.floor((hardCap - out.length) / lot.length));
+    const results = await Promise.all(
+      lot.map(id => fetchDeviceKeyset(buildQuery, id, perDeviceCap, dateDebut)),
+    );
+    for (const r of results) out.push(...r);
+  }
+  return out;
+}
+
+/** Liste des appareils concernés — nécessaire pour interroger appareil par appareil. */
+async function resolveDeviceIds(opts: {
+  deviceIds?: string[]; site?: string; deviceFamily?: string;
+  deviceType?: string; deviceName?: string;
+}): Promise<string[]> {
+  if (opts.deviceIds && opts.deviceIds.length > 0) return opts.deviceIds;
+  let q = supabase.from('shelly_devices_catalog').select('device_id');
+  if (opts.site)         q = q.eq('site', opts.site);
+  if (opts.deviceFamily) q = q.eq('device_family', opts.deviceFamily);
+  if (opts.deviceType)   q = q.eq('device_type', opts.deviceType);
+  if (opts.deviceName)   q = q.eq('name', opts.deviceName);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []).map(d => (d as { device_id: string }).device_id);
+}
+
 // ── Fonction principale d'export ──────────────────────────────
 export async function exporterDonneesSupabase(
   options: SupabaseExportOptions,
@@ -426,37 +650,42 @@ export async function exporterDonneesSupabase(
   try {
     if (granularite === 'horaire') {
       // ── Table shelly_cl_horaire : wh_conso déjà incrémental ──
-      let query = supabase
-        .from('shelly_cl_horaire')
-        .select('*')
-        .order('ts_heure', { ascending: true });
-      if (limit) query = query.limit(limit);
+      const buildHoraireQuery = () => {
+        let query = supabase
+          .from('shelly_cl_horaire')
+          .select('*')
+          .order('ts_heure', { ascending: true });
 
-      if (site)         query = query.eq('site', site);
-      if (deviceFamily) query = query.eq('device_family', deviceFamily);
-      if (deviceType)   query = query.eq('device_type', deviceType);
-      if (deviceName)   query = query.eq('name', deviceName);
-      if (deviceIds && deviceIds.length > 0) query = query.in('device_id', deviceIds);
-      if (dateDebut)    query = query.gte('ts_heure', dateDebut);
-      if (dateFin)      query = query.lte('ts_heure', dateFin);
+        if (site)         query = query.eq('site', site);
+        if (deviceFamily) query = query.eq('device_family', deviceFamily);
+        if (deviceType)   query = query.eq('device_type', deviceType);
+        if (deviceName)   query = query.eq('name', deviceName);
+        if (deviceIds && deviceIds.length > 0) query = query.in('device_id', deviceIds);
+        if (dateDebut)    query = query.gte('ts_heure', dateDebut);
+        if (dateFin)      query = query.lte('ts_heure', dateFin);
+        return query;
+      };
 
       // En parallèle : mapping device_id → room (absent de shelly_cl_horaire)
       let roomQuery = supabase
         .from(SHELLY_TABLE)
         .select('device_id,room')
         .not('room', 'is', null)
+        .order('ts', { ascending: false })
         .limit(5000);
       if (site)                              roomQuery = roomQuery.eq('site', site);
       if (deviceIds && deviceIds.length > 0) roomQuery = roomQuery.in('device_id', deviceIds);
 
-      const [{ data, error }, { data: roomData }] = await Promise.all([query, roomQuery]);
-      if (error) throw error;
+      const [data, { data: roomData }] = await Promise.all([
+        fetchAllPaginated<ShellyHoraireRow>(buildHoraireQuery, limit),
+        roomQuery,
+      ]);
 
       const roomMap = new Map<string, string>();
       for (const r of roomData ?? []) {
         if (r.room && !roomMap.has(r.device_id)) roomMap.set(r.device_id, r.room);
       }
-      const enriched = ((data ?? []) as ShellyHoraireRow[]).map(m => ({
+      const enriched = data.map(m => ({
         ...m,
         room: m.room ?? roomMap.get(m.device_id) ?? null,
       }));
@@ -466,27 +695,23 @@ export async function exporterDonneesSupabase(
 
     } else {
       // ── Table shelly_cl : compteurs cumulatifs, diff LAG côté client ──
-      let query = supabase
-        .from(SHELLY_TABLE)
-        .select('*')
-        .order('ts', { ascending: true });
-      if (limit) query = query.limit(limit);
+      // Interrogation appareil par appareil (voir fetchAllDevicesKeyset) : le
+      // filtre device_id et l'ordre sur ts sont posés par la pagination.
+      const buildMinuteQuery = () => {
+        let query = supabase
+          .from(SHELLY_TABLE)
+          .select('*');
+        if (dateFin) query = query.lte('ts', dateFin);
+        return query;
+      };
 
-      if (site)         query = query.eq('site', site);
-      if (deviceFamily) query = query.eq('device_family', deviceFamily);
-      if (deviceType)   query = query.eq('device_type', deviceType);
-      if (deviceName)   query = query.eq('name', deviceName);
-      if (deviceIds && deviceIds.length > 0) query = query.in('device_id', deviceIds);
-      if (dateDebut)    query = query.gte('ts', dateDebut);
-      if (dateFin)      query = query.lte('ts', dateFin);
+      const ids = await resolveDeviceIds({ deviceIds, site, deviceFamily, deviceType, deviceName });
+      if (ids.length === 0) {
+        return { rows: [], total: 0, erreur: 'Aucun appareil ne correspond aux filtres sélectionnés' };
+      }
+      const data = await fetchAllDevicesKeyset<ShellyRow>(buildMinuteQuery, ids, limit, dateDebut);
 
-      const { data, error } = await query;
-      if (error) throw error;
-
-      const rows = transformRowsToProfilMi(
-        (data ?? []) as ShellyRow[],
-        colonnesValides,
-      );
+      const rows = transformRowsToProfilMi(data, colonnesValides);
       return { rows, total: rows.length };
     }
   } catch (err) {
@@ -498,8 +723,9 @@ export async function exporterDonneesSupabase(
 // ── Catalogue des appareils Shelly intégrés ───────────────────
 export interface DisponiblesResult {
   sites: string[];
-  devices: { name: string; device_id: string; device_family: string; site: string }[];
+  devices: { name: string; device_id: string; device_family: string; site: string; room?: string | null }[];
   deviceFamilies: string[];
+  rooms: string[];
 }
 
 const KNOWN_SHELLY_DEVICES: DisponiblesResult['devices'] = [
@@ -566,23 +792,44 @@ const KNOWN_SHELLY_DEVICES: DisponiblesResult['devices'] = [
   { device_id: '34b7da8a47a0', name: 'Eclairage Disjoncteur 1', device_family: 'ENERGIE_1PH', site: 'Académie CER2E' },
   { device_id: '34b7da8a4aa0', name: 'Eclairage Disjoncteur 2', device_family: 'ENERGIE_1PH', site: 'Académie CER2E' },
   { device_id: '1720017229409', name: 'Appareil inconnu (fantome)', device_family: 'ETAT', site: 'Académie CER2E' },
+  { device_id: 'XB61819871591478', name: "Capteur d'ouverture de portes", device_family: 'ETAT', site: 'Donsin' },
+  { device_id: 'XB211299189491624', name: 'Station meteo_Donsin', device_family: 'CAPTEUR_ENV', site: 'Donsin' },
+  { device_id: '5432045b35d0', name: 'Shelly H&T_Donsin', device_family: 'CAPTEUR_ENV', site: 'Donsin' },
+  { device_id: '0892724e2c28', name: 'Shelly Plug M_Donsin', device_family: 'ENERGIE_1PH', site: 'Donsin' },
 ];
 
 export async function fetchDisponibles(): Promise<DisponiblesResult> {
   try {
     const sitesSet    = new Set<string>();
     const familiesSet = new Set<string>();
+    const roomsSet    = new Set<string>();
     const deviceMap   = new Map<string, DisponiblesResult['devices'][number]>();
 
-    for (const r of KNOWN_SHELLY_DEVICES) {
+    // Catalogue live : une ligne par appareil avec ses métadonnées les plus
+    // récentes (vue shelly_devices_catalog). KNOWN_SHELLY_DEVICES ne sert plus
+    // que de filet si la vue est indisponible : cette liste codée en dur ne
+    // suit ni les renommages ni les changements de site côté Shelly Cloud
+    // (ex. 441d6475d44c = "Arrivée générale"/Donsin, listé "Compteur 2"/Académie).
+    const { data: catalogData, error: catalogError } = await supabase
+      .from('shelly_devices_catalog')
+      .select('device_id,name,site,room,device_family');
+    if (catalogError) throw catalogError;
+
+    const catalogue = (catalogData ?? []) as DisponiblesResult['devices'];
+    const source = catalogue.length > 0 ? catalogue : KNOWN_SHELLY_DEVICES;
+
+    for (const r of source) {
       if (r.site)          sitesSet.add(r.site);
       if (r.device_family) familiesSet.add(r.device_family);
+      const room = r.room ?? null;
+      if (room) roomsSet.add(room);
       if (r.device_id && !deviceMap.has(r.device_id)) {
         deviceMap.set(r.device_id, {
           name:          r.name          ?? r.device_id,
           device_id:     r.device_id,
           device_family: r.device_family ?? '',
           site:          r.site          ?? '',
+          room,
         });
       }
     }
@@ -591,9 +838,10 @@ export async function fetchDisponibles(): Promise<DisponiblesResult> {
       sites:          Array.from(sitesSet).sort(),
       devices:        Array.from(deviceMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
       deviceFamilies: Array.from(familiesSet).sort(),
+      rooms:          Array.from(roomsSet).sort(),
     };
   } catch {
-    return { sites: [], devices: [], deviceFamilies: [] };
+    return { sites: [], devices: [], deviceFamilies: [], rooms: [] };
   }
 }
 

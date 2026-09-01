@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import * as XLSX from 'xlsx';
+import { exportMultiSheetXlsx } from '@/lib/excel-utils';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
@@ -105,15 +105,6 @@ function horaireToShellyRows(rows: HoraireRow[]): ShellyRow[] {
 
 type ViewMode = 'journalier' | 'mensuel' | 'phases';
 type ChartType = 'aire' | 'barres';
-
-const COLORS = {
-  total: '#3b82f6',
-  phaseA: '#22c55e',
-  phaseB: '#f59e0b',
-  phaseC: '#ec4899',
-  retour: '#a78bfa',
-  net: '#06b6d4',
-};
 
 function KPICard({ label, value, unit, sub, color = 'blue' }: {
   label: string; value: string; unit: string; sub?: string; color?: string;
@@ -384,37 +375,39 @@ export function ProfilChargeTab() {
   );
 
   // Export Excel
-  const exportExcel = () => {
-    const wb = XLSX.utils.book_new();
-
-    // Onglet données journalières
-    const wsData = XLSX.utils.json_to_sheet(filteredRows.map(r => ({
-      'Date': (r.date instanceof Date ? r.date : new Date(r.date as string)).toLocaleDateString('fr-FR'),
-      'Jour': r.jour,
-      'Mois': r.mois,
-      'Année': r.annee,
-      'Wh Phase A': r.whPhaseA, 'Wh Phase B': r.whPhaseB, 'Wh Phase C': r.whPhaseC, 'Wh Total': r.whTotal,
-      'Wh Retour A': r.whRetourA, 'Wh Retour B': r.whRetourB, 'Wh Retour C': r.whRetourC, 'Wh Retour Total': r.whRetourTotal,
-      'kWh A': +((r.kwhA ?? 0).toFixed(3)), 'kWh B': +((r.kwhB ?? 0).toFixed(3)), 'kWh C': +((r.kwhC ?? 0).toFixed(3)), 'kWh Total': +((r.kwhTotal ?? 0).toFixed(3)),
-      'kWh Retour A': +((r.kwhRetourA ?? 0).toFixed(3)), 'kWh Retour B': +((r.kwhRetourB ?? 0).toFixed(3)), 'kWh Retour C': +((r.kwhRetourC ?? 0).toFixed(3)), 'kWh Retour Total': +((r.kwhRetourTotal ?? 0).toFixed(3)),
-      'kWh Cum Total': +((r.kwhCumTotal ?? 0).toFixed(3)),
-      'Puiss. kW A': +((r.puissKwA ?? 0).toFixed(3)), 'Puiss. kW B': +((r.puissKwB ?? 0).toFixed(3)), 'Puiss. kW C': +((r.puissKwC ?? 0).toFixed(3)), 'Puiss. kW Total': +((r.puissKwTotal ?? 0).toFixed(3)),
-      'kWh Net': +((r.kwhNet ?? 0).toFixed(3)),
-      'Profil': r.profil,
-    })));
-    XLSX.utils.book_append_sheet(wb, wsData, 'PROFIL CHARGE');
-
-    // Onglet mensuel
-    const wsMonthly = XLSX.utils.json_to_sheet(chartDataMensuel.map(m => ({
-      'Mois': m.mois,
-      'kWh Total': m.kwhTotal,
-      'kWh Net': m.kwhNet,
-      'kWh Retour': m.kwhRetour,
-      'Nb jours': m.nbJours,
-    })));
-    XLSX.utils.book_append_sheet(wb, wsMonthly, 'Mensuel');
-
-    XLSX.writeFile(wb, 'profil_charge_shelly.xlsx');
+  const exportExcel = async () => {
+    await exportMultiSheetXlsx(
+      [
+        {
+          name: 'PROFIL CHARGE',
+          data: filteredRows.map(r => ({
+            'Date': (r.date instanceof Date ? r.date : new Date(r.date as string)).toLocaleDateString('fr-FR'),
+            'Jour': r.jour,
+            'Mois': r.mois,
+            'Année': r.annee,
+            'Wh Phase A': r.whPhaseA, 'Wh Phase B': r.whPhaseB, 'Wh Phase C': r.whPhaseC, 'Wh Total': r.whTotal,
+            'Wh Retour A': r.whRetourA, 'Wh Retour B': r.whRetourB, 'Wh Retour C': r.whRetourC, 'Wh Retour Total': r.whRetourTotal,
+            'kWh A': +((r.kwhA ?? 0).toFixed(3)), 'kWh B': +((r.kwhB ?? 0).toFixed(3)), 'kWh C': +((r.kwhC ?? 0).toFixed(3)), 'kWh Total': +((r.kwhTotal ?? 0).toFixed(3)),
+            'kWh Retour A': +((r.kwhRetourA ?? 0).toFixed(3)), 'kWh Retour B': +((r.kwhRetourB ?? 0).toFixed(3)), 'kWh Retour C': +((r.kwhRetourC ?? 0).toFixed(3)), 'kWh Retour Total': +((r.kwhRetourTotal ?? 0).toFixed(3)),
+            'kWh Cum Total': +((r.kwhCumTotal ?? 0).toFixed(3)),
+            'Puiss. kW A': +((r.puissKwA ?? 0).toFixed(3)), 'Puiss. kW B': +((r.puissKwB ?? 0).toFixed(3)), 'Puiss. kW C': +((r.puissKwC ?? 0).toFixed(3)), 'Puiss. kW Total': +((r.puissKwTotal ?? 0).toFixed(3)),
+            'kWh Net': +((r.kwhNet ?? 0).toFixed(3)),
+            'Profil': r.profil,
+          })),
+        },
+        {
+          name: 'Mensuel',
+          data: chartDataMensuel.map(m => ({
+            'Mois': m.mois,
+            'kWh Total': m.kwhTotal,
+            'kWh Net': m.kwhNet,
+            'kWh Retour': m.kwhRetour,
+            'Nb jours': m.nbJours,
+          })),
+        },
+      ],
+      'profil_charge_shelly.xlsx'
+    );
   };
 
 
@@ -738,7 +731,7 @@ export function ProfilChargeTab() {
             </div>
           </div>
 
-          <ResponsiveContainer width="100%" height={360}>
+          <ResponsiveContainer key={`${viewMode}-${chartType}`} width="100%" height={360}>
             {viewMode === 'mensuel' ? (
               <BarChart data={chartDataMensuel} margin={{ top: 10, right: 30, bottom: 30, left: 30 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />

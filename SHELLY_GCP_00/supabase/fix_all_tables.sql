@@ -105,9 +105,14 @@ ALTER TABLE shelly_accounts
 
 
 -- ── BLOC 4 : Créer la RPC fn_energy_by_device ───────────────────────────────
--- Calcul précis kWh par appareil sur une plage de dates,
--- via delta MAX(wh_tot)-MIN(wh_tot) sur shelly_cl (pas de dépendance à horaire).
--- Utilisée par le dashboard modes 7j/30j.
+-- Calcul précis kWh par appareil sur une plage de dates.
+-- On ne lit que les DEUX bornes (première/dernière lecture wh_tot par appareil)
+-- via LATERAL sur l'index (device_id, ts) → rapide même sur 30j, et le delta du
+-- compteur cumulatif traverse les trous de polling (données réelles).
+-- Utilisée par le dashboard pour 1h / 24h / 7j / 30j.
+-- NB : la clause `SET statement_timeout` (niveau fonction) est compatible STABLE,
+--      contrairement à `SET LOCAL` dans le corps (→ "SET is not allowed in a
+--      non-volatile function").
 
 CREATE OR REPLACE FUNCTION fn_energy_by_device(
   p_since      timestamptz,
@@ -117,28 +122,47 @@ CREATE OR REPLACE FUNCTION fn_energy_by_device(
   p_device_ids text[] DEFAULT NULL
 )
 RETURNS TABLE(device_id text, name text, site text, device_family text, kwh float8)
-LANGUAGE plpgsql STABLE SECURITY DEFINER
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET statement_timeout = '55s'
 AS $$
-BEGIN
-  SET LOCAL statement_timeout = '30000'; -- évite le timeout PostgREST sur 30j
-  RETURN QUERY
+  WITH devs AS (
+    SELECT DISTINCT h.device_id
+    FROM shelly_cl_horaire h
+    WHERE h.ts_heure >= (p_since AT TIME ZONE 'UTC')
+      AND h.ts_heure <= (p_until AT TIME ZONE 'UTC')
+      AND h.device_family LIKE 'ENERGIE%'  -- seuls ces appareils ont wh_tot
+      AND (p_sites      IS NULL OR h.site          = ANY(p_sites))
+      AND (p_families   IS NULL OR h.device_family = ANY(p_families))
+      AND (p_device_ids IS NULL OR h.device_id     = ANY(p_device_ids))
+  )
   SELECT
-    sc.device_id,
-    MAX(sc.name)          AS name,
-    MAX(sc.site)          AS site,
-    MAX(sc.device_family) AS device_family,
-    GREATEST(0, (MAX(sc.wh_tot) - MIN(sc.wh_tot)) / 1000.0) AS kwh
-  FROM shelly_cl sc
-  WHERE sc.ts >= p_since
-    AND sc.ts <= p_until
-    AND sc.wh_tot IS NOT NULL
-    AND (p_sites      IS NULL OR sc.site          = ANY(p_sites))
-    AND (p_families   IS NULL OR sc.device_family = ANY(p_families))
-    AND (p_device_ids IS NULL OR sc.device_id     = ANY(p_device_ids))
-  GROUP BY sc.device_id
+    d.device_id, lastr.name, lastr.site, lastr.device_family,
+    GREATEST(0, (lastr.last_w - firstr.first_w) / 1000.0) AS kwh
+  FROM devs d
+  -- Filtre wh_tot IS NOT NULL indispensable (lignes de bord parfois toutes NULL)
+  -- + index partiel idx_shelly_cl_dev_ts_whtot → seek O(1).
+  CROSS JOIN LATERAL (
+    SELECT s.wh_tot AS last_w, s.name, s.site, s.device_family
+    FROM shelly_cl s
+    WHERE s.device_id = d.device_id AND s.ts >= p_since AND s.ts <= p_until
+      AND s.wh_tot IS NOT NULL
+    ORDER BY s.ts DESC LIMIT 1
+  ) lastr
+  CROSS JOIN LATERAL (
+    SELECT s.wh_tot AS first_w
+    FROM shelly_cl s
+    WHERE s.device_id = d.device_id AND s.ts >= p_since AND s.ts <= p_until
+      AND s.wh_tot IS NOT NULL
+    ORDER BY s.ts ASC LIMIT 1
+  ) firstr
   ORDER BY kwh DESC;
-END;
 $$;
+
+-- Index partiel requis (rapidité) — à lancer séparément (CONCURRENTLY hors transaction) :
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_shelly_cl_dev_ts_whtot
+--     ON shelly_cl (device_id, ts) WHERE wh_tot IS NOT NULL;
 
 
 -- ── Vérification ─────────────────────────────────────────────────────────────

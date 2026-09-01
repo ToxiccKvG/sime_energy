@@ -4,7 +4,7 @@
 // ============================================================
 
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import * as XLSX from 'xlsx';
+import { exportJsonToXlsx } from '@/lib/excel-utils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -31,6 +31,38 @@ import { supabase } from '@/lib/supabase';
 // ============================================================
 // TYPES
 // ============================================================
+
+// ── Nom de fichier auto-généré depuis le site / la pièce / l'appareil détectés
+//    dans les données, pour distinguer les fichiers nettoyés entre eux au lieu
+//    du générique "données - nettoye" répété pour chaque site.
+type IdentiteRow = Pick<ShellyRow, 'deviceLocation' | 'deviceRoom' | 'nomAppareil'>;
+
+function pickStr(r: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+function buildCleanedFileName(rows: IdentiteRow[], fallback: string): string {
+  const uniq = (vals: (string | undefined)[]) =>
+    Array.from(new Set(vals.filter((v): v is string => Boolean(v && v.trim()))));
+  const sites     = uniq(rows.map(r => r.deviceLocation));
+  const pieces    = uniq(rows.map(r => r.deviceRoom));
+  const appareils = uniq(rows.map(r => r.nomAppareil));
+
+  const label = (vals: string[], pluriel: string) =>
+    vals.length === 1 ? vals[0] : vals.length > 1 ? `${vals.length} ${pluriel}` : null;
+
+  const parts = [
+    label(sites, 'sites'),
+    label(pieces, 'pièces'),
+    label(appareils, 'appareils'),
+  ].filter((p): p is string => Boolean(p));
+
+  return (parts.length > 0 ? parts.join(' - ') : fallback) + ' - nettoyé';
+}
 
 type ColType = 'date' | 'num' | 'text';
 type IssueType = 'duplicates_day' | 'duplicates_exact' | 'zeros' | 'outliers' | 'gaps' | 'negatives' | 'phase_mismatch';
@@ -100,6 +132,27 @@ const COLUMNS: ColDef[] = [
   { key: 'heuresTravail',       label: 'H. Travail',    type: 'text', editable: false, defaultVisible: false, width: 130 },
   { key: 'whTotal',             label: 'Wh Total',      type: 'num',  editable: true,  defaultVisible: false, width: 80  },
   { key: 'whRetourTotal',       label: 'Wh Retour',     type: 'num',  editable: true,  defaultVisible: false, width: 90  },
+  // ── Capteurs environnementaux (CAPTEUR_ENV / ETAT) ──
+  { key: 'temperature',         label: 'Température',   type: 'num',  editable: true,  defaultVisible: true,  width: 90  },
+  { key: 'humidite',            label: 'Humidité',      type: 'num',  editable: true,  defaultVisible: true,  width: 85  },
+  { key: 'etatCapteur',         label: 'État',           type: 'text', editable: false, defaultVisible: true,  width: 90  },
+  { key: 'batterie',            label: 'Batterie',      type: 'num',  editable: false, defaultVisible: true,  width: 80  },
+  { key: 'signal',              label: 'Signal',        type: 'num',  editable: false, defaultVisible: false, width: 75  },
+  { key: 'ressenti',            label: 'Ressenti',      type: 'num',  editable: true,  defaultVisible: false, width: 85  },
+  { key: 'pointRosee',          label: 'Pt. Rosée',     type: 'num',  editable: true,  defaultVisible: false, width: 85  },
+  { key: 'uvIndex',             label: 'UV',             type: 'num',  editable: true,  defaultVisible: false, width: 60  },
+  { key: 'luminosite',          label: 'Luminosité',    type: 'num',  editable: true,  defaultVisible: false, width: 95  },
+  { key: 'pression',            label: 'Pression',      type: 'num',  editable: true,  defaultVisible: false, width: 85  },
+  { key: 'tendancePression',    label: 'Tend. Press.',  type: 'text', editable: false, defaultVisible: false, width: 100 },
+  { key: 'precipitation',       label: 'Précip.',       type: 'num',  editable: true,  defaultVisible: false, width: 80  },
+  { key: 'alarmeHumidite',      label: 'Alarme Pluie',  type: 'text', editable: false, defaultVisible: false, width: 100 },
+  { key: 'ventVitesse',         label: 'Vent',           type: 'num',  editable: true,  defaultVisible: false, width: 75  },
+  { key: 'ventRafale',          label: 'Rafale',        type: 'num',  editable: true,  defaultVisible: false, width: 75  },
+  { key: 'ventDirection',       label: 'Dir. Vent',     type: 'num',  editable: true,  defaultVisible: false, width: 85  },
+  { key: 'angleInclinaison',    label: 'Inclinaison',   type: 'num',  editable: false, defaultVisible: false, width: 95  },
+  { key: 'concentrationGaz',    label: 'Gaz',            type: 'num',  editable: true,  defaultVisible: false, width: 75  },
+  { key: 'tempInterne',         label: 'Temp. Interne', type: 'num',  editable: false, defaultVisible: false, width: 100 },
+  { key: 'batterieV',           label: 'Batterie (V)',  type: 'num',  editable: false, defaultVisible: false, width: 100 },
 ];
 
 const ENUM_OPTIONS: Partial<Record<keyof ShellyRow, string[]>> = {
@@ -119,6 +172,9 @@ const NUM_COLS: (keyof ShellyRow)[] = [
   'whTotal', 'whRetourTotal',
 ];
 
+// Colonnes structurelles toujours affichées, quel que soit le contenu (identité + temps)
+const ALWAYS_VISIBLE_COLS = new Set<string>(['date', 'nomAppareil', 'deviceLocation', 'deviceRoom', 'jour', 'jourActivites']);
+
 const EMPTY_FILTERS: Filters = { dateFrom: '', dateTo: '', typeJour: [], kwhMin: '', kwhMax: '' };
 const PAGE_SIZE    = 50;
 const FILE_PAGE_SIZE = 50;
@@ -130,7 +186,15 @@ const OUTLIER_SIGMA  = 2.5;
 
 function formatCell(row: ShellyRow, col: keyof ShellyRow): string {
   const v = row[col];
-  if (v instanceof Date) return v.toLocaleDateString('fr-FR');
+  // Afficher l'heure dès que le relevé n'est pas à minuit : sinon les séries
+  // infra-journalières (relevés à la minute) semblaient toutes porter la même date.
+  if (v instanceof Date) {
+    const hasTime = v.getHours() !== 0 || v.getMinutes() !== 0 || v.getSeconds() !== 0;
+    return hasTime
+      ? `${v.toLocaleDateString('fr-FR')} ${v.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+      : v.toLocaleDateString('fr-FR');
+  }
+  if (typeof v === 'boolean') return v ? 'Oui' : 'Non';
   if (typeof v === 'number') {
     if (isNaN(v)) return '';
     const digits = 3;
@@ -188,15 +252,54 @@ function deviceKey(r: ShellyRow): string {
   return `${r.nomAppareil ?? ''}|${r.deviceLocation ?? ''}|${r.deviceRoom ?? ''}`;
 }
 
+/**
+ * Vrai si le jeu de données est infra-journalier (plusieurs relevés par jour
+ * pour un même appareil, à des heures différentes).
+ *
+ * Le contrôle « doublons par (date, appareil) » ne vaut que pour les exports
+ * journaliers historiques (une ligne par jour et par appareil). Sur des relevés
+ * à la minute ou à l'heure — cas des exports Supabase — deux lignes du même jour
+ * ne sont pas des doublons mais une série temporelle : les traiter comme tels
+ * réduisait 1440 relevés/jour à une seule ligne (celle de 23:59).
+ */
+function isSubDaily(rows: ShellyRow[]): boolean {
+  const firstTimeByDay = new Map<string, string>();
+  for (const r of rows) {
+    const d = toDate(r.date);
+    const iso = d.toISOString();
+    const dayKey  = `${iso.slice(0, 10)}|${deviceKey(r)}`;
+    const timeKey = iso.slice(11, 19);
+    const seen = firstTimeByDay.get(dayKey);
+    if (seen === undefined) firstTimeByDay.set(dayKey, timeKey);
+    else if (seen !== timeKey) return true;
+  }
+  return false;
+}
+
 function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
   const issues: Omit<Issue, 'ignored'>[] = [];
   if (rows.length === 0) return issues;
 
-  // 1. Doublons par (date, appareil)
-  const dateMap = new Map<string, number>();
+  // Appareils qui mesurent réellement de l'énergie (au moins un relevé non nul).
+  // Les contrôles portant sur les kWh ne s'appliquent qu'à eux : sur un capteur
+  // de température ou d'ouverture de porte, une consommation nulle est normale.
+  const energyDevices = new Set<string>();
   for (const r of rows) {
-    const k = `${toDate(r.date).toISOString().slice(0, 10)}|${deviceKey(r)}`;
-    dateMap.set(k, (dateMap.get(k) ?? 0) + 1);
+    if (r.kwhTotal !== 0 || r.whTotal !== 0 || r.puissKwTotal !== 0 || r.kwhRetourTotal !== 0) {
+      energyDevices.add(deviceKey(r));
+    }
+  }
+
+  // 1. Doublons par (date, appareil) — uniquement sur des données journalières.
+  //    Sur une série infra-journalière, plusieurs relevés le même jour sont
+  //    attendus : seul le contrôle « doublons exacts » ci-dessous s'applique.
+  const subDaily = isSubDaily(rows);
+  const dateMap = new Map<string, number>();
+  if (!subDaily) {
+    for (const r of rows) {
+      const k = `${toDate(r.date).toISOString().slice(0, 10)}|${deviceKey(r)}`;
+      dateMap.set(k, (dateMap.get(k) ?? 0) + 1);
+    }
   }
   const dupDates = [...dateMap.entries()].filter(([, c]) => c > 1);
   if (dupDates.length > 0) {
@@ -225,7 +328,11 @@ function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
   }
 
   // 3. Lignes vides (kwhTotal=0 ET kwhNet=0)
-  const zeros = rows.filter(r => r.kwhTotal === 0 && r.kwhNet === 0);
+  //    Restreint aux appareils qui mesurent effectivement de l'énergie : pour un
+  //    capteur environnemental ou d'état, kWh = 0 est la valeur normale et non une
+  //    donnée manquante. Les signaler invitait à les « remplir » par moyenne ou
+  //    interpolation, ce qui aurait fabriqué de la consommation inexistante.
+  const zeros = rows.filter(r => energyDevices.has(deviceKey(r)) && r.kwhTotal === 0 && r.kwhNet === 0);
   if (zeros.length > 0) {
     issues.push({
       id: 'zeros',
@@ -288,8 +395,9 @@ function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
     });
   }
 
-  // 7. Incohérence phases vs total
+  // 7. Incohérence phases vs total (appareils énergie uniquement)
   const phaseMismatch = rows.filter(r => {
+    if (!energyDevices.has(deviceKey(r))) return false;
     const sum = r.kwhA + r.kwhB + r.kwhC;
     return r.kwhTotal > 0 && Math.abs(sum - r.kwhTotal) > 0.05;
   });
@@ -435,6 +543,12 @@ export function NettoyageTab() {
   const [visibleCols, setVisibleCols] = useState<Set<string>>(
     new Set(COLUMNS.filter(c => c.defaultVisible).map(c => c.key as string))
   );
+  // Tant que l'utilisateur n'a pas personnalisé manuellement, les colonnes
+  // affichées s'adaptent au contenu réel des données chargées : masque les
+  // colonnes kWh/Puissance pour un jeu 100% capteurs environnementaux, et
+  // inversement masque température/humidité pour un jeu 100% énergie —
+  // au lieu de toujours montrer le même gabarit fixe.
+  const [colsAutoNettoyage, setColsAutoNettoyage] = useState(true);
   const [showColPicker, setShowColPicker] = useState(false);
   const [page, setPage]               = useState(0);
   const [editCell, setEditCell]       = useState<EditCell | null>(null);
@@ -448,6 +562,40 @@ export function NettoyageTab() {
   const [frCase, setFrCase]           = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const sortedRef    = useRef<ShellyRow[]>([]);
+
+  // ---- Colonnes pertinentes selon le contenu réel des données chargées ----
+  // (échantillon des 500 premières lignes — suffisant pour détecter si une
+  // colonne a de vraies valeurs, évite de scanner tout le dataset à chaque frappe)
+  const colsWithData = useMemo(() => {
+    const sample = activeRows.slice(0, 500);
+    const present = new Set<string>();
+    for (const col of COLUMNS) {
+      const key = col.key as string;
+      if (sample.some(r => {
+        const v = r[col.key];
+        if (v === undefined || v === null || v === '') return false;
+        // Les colonnes énergie sont toujours remplies à 0 par parseShellyRow,
+        // même pour un capteur qui ne mesure pas d'énergie : une colonne
+        // numérique entièrement à zéro n'est donc pas une vraie donnée.
+        if (typeof v === 'number') return v !== 0;
+        return true;
+      })) {
+        present.add(key);
+      }
+    }
+    return present;
+  }, [activeRows]);
+
+  useEffect(() => {
+    if (!colsAutoNettoyage || activeRows.length === 0) return;
+    const next = new Set<string>();
+    for (const col of COLUMNS) {
+      const key = col.key as string;
+      if (ALWAYS_VISIBLE_COLS.has(key) || colsWithData.has(key)) next.add(key);
+    }
+    setVisibleCols(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colsWithData, colsAutoNettoyage]);
 
   // ---- Fichiers importés ----
   const [expandedFileId, setExpandedFileId]     = useState<string | null>(null);
@@ -882,9 +1030,8 @@ export function NettoyageTab() {
       const columns = serializedRows.length > 0 ? Object.keys(serializedRows[0]) : [];
       const preview = serializedRows.slice(0, 10);
       const sourceFile = localFileId ? state.files.find(f => f.id === localFileId) : null;
-      const cleanedName = sourceFile
-        ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') + ' - nettoye'
-        : `${localFileName} - nettoye`;
+      const fallbackName = sourceFile ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') : localFileName;
+      const cleanedName = buildCleanedFileName(rowsRecalculees, fallbackName);
       const existingCleaned = sourceFile
         ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
         : null;
@@ -1061,27 +1208,31 @@ export function NettoyageTab() {
       }
       return updated;
     }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [trCol, trOp, trParam, trScope, trColType, activeRows, selectedIndices, pushUndo, setActiveRows]);
 
   // Aperçu : nb de lignes qui seront modifiées
   const trPreviewCount = trScope === 'selected' ? selectedIndices.size : activeRows.length;
 
-  const doExport = useCallback((format: 'xlsx' | 'csv_semicolon' | 'csv_comma' | 'csv_fr' | 'pdf') => {
+  const doExport = useCallback(async (format: 'xlsx' | 'csv_semicolon' | 'csv_comma' | 'csv_fr' | 'pdf') => {
+    // N'exporter que les colonnes affichées : elles s'adaptent déjà au contenu
+    // réel, ce qui évite de sortir toutes les colonnes énergie (vides) pour un
+    // jeu de données de capteurs environnementaux.
+    const exportedCols = COLUMNS.filter(c => visibleCols.has(c.key as string));
     const data = sortedRef.current.map(r => {
       const obj: Record<string, unknown> = {};
-      COLUMNS.forEach(c => {
-        obj[c.label] = c.type === 'date' && r[c.key] instanceof Date
-          ? (r[c.key] as Date).toLocaleDateString('fr-FR')
-          : r[c.key];
+      exportedCols.forEach(c => {
+        const v = r[c.key];
+        // Conserver l'heure : la formater en date seule écrasait la résolution
+        // horaire/minute des relevés Supabase.
+        obj[c.label] = c.type === 'date' && v instanceof Date
+          ? v.toLocaleString('fr-FR')
+          : v;
       });
       return obj;
     });
     if (format === 'xlsx') {
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(data);
-      XLSX.utils.book_append_sheet(wb, ws, 'Données nettoyées');
-      XLSX.writeFile(wb, 'iot_donnees_nettoyees.xlsx');
+      await exportJsonToXlsx(data, 'Données nettoyées', 'iot_donnees_nettoyees.xlsx');
     } else if (format === 'pdf') {
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
       doc.setFontSize(11);
@@ -1117,8 +1268,10 @@ export function NettoyageTab() {
       a.href = url; a.download = 'iot_donnees_nettoyees.csv'; a.click();
       URL.revokeObjectURL(url);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // sortedRef est une ref (toujours à jour) ; visibleCols doit en revanche être
+  // une dépendance, sinon l'export reste figé sur les colonnes du premier rendu.
+   
+  }, [visibleCols]);
 
   // ============================================================
   // DONNÉES DÉRIVÉES
@@ -1320,9 +1473,13 @@ export function NettoyageTab() {
           const columns = serialized.length > 0 ? Object.keys(serialized[0]) : [];
           const preview = serialized.slice(0, 10);
           const sourceFile = genericFileId ? state.files.find(f => f.id === genericFileId) : null;
-          const cleanedName = sourceFile
-            ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') + ' - nettoye'
-            : `${genericFileName} - nettoye`;
+          const fallbackName = sourceFile ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') : genericFileName;
+          const identiteRows: IdentiteRow[] = serialized.map(r => ({
+            deviceLocation: pickStr(r, ['Emplacement', 'Site', 'site', 'deviceLocation']),
+            deviceRoom:     pickStr(r, ['Piece', 'Pièce', 'room', 'Room', 'deviceRoom']),
+            nomAppareil:    pickStr(r, ['Appareil', 'Nom', 'name', 'nomAppareil']),
+          }));
+          const cleanedName = buildCleanedFileName(identiteRows, fallbackName);
           const existingCleaned = sourceFile
             ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
             : null;
@@ -1376,19 +1533,23 @@ export function NettoyageTab() {
       {fichiersPannel}
 
       {/* ---- Bannière mode fichier local ---- */}
-      {hasLocalData && (
+      {/* Barre de sauvegarde : disponible dès qu'il y a des données à l'écran,
+          y compris celles arrivées depuis l'onglet Analyse via le contexte
+          (auparavant conditionnée à un import local, ce qui privait de toute
+          sauvegarde un jeu de données déjà propre venu d'Analyse). */}
+      {activeRows.length > 0 && (
         <div className="flex items-center justify-between bg-green-500/10 border border-green-500/30 rounded-xl px-4 py-2.5">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="h-4 w-4 text-green-400 shrink-0" />
             <span className="text-green-300 text-sm font-medium">Nettoyage : {localFileName ?? 'Données importées'}</span>
-            <Badge className="bg-green-600/20 text-green-300 border-0 text-xs">{localRows.length.toLocaleString('fr-FR')} lignes</Badge>
+            <Badge className="bg-green-600/20 text-green-300 border-0 text-xs">{activeRows.length.toLocaleString('fr-FR')} lignes</Badge>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-500 text-white"
               onClick={() => {
                 // 1. Recalculer kwhNet et cumuls sur les lignes nettoyées
                 const rowsRecalculees = ajouterCumulatifs(
-                  localRows.map(r => ({
+                  activeRows.map(r => ({
                     ...r,
                     kwhNet: Math.max(0, r.kwhTotal - r.kwhRetourTotal),
                   }))
@@ -1401,9 +1562,8 @@ export function NettoyageTab() {
                 const columns = serializedRows.length > 0 ? Object.keys(serializedRows[0]) : [];
                 const preview = serializedRows.slice(0, 10);
                 const sourceFile = localFileId ? state.files.find(f => f.id === localFileId) : null;
-                const cleanedName = sourceFile
-                  ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') + ' - nettoye'
-                  : `${localFileName ?? 'données'} - nettoye`;
+                const fallbackName = sourceFile ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') : (localFileName ?? 'données');
+                const cleanedName = buildCleanedFileName(rowsRecalculees, fallbackName);
                 const existingCleaned = sourceFile
                   ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
                   : null;
@@ -1446,7 +1606,12 @@ export function NettoyageTab() {
               Sauvegarder et stocker
             </Button>
             <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-400 hover:text-white"
-              onClick={() => { setLocalRows([]); setLocalFileName(null); setLocalFileId(null); }}>
+              onClick={() => {
+                setLocalRows([]); setLocalFileName(null); setLocalFileId(null);
+                // Données venues d'Analyse (contexte) : les vider aussi, sinon le
+                // bouton n'aurait aucun effet visible et la barre resterait affichée.
+                if (!hasLocalData) setShellyRows([]);
+              }}>
               Annuler
             </Button>
           </div>
@@ -1902,16 +2067,21 @@ export function NettoyageTab() {
       {showColPicker && (
         <div className="bg-white/5 border border-white/10 rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-white text-sm font-medium">Colonnes visibles</h4>
+            <div className="flex items-center gap-2">
+              <h4 className="text-white text-sm font-medium">Colonnes visibles</h4>
+              <Badge className={colsAutoNettoyage ? 'bg-green-600/20 text-green-300 border-0 text-xs' : 'bg-white/10 text-slate-300 border-0 text-xs'}>
+                {colsAutoNettoyage ? 'Adapté automatiquement' : 'Personnalisé'}
+              </Badge>
+            </div>
             <div className="flex gap-2">
-              <button onClick={() => setVisibleCols(new Set(COLUMNS.map(c => c.key as string)))} className="text-xs text-blue-400 hover:text-blue-300">Tout afficher</button>
-              <button onClick={() => setVisibleCols(new Set(COLUMNS.filter(c => c.defaultVisible).map(c => c.key as string)))} className="text-xs text-slate-400 hover:text-slate-300">Par défaut</button>
+              <button onClick={() => { setColsAutoNettoyage(false); setVisibleCols(new Set(COLUMNS.map(c => c.key as string))); }} className="text-xs text-blue-400 hover:text-blue-300">Tout afficher</button>
+              <button onClick={() => setColsAutoNettoyage(true)} className="text-xs text-slate-400 hover:text-slate-300">Adapter aux données</button>
             </div>
           </div>
           <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
             {COLUMNS.map(col => (
               <label key={col.key as string} className="flex items-center gap-2 text-xs cursor-pointer">
-               <input type="checkbox" checked={visibleCols.has(col.key as string)} onChange={e => setVisibleCols(prev => { const n = new Set(prev); if (e.target.checked) { n.add(col.key as string); } else { n.delete(col.key as string); } return n; })} className="accent-blue-500" />
+               <input type="checkbox" checked={visibleCols.has(col.key as string)} onChange={e => { setColsAutoNettoyage(false); setVisibleCols(prev => { const n = new Set(prev); if (e.target.checked) { n.add(col.key as string); } else { n.delete(col.key as string); } return n; }); }} className="accent-blue-500" />
                 <span className="text-slate-300">{col.label}</span>
               </label>
             ))}

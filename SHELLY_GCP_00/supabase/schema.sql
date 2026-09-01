@@ -38,6 +38,14 @@ create extension if not exists pg_net;    -- Appels HTTP depuis PostgreSQL
 --    temperature  float        — Température °C (capteurs env.)
 --    humidity     float        — Humidité % (capteurs env.)
 --    battery_level int         — Batterie % (capteurs BLU)
+--
+--  Ajout 2026-07-14 (voir migrations/20260714_add_shelly_extended_fields.sql) :
+--    uv_index, illuminance_lux, wind_speed_ms, wind_gust_ms, wind_direction_deg,
+--    pressure_hpa, precipitation_mm, dewpoint_c  — station météo SBWS-90CM
+--    feels_like_c  — calculé côté poll-shelly (indice de chaleur / refroid. éolien), pas natif Shelly
+--    battery_voltage_v, signal_rssi  — diagnostics batterie/signal (tous capteurs BLU/Wi-Fi)
+--    tilt_angle    — inclinaison capteurs porte/fenêtre (SBDW-002C)
+--    device_temp_c, frequency_hz  — température interne relais + fréquence secteur (compteurs énergie)
 -- ============================================================
 
 

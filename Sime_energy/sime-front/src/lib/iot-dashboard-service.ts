@@ -28,7 +28,7 @@ const FAMILY_BY_TYPE: Record<string, DeviceFamily> = {
   'SNPL-00112EU':'ENERGIE_1PH','SNPM-001PCEU16':'ENERGIE_1PH','S3PM-001PCEU16':'ENERGIE_1PH',
   'S3PL-00112EU':'ENERGIE_1PH','S4PL-00416EU':'ENERGIE_1PH','SPSW-104PE16EU':'ENERGIE_1PH','S3PB-O3AR000001':'ENERGIE_1PH',
   'SHCB-1':'LUMIERE','SHBDUO-1':'LUMIERE','SHDM-2':'LUMIERE',
-  'SBHT-003C':'CAPTEUR_ENV','S3SN-0U12A':'CAPTEUR_ENV','SHGS-1':'CAPTEUR_ENV',
+  'SBHT-003C':'CAPTEUR_ENV','S3SN-0U12A':'CAPTEUR_ENV','S3SN-0U53X':'CAPTEUR_ENV','SHGS-1':'CAPTEUR_ENV','SBWS-90CM':'CAPTEUR_ENV',
   'SBDW-002C':'ETAT','SBBT-002C':'ETAT','SBMO-003Z':'ETAT','SHMOS-02':'ETAT','S3SW-001P8EU':'ETAT','LOQED':'ETAT',
 };
 
@@ -127,6 +127,12 @@ export interface ShellyClRow {
   device_type: string | null;
   device_family: string | null;
   state: string | null;
+  // Métadonnées de mesure (migration 20260828_add_shelly_measurement_metadata) :
+  // `ts` est l'instant du polling, `measured_at` celui du relevé lui-même.
+  measured_at: string | null;
+  online: boolean | null;
+  firmware_version: string | null;
+  battery_low: boolean | null;
   power_w: number | null;
   voltage_v: number | null;
   current_a: number | null;
@@ -134,9 +140,35 @@ export interface ShellyClRow {
   v_a: number | null; v_b: number | null; v_c: number | null;
   i_a: number | null; i_b: number | null; i_c: number | null;
   wh_a: number | null; wh_b: number | null; wh_c: number | null; wh_tot: number | null;
+  // Compteur retour/injection — nécessaire pour les TC montés à l'envers (sens_inverse)
+  wh_rtot: number | null;
   temperature: number | null;
   humidity: number | null;
   battery_level: number | null;
+  // Station météo (SBWS-90CM) — ajout 2026-07-14
+  uv_index: number | null;
+  illuminance_lux: number | null;
+  wind_speed_ms: number | null;
+  wind_gust_ms: number | null;
+  wind_direction_deg: number | null;
+  pressure_hpa: number | null;
+  precipitation_mm: number | null;
+  dewpoint_c: number | null;
+  feels_like_c: number | null; // calculé côté poll-shelly, pas natif Shelly
+  // Diagnostics communs (BLU/Wi-Fi)
+  battery_voltage_v: number | null;
+  signal_rssi: number | null;
+  // Capteurs porte/fenêtre
+  tilt_angle: number | null;
+  // Détecteurs de présence (migration 20260901_add_shelly_presence_fields) :
+  // last_event_at = dernier événement vu par le capteur, à distinguer de ts
+  // (polling) et measured_at (dernier envoi au cloud).
+  last_event_at: string | null;
+  vibration: boolean | null;
+  illumination: string | null;
+  // Compteurs d'énergie
+  device_temp_c: number | null;
+  frequency_hz: number | null;
 }
 
 // Fenêtre de scan pour le catalogue (7 jours — garantit la présence des sites
@@ -274,117 +306,13 @@ export async function fetchEnergyByDevice(
 
   const { since, until } = getHistoricRange(filters);
 
-  // ── Mode 1h : table brute shelly_cl (rétention 90j, données minute) ────────
-  // shelly_cl_horaire est peuplée par un job d'agrégation avec délai ; shelly_cl
-  // est toujours à jour.
-  if (filters.period === '1h') {
-    let q = supabase
-      .from('shelly_cl')
-      .select('device_id,name,site,room,device_family,wh_tot,wh_a,wh_b,wh_c,power_w,ts')
-      .gte('ts', since)
-      .lte('ts', until)
-      .order('ts', { ascending: true })
-      .limit(10000);
-    if (filters.sites.length > 0)     q = q.in('site', filters.sites);
-    if (filters.families.length > 0)  q = q.in('device_family', filters.families);
-    if (filters.rooms.length > 0)     q = q.in('room', filters.rooms);
-    if (filters.deviceIds.length > 0) q = q.in('device_id', filters.deviceIds);
-    const { data, error } = await q;
-    if (error) throw error;
-
-    const byDev = new Map<string, { rows: typeof data; meta: EnergyAgg }>();
-    for (const r of data ?? []) {
-      const cur = byDev.get(r.device_id);
-      if (!cur) {
-        byDev.set(r.device_id, {
-          rows: [r],
-          meta: {
-            device_id: r.device_id,
-            name:      r.name ?? r.device_id,
-            site:      r.site ?? '',
-            room:      r.room,
-            family:    (r.device_family as DeviceFamily) ?? 'INCONNU',
-            kwh:       0,
-          },
-        });
-      } else {
-        cur.rows!.push(r);
-      }
-    }
-
-    const result: EnergyAgg[] = [];
-    for (const { rows, meta } of byDev.values()) {
-      if (!rows || rows.length === 0) continue;
-      if (rows.length < 2) {
-        // Un seul relevé : puissance × 1h ≈ énergie
-        meta.kwh = Math.max(0, Number(rows[0]?.power_w ?? 0)) / 1000;
-      } else {
-        // Delta wh_tot entre le premier et le dernier relevé de l'heure
-        const first = rows[0];
-        const last  = rows[rows.length - 1];
-        const w0 = Number(first.wh_tot ?? ((first.wh_a ?? 0) + (first.wh_b ?? 0) + (first.wh_c ?? 0)));
-        const w1 = Number(last.wh_tot  ?? ((last.wh_a  ?? 0) + (last.wh_b  ?? 0) + (last.wh_c  ?? 0)));
-        meta.kwh = Math.max(0, (w1 - w0) / 1000);
-      }
-      result.push(meta);
-    }
-    return result.sort((a, b) => b.kwh - a.kwh);
-  }
-
-  // ── Mode 24h : table brute shelly_cl — même logique que 1h mais sur la journée ─
-  // shelly_cl_horaire n'a pas de job d'agrégation actif → toujours vide pour les
-  // dates récentes. On lit shelly_cl directement (rétention 90j, toujours à jour).
-  if (filters.period === '24h') {
-    const sinceFull = `${filters.historicDate}T00:00:00.000Z`;
-    const untilFull = `${filters.historicDate}T23:59:59.999Z`;
-    let q = supabase
-      .from('shelly_cl')
-      .select('device_id,name,site,room,device_family,wh_tot,wh_a,wh_b,wh_c,ts')
-      .gte('ts', sinceFull)
-      .lte('ts', untilFull)
-      .order('ts', { ascending: true })
-      .limit(50000);
-    if (filters.sites.length > 0)     q = q.in('site', filters.sites);
-    if (filters.families.length > 0)  q = q.in('device_family', filters.families);
-    if (filters.rooms.length > 0)     q = q.in('room', filters.rooms);
-    if (filters.deviceIds.length > 0) q = q.in('device_id', filters.deviceIds);
-    const { data, error } = await q;
-    if (error) throw error;
-
-    const byDev = new Map<string, { rows: typeof data; meta: EnergyAgg }>();
-    for (const r of data ?? []) {
-      const cur = byDev.get(r.device_id);
-      if (!cur) {
-        byDev.set(r.device_id, {
-          rows: [r],
-          meta: {
-            device_id: r.device_id,
-            name:      r.name ?? r.device_id,
-            site:      r.site ?? '',
-            room:      r.room,
-            family:    (r.device_family as DeviceFamily) ?? 'INCONNU',
-            kwh:       0,
-          },
-        });
-      } else {
-        cur.rows!.push(r);
-      }
-    }
-
-    const result: EnergyAgg[] = [];
-    for (const { rows, meta } of byDev.values()) {
-      if (!rows || rows.length < 2) continue;
-      const r0 = rows[0], rN = rows[rows.length - 1];
-      const w0 = Number(r0.wh_tot ?? ((r0.wh_a ?? 0) + (r0.wh_b ?? 0) + (r0.wh_c ?? 0)));
-      const w1 = Number(rN.wh_tot ?? ((rN.wh_a ?? 0) + (rN.wh_b ?? 0) + (rN.wh_c ?? 0)));
-      meta.kwh = Math.max(0, (w1 - w0) / 1000);
-      result.push(meta);
-    }
-    return result.sort((a, b) => b.kwh - a.kwh);
-  }
-
-  // ── Modes 7d / 30d : RPC fn_energy_by_device (delta wh_tot sur shelly_cl) ──
-  // Plus précis que shelly_cl_horaire : calcul en Wh réels, pas avg(power_w).
+  // ── 1h / 24h / 7d / 30d : RPC fn_energy_by_device ───────────────────────────
+  // Calcul serveur du delta wh_tot (1ère/dernière borne par appareil). Avantages :
+  //  • cohérent entre toutes les périodes (même source, même méthode) ;
+  //  • exact : le compteur cumulatif traverse les trous de polling ;
+  //  • rapide : ~1 ligne/appareil renvoyée, pas de scan brut côté client
+  //    (l'agrégation client se faisait écraser par le plafond 1000 lignes de
+  //    PostgREST → 24h sous-comptait d'un facteur ~40).
   const sinceZ = since.endsWith('Z') ? since : `${since}Z`;
   const untilZ = until.endsWith('Z') ? until : `${until}Z`;
   const { data, error } = await supabase.rpc('fn_energy_by_device', {
@@ -449,31 +377,22 @@ function _heatAddHoraire(acc: HeatAcc, rows: HoraireRow[]) {
 export async function fetchHourlyHeatmap(filters: Filters, _period?: Period): Promise<HeatmapCell[]> {
   const { period } = filters;
 
-  // ── live / 1h / 24h : lire shelly_cl (fenêtre ≤ 24h, toujours à jour) ──────
-  if (period === 'live' || period === '1h' || period === '24h') {
-    const since = period === 'live'
-      ? new Date(Date.now() - 24 * 60 * 60_000).toISOString()
-      : `${filters.historicDate}T00:00:00.000Z`;
-    const until = period === 'live'
-      ? new Date().toISOString()
-      : `${filters.historicDate}T23:59:59.999Z`;
-    let q = supabase
-      .from('shelly_cl')
-      .select('device_id,name,ts,power_w')
-      .gte('ts', since).lte('ts', until)
-      .order('ts', { ascending: true })
-      .limit(100_000);
-    if (filters.sites.length > 0)     q = q.in('site', filters.sites);
-    if (filters.families.length > 0)  q = q.in('device_family', filters.families);
-    if (filters.deviceIds.length > 0) q = q.in('device_id', filters.deviceIds);
-    const { data, error } = await q;
-    if (error) throw error;
-    const acc = _heatAcc(); _heatAddRaw(acc, data ?? []); return _heatFlat(acc);
+  // Source unique : shelly_cl_horaire (wh_conso/heure déjà agrégé, à jour).
+  // Évite le plafond 1000 lignes de PostgREST qui tronquait la lecture brute
+  // de shelly_cl (la heatmap n'affichait alors que les 1res minutes du jour).
+  let since: string, until: string;
+  if (period === 'live') {
+    since = toHoraireTs(new Date(Date.now() - 24 * 60 * 60_000).toISOString());
+    until = toHoraireTs(new Date().toISOString());
+  } else if (period === '1h' || period === '24h') {
+    since = `${filters.historicDate}T00:00:00`;
+    until = `${filters.historicDate}T23:59:59`;
+  } else {
+    const r = getHistoricRange(filters);
+    since = toHoraireTs(r.since);
+    until = toHoraireTs(r.until);
   }
 
-  // ── 7d / 30d : shelly_cl_horaire (agrégat horaire) ───────────────────────
-  // Fallback sur shelly_cl si horaire est vide (job d'agrégation inactif).
-  const { since, until } = getHistoricRange(filters);
   let qH = supabase
     .from('shelly_cl_horaire')
     .select('device_id,name,ts_heure,wh_conso')
@@ -483,26 +402,10 @@ export async function fetchHourlyHeatmap(filters: Filters, _period?: Period): Pr
   if (filters.sites.length > 0)     qH = qH.in('site', filters.sites);
   if (filters.families.length > 0)  qH = qH.in('device_family', filters.families);
   if (filters.deviceIds.length > 0) qH = qH.in('device_id', filters.deviceIds);
-  const { data: horaireData, error: horaireErr } = await qH;
-  if (horaireErr) throw horaireErr;
+  const { data, error } = await qH;
+  if (error) throw error;
 
-  if ((horaireData ?? []).length > 0) {
-    const acc = _heatAcc(); _heatAddHoraire(acc, horaireData!); return _heatFlat(acc);
-  }
-
-  // Fallback : shelly_cl — données les plus récentes en premier (ordre DESC)
-  const toZ = (s: string) => s.endsWith('Z') ? s : `${s}Z`;
-  let qR = supabase
-    .from('shelly_cl')
-    .select('device_id,name,ts,power_w')
-    .gte('ts', toZ(since)).lte('ts', toZ(until))
-    .order('ts', { ascending: false })
-    .limit(100_000);
-  if (filters.sites.length > 0)     qR = qR.in('site', filters.sites);
-  if (filters.families.length > 0)  qR = qR.in('device_family', filters.families);
-  if (filters.deviceIds.length > 0) qR = qR.in('device_id', filters.deviceIds);
-  const { data: rawData } = await qR; // best-effort, ignore error
-  const acc = _heatAcc(); _heatAddRaw(acc, rawData ?? []); return _heatFlat(acc);
+  const acc = _heatAcc(); _heatAddHoraire(acc, data ?? []); return _heatFlat(acc);
 }
 
 // ── 8. Calendrier d'activité (90 jours) ──────────────────────
@@ -517,29 +420,31 @@ function toHoraireTs(iso: string): string {
 }
 
 export async function fetchCalendarActivity(filters: Filters): Promise<CalendarDay[]> {
-  // Live → 90 derniers jours ; historique → plage sélectionnée (élargie si besoin)
+  // Live → 90 derniers jours ; historique → plage sélectionnée (élargie si besoin).
+  // La RPC attend des timestamptz : on garde l'ISO complet avec son Z, la
+  // conversion vers le TIMESTAMP nu de ts_heure se fait côté fonction.
   const since = filters.period === 'live'
-    ? toHoraireTs(new Date(Date.now() - 90 * 24 * 60 * 60_000).toISOString())
-    : toHoraireTs(getHistoricRange(filters).since);
+    ? new Date(Date.now() - 90 * 24 * 60 * 60_000).toISOString()
+    : getHistoricRange(filters).since;
   const until = filters.period === 'live'
-    ? toHoraireTs(new Date().toISOString())
-    : toHoraireTs(getHistoricRange(filters).until);
-  let q = supabase
-    .from('shelly_cl_horaire')
-    .select('ts_heure,wh_conso')
-    .gte('ts_heure', since)
-    .lte('ts_heure', until)
-    .limit(50000);
-  if (filters.sites.length > 0)     q = q.in('site', filters.sites);
-  if (filters.families.length > 0)  q = q.in('device_family', filters.families);
-  if (filters.deviceIds.length > 0) q = q.in('device_id', filters.deviceIds);
-  const { data, error } = await q;
+    ? new Date().toISOString()
+    : getHistoricRange(filters).until;
+  // Agrégation SERVEUR : 90 jours représentent ~155 000 lignes horaires, très
+  // au-delà du plafond de PostgREST. L'ancienne version les ramenait avec un
+  // `.limit(50000)` sans `order()` : le calendrier n'affichait qu'un
+  // sous-ensemble arbitraire de jours. La RPC ne renvoie que ~90 lignes.
+  const { data, error } = await supabase.rpc('fn_energy_by_day', {
+    p_since:      since,
+    p_until:      until,
+    p_sites:      filters.sites.length      > 0 ? filters.sites      : null,
+    p_families:   filters.families.length   > 0 ? filters.families   : null,
+    p_device_ids: filters.deviceIds.length  > 0 ? filters.deviceIds  : null,
+  });
   if (error) throw error;
 
   const byDay = new Map<string, number>();
-  for (const r of data ?? []) {
-    const day = r.ts_heure.slice(0, 10);
-    byDay.set(day, (byDay.get(day) ?? 0) + (Number(r.wh_conso ?? 0) / 1000));
+  for (const r of (data ?? []) as { jour: string; kwh: number }[]) {
+    byDay.set(r.jour, Number(r.kwh ?? 0));
   }
 
   // Gap-fill : compléter avec shelly_cl si horaire n'a pas de données récentes
@@ -688,16 +593,6 @@ export function computeAlerts(snapshot: ShellyClRow[], allDevices: Device[]): Al
 }
 
 // ── Utilitaires ──────────────────────────────────────────────
-function periodToMinutes(p: Period): number {
-  switch (p) {
-    case 'live':  return 5;
-    case '1h':    return 60;
-    case '24h':   return 24 * 60;
-    case '7d':    return 7 * 24 * 60;
-    case '30d':   return 30 * 24 * 60;
-  }
-}
-
 export function isMainMeter(name: string): boolean {
   const upper = name.toUpperCase();
   return /(^|_)M\d_|SENELEC|TGBT|CHARGE_CONSOMMATION|EM-SENELEC/.test(upper);

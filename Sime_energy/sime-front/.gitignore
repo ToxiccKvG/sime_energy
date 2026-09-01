@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Variables d'environnement — ne jamais versionner (clés API)
+.env
+.env.local
+.env.*.local
+
+# Cache du CLI Supabase (métadonnées de projet liées localement)
+supabase/.temp/

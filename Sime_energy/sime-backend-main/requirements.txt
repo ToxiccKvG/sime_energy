@@ -11,9 +11,10 @@ python-multipart
 pandas==2.3.1
 chardet==5.2.0
 openpyxl==3.1.5
+msoffcrypto-tool==6.0.0
 mistralai==1.9.2
 pytesseract==0.3.10
-Pillow==11.3.0
+Pillow==12.2.0
 opencv-python==4.10.0.84
 email-validator==2.1.0
 python-jose[cryptography] 

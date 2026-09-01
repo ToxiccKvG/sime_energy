@@ -44,6 +44,13 @@ function getPeriodeClimatique(mois: number): ShellyRow['periodeclimatique'] {
   return fraicheur ? 'Période de fraîcheur' : 'Période chaude';
 }
 
+/** Convertit en nombre si la valeur est exploitable, sinon undefined (pour ne pas afficher 0 pour un capteur qui n'a jamais remonté cette donnée) */
+function numOrUndef(v: unknown): number | undefined {
+  if (v === null || v === undefined || v === '') return undefined;
+  const n = Number(v);
+  return isNaN(n) ? undefined : n;
+}
+
 // ============================================================
 // PARSE UNE LIGNE SHELLY depuis données brutes
 // Format attendu: Temps | Wh_Phase A | Wh_Phase B | Wh_Phase C | Wh_Total |
@@ -202,6 +209,27 @@ export function parseShellyRow(
     nomAppareil:    (raw['Appareil'] ?? raw['Nom'] ?? raw['name'] ?? raw['nomAppareil'] ?? raw['device_name']) as string | undefined,
     deviceLocation: (raw['Emplacement'] ?? raw['Site'] ?? raw['site'] ?? raw['deviceLocation']) as string | undefined,
     deviceRoom:     (raw['Piece'] ?? raw['Pièce'] ?? raw['Room'] ?? raw['room'] ?? raw['deviceRoom']) as string | undefined,
+    // Capteurs environnementaux (préservés si présents dans la source — colonnes PROFIL Mi)
+    temperature:      numOrUndef(raw['Temperature']),
+    humidite:         numOrUndef(raw['Humidite']),
+    ressenti:         numOrUndef(raw['Ressenti']),
+    pointRosee:       numOrUndef(raw['Point_Rosee']),
+    uvIndex:          numOrUndef(raw['UV_Index']),
+    luminosite:       numOrUndef(raw['Luminosite']),
+    pression:         numOrUndef(raw['Pression']),
+    tendancePression: (raw['Tendance_Pression'] ?? undefined) as string | undefined,
+    precipitation:    numOrUndef(raw['Precipitation']),
+    alarmeHumidite:   typeof raw['Alarme_Humidite'] === 'boolean' ? raw['Alarme_Humidite'] as boolean : undefined,
+    ventVitesse:      numOrUndef(raw['Vent_Vitesse']),
+    ventRafale:       numOrUndef(raw['Vent_Rafale']),
+    ventDirection:    numOrUndef(raw['Vent_Direction']),
+    etatCapteur:      (raw['Etat_Capteur'] ?? undefined) as string | undefined,
+    angleInclinaison: numOrUndef(raw['Angle_Inclinaison']),
+    concentrationGaz: numOrUndef(raw['Concentration_Gaz']),
+    tempInterne:      numOrUndef(raw['Temp_Interne']),
+    batterie:         numOrUndef(raw['Batterie']),
+    batterieV:        numOrUndef(raw['Batterie_V']),
+    signal:           numOrUndef(raw['Signal']),
   };
 }
 
@@ -304,73 +332,6 @@ export function analyserDonneesShelly(rows: ShellyRow[]): ShellyAnalyse {
   };
 }
 
-// ============================================================
-// PROFIL JOURNALIER (agrégé sur tous les jours)
-// ============================================================
-
-export interface ProfilHoraire {
-  heure: number;
-  kwhMoyen: number;
-  kwhMax: number;
-  kwhMin: number;
-  isHP: boolean;
-}
-
-// Profil type normalisé (Sénégal) — somme ≈ 24, redistribution réaliste sur la journée
-const PROFIL_TYPE_JOURNALIER = [
-  0.25, 0.25, 0.20, 0.20, 0.20, 0.30, // 0h–5h  : nuit
-  0.55, 0.85, 1.15, 1.20, 1.20, 1.10, // 6h–11h : matin
-  1.00, 1.10, 1.20, 1.10, 1.00, 0.90, // 12h–17h: après-midi
-  0.80, 1.30, 1.40, 1.30, 1.00, 0.55, // 18h–23h: soir / pointe
-];
-const SOMME_PROFIL_TYPE = PROFIL_TYPE_JOURNALIER.reduce((s, v) => s + v, 0);
-
-export function calculerProfilHoraire(rows: ShellyRow[]): ProfilHoraire[] {
-  const profil: ProfilHoraire[] = Array.from({ length: 24 }, (_, h) => ({
-    heure: h,
-    kwhMoyen: 0,
-    kwhMax: 0,
-    kwhMin: 0,
-    isHP: h >= 19 && h < 23,
-  }));
-
-  if (rows.length === 0) return profil;
-
-  // Détecte si les données sont horaires (plusieurs heures distinctes)
-  const heuresDistinctes = new Set(rows.map(r => toDateSafe(r.date).getHours()));
-  const isHourly = heuresDistinctes.size > 2;
-
-  if (isHourly) {
-    // Données horaires : grouper par heure et calculer moy/min/max réels
-    const parHeure: number[][] = Array.from({ length: 24 }, () => []);
-    for (const r of rows) {
-      const h = toDateSafe(r.date).getHours();
-      if (h >= 0 && h < 24) parHeure[h].push(r.kwhNet);
-    }
-    for (let h = 0; h < 24; h++) {
-      const vals = parHeure[h];
-      if (vals.length === 0) continue;
-      profil[h].kwhMoyen = +(vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(4);
-      profil[h].kwhMax   = +Math.max(...vals).toFixed(4);
-      profil[h].kwhMin   = +Math.min(...vals).toFixed(4);
-    }
-  } else {
-    // Données journalières : distribuer via profil type Sénégal
-    const kwhNets = rows.map(r => r.kwhNet).filter(v => v > 0);
-    if (kwhNets.length === 0) return profil;
-    const moyJour = kwhNets.reduce((s, v) => s + v, 0) / kwhNets.length;
-    const maxJour = Math.max(...kwhNets);
-    const minJour = Math.min(...kwhNets);
-    for (let h = 0; h < 24; h++) {
-      const coef = PROFIL_TYPE_JOURNALIER[h] / SOMME_PROFIL_TYPE;
-      profil[h].kwhMoyen = +(moyJour * coef).toFixed(4);
-      profil[h].kwhMax   = +(maxJour * coef).toFixed(4);
-      profil[h].kwhMin   = +(minJour * coef).toFixed(4);
-    }
-  }
-
-  return profil;
-}
 
 // ============================================================
 // CONVERTISSEUR PROFIL Mi → ShellyRow

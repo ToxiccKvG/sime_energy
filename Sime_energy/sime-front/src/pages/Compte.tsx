@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { User, Mail, Building2, Shield, Loader2, Zap, Target, Send } from "lucide-react";
+import { User, Mail, Building2, Shield, Loader2, Send } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/hooks/use-toast";
@@ -50,26 +50,6 @@ export default function Compte() {
   };
 
   const fullName = firstName && lastName ? `${firstName} ${lastName}` : user?.email?.split("@")[0] || "Utilisateur";
-
-  // Formater le type d'utilisation
-  const getUsageTypeLabel = () => {
-    const labels: Record<string, string> = {
-      solo: "En solo",
-      team: "En équipe",
-      enterprise: "Entreprise",
-    };
-    return labels[usageType] || usageType;
-  };
-
-  // Formater le cas d'utilisation
-  const getUseCaseLabel = () => {
-    const labels: Record<string, string> = {
-      audits: "Réaliser des audits",
-      management: "Gérer les données",
-      both: "Les deux",
-    };
-    return labels[useCase] || useCase;
-  };
 
   // Sauvegarder les modifications du profil
   const handleSaveProfile = async () => {
@@ -225,7 +205,7 @@ export default function Compte() {
         title: "Déconnexion réussie",
         description: "À bientôt!",
       });
-    } catch (error) {
+    } catch {
       toast({
         title: "Erreur",
         description: "Erreur lors de la déconnexion",

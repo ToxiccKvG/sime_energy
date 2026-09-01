@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import {
   Settings, Plus, Pencil, Trash2, Wifi, WifiOff, RefreshCw,
   CheckCircle2, XCircle, Eye, EyeOff, Server, KeyRound, Tag,
-  AlertTriangle, Clock,
+  AlertTriangle, Clock, Zap, Split,
 } from 'lucide-react';
 import { Button }   from '@/components/ui/button';
 import { Input }    from '@/components/ui/input';
@@ -18,9 +18,20 @@ import {
 } from '@/components/ui/dialog';
 import {
   fetchAccounts, upsertAccount, updateAccount, deleteAccount,
-  toggleAccount, testAccount, maskAuthKey,
+  toggleAccount, testSavedAccount, testNewAccount, maskAuthKey,
   type ShellyAccount, type ShellyAccountInput, type TestResult,
 } from '@/lib/shelly-account-service';
+import { forceMetadataRefresh } from '@/lib/shelly-device-config-service';
+import { ShellyDeviceTypesPanel } from './ShellyDeviceTypesPanel';
+import { ShellyDeviceChannelsPanel } from './ShellyDeviceChannelsPanel';
+
+type SubTab = 'comptes' | 'types' | 'canaux';
+
+const SUB_TABS: { id: SubTab; label: string; icon: typeof Settings }[] = [
+  { id: 'comptes', label: 'Comptes Shelly Cloud',  icon: Settings },
+  { id: 'types',   label: 'Types de dispositifs',  icon: Tag },
+  { id: 'canaux',  label: 'Canaux multi-relais',   icon: Split },
+];
 
 // ── Types locaux ──────────────────────────────────────────────
 
@@ -41,10 +52,34 @@ const EMPTY_FORM: FormState = {
 // ══════════════════════════════════════════════════════════════
 
 export function ParametresTab() {
+  const [subTab, setSubTab]             = useState<SubTab>('comptes');
   const [accounts, setAccounts]         = useState<ShellyAccount[]>([]);
   const [loading, setLoading]           = useState(true);
   const [saving, setSaving]             = useState(false);
   const [error, setError]               = useState<string | null>(null);
+
+  // Forcer un refresh metadata (ne pas attendre le cycle 10 min)
+  const [refreshing, setRefreshing]           = useState(false);
+  const [refreshCooldown, setRefreshCooldown] = useState(0);
+  const [refreshMsg, setRefreshMsg]           = useState<string | null>(null);
+
+  useEffect(() => {
+    if (refreshCooldown <= 0) return;
+    const t = setTimeout(() => setRefreshCooldown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [refreshCooldown]);
+
+  async function handleForceRefresh() {
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const result = await forceMetadataRefresh();
+      setRefreshMsg(result.ok ? 'Refresh déclenché avec succès.' : `Échec : ${result.error}`);
+      setRefreshCooldown(30); // évite de déclencher le rate limit Shelly Cloud
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   // Modal add/edit
   const [modalOpen, setModalOpen]       = useState(false);
@@ -82,12 +117,14 @@ export function ParametresTab() {
   }
 
   // ── Ouvrir modal édition ────────────────────────────────────
+  // auth_key n'est jamais renvoyée par le serveur (fix sécurité) :
+  // le champ reste vide, laisser vide = conserver la clé actuelle.
   function openEdit(acc: ShellyAccount) {
     setEditingId(acc.id);
     setForm({
       site:       acc.site,
       label:      acc.label ?? '',
-      auth_key:   acc.auth_key,
+      auth_key:   '',
       server_url: acc.server_url,
       actif:      acc.actif,
     });
@@ -97,16 +134,17 @@ export function ParametresTab() {
 
   // ── Sauvegarder (créer ou mettre à jour) ────────────────────
   async function handleSave() {
-    if (!form.site.trim() || !form.auth_key.trim() || !form.server_url.trim()) return;
+    const requireKey = !editingId; // création : clé obligatoire ; édition : optionnelle
+    if (!form.site.trim() || !form.server_url.trim() || (requireKey && !form.auth_key.trim())) return;
     setSaving(true);
     try {
       const payload: ShellyAccountInput = {
         site:       form.site.trim(),
         label:      form.label.trim() || null,
-        auth_key:   form.auth_key.trim(),
         server_url: form.server_url.trim().replace(/\/$/, ''),
         actif:      form.actif,
       };
+      if (form.auth_key.trim()) payload.auth_key = form.auth_key.trim();
       if (editingId) {
         await updateAccount(editingId, payload);
       } else {
@@ -143,21 +181,29 @@ export function ParametresTab() {
   }
 
   // ── Tester la connexion ─────────────────────────────────────
+  // Passe par l'Edge Function avec l'id du compte : la clé est lue
+  // côté serveur, jamais renvoyée au front.
   async function handleTest(acc: ShellyAccount) {
     setTestResults(prev => ({ ...prev, [acc.id]: { ok: false, loading: true } }));
-    const result = await testAccount(acc.auth_key, acc.server_url);
+    const result = await testSavedAccount(acc.id);
     setTestResults(prev => ({ ...prev, [acc.id]: result }));
   }
 
   // ── Tester depuis le formulaire ─────────────────────────────
+  // Si une nouvelle clé est saisie (ou création), on la teste directement.
+  // Sinon (édition, champ laissé vide), on teste la clé déjà enregistrée
+  // via l'Edge Function, sans jamais la faire transiter par le front.
   const [formTestResult, setFormTestResult] = useState<TestResult | null>(null);
   const [formTesting, setFormTesting]       = useState(false);
 
   async function handleFormTest() {
-    if (!form.auth_key || !form.server_url) return;
+    if (!form.server_url) return;
+    if (!form.auth_key.trim() && !editingId) return;
     setFormTesting(true);
     setFormTestResult(null);
-    const result = await testAccount(form.auth_key, form.server_url);
+    const result = form.auth_key.trim()
+      ? await testNewAccount(form.auth_key.trim(), form.server_url)
+      : await testSavedAccount(editingId!);
     setFormTestResult(result);
     setFormTesting(false);
   }
@@ -166,6 +212,32 @@ export function ParametresTab() {
   return (
     <div className="space-y-6">
 
+      {/* Sous-navigation Paramètres */}
+      <div className="flex items-center gap-1 border-b border-white/10 pb-px">
+        {SUB_TABS.map(t => {
+          const Icon = t.icon;
+          const active = subTab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setSubTab(t.id)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+                active
+                  ? 'border-blue-500 text-white'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {subTab === 'types' && <ShellyDeviceTypesPanel />}
+      {subTab === 'canaux' && <ShellyDeviceChannelsPanel />}
+
+      {subTab === 'comptes' && <>
       {/* En-tête */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -176,10 +248,17 @@ export function ParametresTab() {
             <h2 className="text-white font-semibold">Comptes Shelly Cloud</h2>
             <p className="text-slate-400 text-xs mt-0.5">
               Gérez vos credentials ici — la collecte s'adapte en moins d'une minute.
+              Les nouvelles pièces/dispositifs Shelly Cloud sont détectés automatiquement.
             </p>
           </div>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={handleForceRefresh} disabled={refreshing || refreshCooldown > 0}
+            title="Forcer la détection immédiate des nouvelles pièces/dispositifs sans attendre le cycle de 10 min"
+            className="border-white/10 text-slate-400 hover:text-white hover:bg-white/5">
+            <Zap className={`h-3.5 w-3.5 mr-1.5 ${refreshing ? 'animate-pulse' : ''}`} />
+            {refreshCooldown > 0 ? `Refresh (${refreshCooldown}s)` : 'Forcer un refresh'}
+          </Button>
           <Button variant="outline" size="sm" onClick={load} disabled={loading}
             className="border-white/10 text-slate-400 hover:text-white hover:bg-white/5">
             <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
@@ -192,6 +271,15 @@ export function ParametresTab() {
           </Button>
         </div>
       </div>
+
+      {refreshMsg && (
+        <div className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${
+          refreshMsg.startsWith('Échec') ? 'bg-red-500/10 text-red-300 border border-red-500/20' : 'bg-green-500/10 text-green-300 border border-green-500/20'
+        }`}>
+          {refreshMsg.startsWith('Échec') ? <XCircle className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          {refreshMsg}
+        </div>
+      )}
 
       {/* Message d'erreur */}
       {error && (
@@ -301,7 +389,7 @@ export function ParametresTab() {
               <div className="relative">
                 <Input
                   type={showKey ? 'text' : 'password'}
-                  placeholder="Coller l'auth key depuis Shelly Cloud"
+                  placeholder={editingId ? 'Laisser vide pour conserver la clé actuelle' : "Coller l'auth key depuis Shelly Cloud"}
                   value={form.auth_key}
                   onChange={e => { setForm(f => ({ ...f, auth_key: e.target.value })); setFormTestResult(null); }}
                   className="bg-white/5 border-white/10 text-slate-100 placeholder:text-slate-600 pr-10"
@@ -314,6 +402,11 @@ export function ParametresTab() {
                   {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+              {editingId && (
+                <p className="text-xs text-slate-500">
+                  La clé actuelle n'est jamais réaffichée pour des raisons de sécurité — laisser vide pour la conserver.
+                </p>
+              )}
             </div>
 
             {/* Bouton Tester depuis le formulaire */}
@@ -321,7 +414,7 @@ export function ParametresTab() {
               <Button
                 variant="outline" size="sm"
                 onClick={handleFormTest}
-                disabled={formTesting || !form.auth_key || !form.server_url}
+                disabled={formTesting || !form.server_url || (!form.auth_key.trim() && !editingId)}
                 className="border-white/10 text-slate-400 hover:text-white hover:bg-white/5"
               >
                 {formTesting
@@ -352,7 +445,7 @@ export function ParametresTab() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={saving || !form.site.trim() || !form.auth_key.trim() || !form.server_url.trim()}
+              disabled={saving || !form.site.trim() || !form.server_url.trim() || (!editingId && !form.auth_key.trim())}
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               {saving ? <><RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />Sauvegarde…</> : 'Sauvegarder'}
@@ -388,6 +481,7 @@ export function ParametresTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </>}
     </div>
   );
 }
@@ -439,7 +533,7 @@ function AccountCard({ account, testResult, onEdit, onDelete, onToggle, onTest }
         </div>
         <div className="flex items-center gap-2 text-slate-400">
           <KeyRound className="h-3 w-3 shrink-0 text-slate-600" />
-          <span className="font-mono">{maskAuthKey(account.auth_key)}</span>
+          <span className="font-mono">{maskAuthKey(account.auth_key_last6)}</span>
         </div>
         <PollStatusLine account={account} />
       </div>

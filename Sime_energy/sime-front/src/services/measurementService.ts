@@ -3,12 +3,20 @@
  * Endpoints: /process-file/measures, /process-file/analyze-energy-label, /process-file/process-hierarchy
  */
 
+import { computeMeasurementKpis, MeasurementKpis, QuantityKind } from './measurementStats';
+
 export interface MeasurementData {
   measurements?: any[];
-  kpis?: {
-    avgConsumption?: number;
-    [key: string]: any;
-  };
+  /** Calculé côté client (voir measurementStats.ts) à partir des mesures brutes reçues du backend. */
+  kpis?: MeasurementKpis;
+  /** Clé du capteur (cf. SENSOR_REGISTRY backend). */
+  sensor_type?: string;
+  /** Libellé de la grandeur tracée (ex. "Puissance active", "CO₂"). */
+  metric_label?: string;
+  /** Unité de la grandeur principale (W, kWh, ppm, …). */
+  unit?: string;
+  /** Nature de la grandeur principale — détermine le calcul du cumul (voir measurementStats.ts). */
+  quantity_kind?: QuantityKind;
 }
 
 export interface HierarchyNode {
@@ -40,12 +48,14 @@ const API_URL = import.meta.env.VITE_API_URL;
  */
 export async function uploadMeasurementFile(
   file: File,
-  sensorType: string = ""
+  sensorType: string = "",
+  sensorConfig?: object,
 ): Promise<MeasurementData> {
   const formData = new FormData();
   formData.append("file", file);
-  if (sensorType) {
-    formData.append("sensor_type", sensorType);
+  formData.append("sensor_type", sensorType || "CUSTOM");
+  if (sensorConfig) {
+    formData.append("sensor_config", JSON.stringify(sensorConfig));
   }
 
   const response = await fetch(`${API_URL}/processing/process-file/measures`, {
@@ -54,10 +64,29 @@ export async function uploadMeasurementFile(
   });
 
   if (!response.ok) {
-    throw new Error(`Erreur lors du traitement de la mesure: ${response.statusText}`);
+    // Le backend renvoie la vraie raison dans le champ JSON `detail`
+    // (ex. « Le fichier ne correspond pas au capteur sélectionné »).
+    let detail = response.statusText;
+    try {
+      const body = await response.json();
+      if (body?.detail) detail = body.detail;
+    } catch {
+      /* réponse non-JSON : on garde statusText */
+    }
+    throw new Error(detail);
   }
 
-  return response.json();
+  const data: MeasurementData = await response.json();
+  try {
+    data.kpis = computeMeasurementKpis(data.measurements ?? [], {
+      unit: data.unit ?? '',
+      metricLabel: data.metric_label ?? 'Valeur',
+      quantityKind: data.quantity_kind ?? 'energy',
+    });
+  } catch (e) {
+    console.warn('Impossible de calculer les statistiques du fichier :', e);
+  }
+  return data;
 }
 
 /**

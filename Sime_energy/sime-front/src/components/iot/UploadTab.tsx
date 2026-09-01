@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback } from 'react';
-import * as XLSX from 'xlsx';
+import { parseExcelBuffer } from '@/lib/excel-utils';
 import {
   Upload, FileSpreadsheet, Trash2, CheckCircle, AlertCircle,
   ChevronLeft, ChevronRight, Hash, Calendar, Type, Database,
@@ -108,9 +108,7 @@ const COL_TYPE_COLOR: Record<string, string> = {
 //   Ligne 2 : noms des colonnes (Temps, Wh_Phase A, ...)
 //   Ligne 3+ : données
 // ============================================================
-function readSheet(ws: XLSX.WorkSheet): { columns: string[]; rows: Record<string, unknown>[] } {
-  // 1. Lire toutes les lignes sans en-tête pour inspecter
-  const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null });
+function readSheet(rawRows: unknown[][]): { columns: string[]; rows: Record<string, unknown>[] } {
   if (rawRows.length === 0) return { columns: [], rows: [] };
 
   // 2. Détecter si on a 2 lignes d'en-tête (format Shelly PROFIL)
@@ -279,7 +277,7 @@ function TableauSheet({
 // COMPOSANT PRINCIPAL
 // ============================================================
 export function UploadTab() {
-  const { state, addFile, setShellyRows, removeFile, setSourceData } = useIOT();
+  const { state, addFile, setShellyRows, setSourceData } = useIOT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [pdfEntries, setPdfEntries] = useState<PDFEntry[]>([]);
@@ -293,17 +291,17 @@ export function UploadTab() {
   const processFile = useCallback(async (file: File, type: FileType, sourceIds: string[]): Promise<FileEntry> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         try {
-          const data = new Uint8Array(e.target!.result as ArrayBuffer);
-          const wb = XLSX.read(data, { type: 'array', cellDates: true });
+          const buffer = e.target!.result as ArrayBuffer;
+          const wb = await parseExcelBuffer(buffer);
 
-          const sheets: SheetData[] = wb.SheetNames
+          const sheets: SheetData[] = wb.sheetNames
             // Ignorer les feuilles techniques
             .filter(n => !n.startsWith('~') && !n.toLowerCase().includes('legende') && !n.toLowerCase().includes('jours fériés'))
             .map(name => {
-              const ws = wb.Sheets[name];
-              const { columns, rows } = readSheet(ws);
+              const rawRows = wb.getRows(name);
+              const { columns, rows } = readSheet(rawRows);
               const detect = detecterFormatShelly(columns);
               const profilMi = detectProfilMiFromSheet(name);
               return {

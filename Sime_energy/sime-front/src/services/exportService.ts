@@ -2,7 +2,7 @@
  * Service pour gérer les exports de données (CSV, Excel)
  */
 
-import * as XLSX from "xlsx";
+import { exportMultiSheetXlsx } from "@/lib/excel-utils";
 import { StructuredExtractedData } from "./invoiceService";
 import { getPdfSections, getPdfCustomFields } from "./invoiceService";
 
@@ -131,7 +131,7 @@ export function generateStructuredCSV(
 /**
  * Exporte les données en Excel
  */
-export function exportToExcel(
+export async function exportToExcel(
   dataToExport: TableRowData[] | StructuredExtractedData[],
   metadata: {
     norm?: string;
@@ -220,16 +220,9 @@ export function exportToExcel(
     });
   }
 
-  // Créer le workbook
-  const wb = XLSX.utils.book_new();
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, "-");
+  const fileName = `rapport_audit_${metadata.organization || "organisation"}_${timestamp}.xlsx`;
 
-  // Feuille principale avec les données
-  const ws = XLSX.utils.json_to_sheet(excelData);
-  const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
-  ws["!autofilter"] = { ref: XLSX.utils.encode_range(range) };
-  XLSX.utils.book_append_sheet(wb, ws, "Données Extraites");
-
-  // Feuille de métadonnées
   const metaData = [
     ["Extraction facturation"],
     [""],
@@ -243,14 +236,13 @@ export function exportToExcel(
     ["Données transformées", metadata.isDataTransformed ? "Oui" : "Non"],
   ];
 
-  const metaWs = XLSX.utils.aoa_to_sheet(metaData);
-  XLSX.utils.book_append_sheet(wb, metaWs, "Informations");
-
-  // Télécharger
-  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, "-");
-  const fileName = `rapport_audit_${metadata.organization || "organisation"}_${timestamp}.xlsx`;
-
-  XLSX.writeFile(wb, fileName);
+  await exportMultiSheetXlsx(
+    [
+      { name: "Données Extraites", data: excelData, autoFilter: true },
+      { name: "Informations", data: metaData },
+    ],
+    fileName
+  );
 }
 
 /**

@@ -1,5 +1,12 @@
 // ============================================================
-// Dashboard IOT — Qualité réseau 3 phases (tension, courant, déséquilibre)
+// Dashboard IOT — Qualité 3 phases (tension, courant, déséquilibre)
+//
+// Le titre nomme le compteur réellement mesuré : la carte prend le
+// premier triphasé qui remonte une tension, ce qui n'est pas forcément
+// l'arrivée réseau. À l'Académie CER2E, M1/M2/M3 étant hors ligne, le
+// seul candidat est le départ PV — parler de « qualité réseau » y était
+// donc faux. Le sélecteur reste visible même à un seul candidat, pour
+// que le choix par défaut soit lisible et non subi.
 // ============================================================
 
 import { useMemo, useState } from 'react';
@@ -45,9 +52,9 @@ export function PhaseQualityCard({ snapshot }: Props) {
     <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <h3 className="text-white font-semibold text-sm flex items-center gap-2">
-          <Gauge className="h-4 w-4 text-cyan-400" /> Qualité réseau 3 phases
+          <Gauge className="h-4 w-4 text-cyan-400" /> Qualité 3 phases
         </h3>
-        {meters3PH.length > 1 && (
+        {meters3PH.length >= 1 && (
           <Select value={c.device_id} onValueChange={setSelectedId}>
             <SelectTrigger className="w-full sm:w-56 h-7 text-xs bg-white/5 border-white/20 text-white"><SelectValue /></SelectTrigger>
             <SelectContent className="bg-[#1a1d2e] border-white/20">
@@ -58,7 +65,10 @@ export function PhaseQualityCard({ snapshot }: Props) {
       </div>
 
       <p className="text-slate-400 text-xs mb-3">
-        <span className="text-white font-medium">{c.name}</span> · {c.site}{c.room ? ' · ' + c.room : ''}
+        Mesuré sur <span className="text-white font-medium">{c.name}</span> · {c.site}{c.room ? ' · ' + c.room : ''}
+        {meters3PH.length === 1 && (
+          <span className="text-amber-500/80"> · seul triphasé actif</span>
+        )}
       </p>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">

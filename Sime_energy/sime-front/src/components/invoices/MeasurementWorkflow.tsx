@@ -1,16 +1,13 @@
-/**
- * Workflow complet de gestion des mesures énergétiques
- * Intègre l'upload, l'analyse et la visualisation
- */
-
 import { useState } from 'react';
-import { MeasurementData, HierarchyData } from '@/services/measurementService';
+import { MeasurementData } from '@/services/measurementService';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { MeasurementUploadStep } from './MeasurementUploadStep';
-import { Upload, Activity, BarChart3, TrendingUp } from 'lucide-react';
+import { MeasurementCharts } from './MeasurementCharts';
+import { MeasurementAnalysis } from './MeasurementAnalysis';
+import { SensorComparisonPanel } from './SensorComparisonPanel';
+import { Upload, Activity, BarChart3, TrendingUp, ChevronLeft, ChevronRight, FileText, GitCompare } from 'lucide-react';
 
 type WorkflowStep = 'upload' | 'analysis' | 'visualization';
 
@@ -18,203 +15,203 @@ interface MeasurementWorkflowProps {
   auditId?: string;
 }
 
-export function MeasurementWorkflow({ auditId }: MeasurementWorkflowProps) {
+export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowProps) {
   const [currentStep, setCurrentStep] = useState<WorkflowStep>('upload');
   const [measurementData, setMeasurementData] = useState<MeasurementData[]>([]);
   const [currentDataIndex, setCurrentDataIndex] = useState(0);
+  const [analysisMode, setAnalysisMode] = useState<'single' | 'comparison'>('single');
 
   const handleMeasurementsReceived = (data: MeasurementData[]) => {
-    setMeasurementData(data);
-    if (data.length > 0) {
-      setCurrentStep('analysis');
-    }
+    setMeasurementData((prev) => {
+      const merged = [...prev, ...data];
+      return merged;
+    });
+    setCurrentDataIndex(0);
+    if (data.length > 0) setCurrentStep('analysis');
   };
 
   const currentData = measurementData[currentDataIndex];
+  const hasData = measurementData.length > 0;
+
+  const tabs: { id: WorkflowStep; label: string; icon: React.ReactNode }[] = [
+    { id: 'upload',        label: 'Upload',        icon: <Upload className="h-4 w-4" /> },
+    { id: 'analysis',      label: 'Analyse',       icon: <TrendingUp className="h-4 w-4" /> },
+    { id: 'visualization', label: 'Visualisation', icon: <BarChart3 className="h-4 w-4" /> },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Titre */}
-      <div>
-        <h1 className="text-3xl font-semibold text-foreground">Gestion des mesures</h1>
-        <p className="mt-1 text-muted-foreground">
-          Upload, analyse et visualisation de vos données de consommation énergétique
-        </p>
-      </div>
+      {/* En-tête */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Gestion des mesures</h1>
+          <p className="text-slate-400 text-sm mt-1">Upload · Analyse · Visualisation des données de consommation</p>
+        </div>
 
-      {/* Statut */}
-      {measurementData.length > 0 && (
-        <Card className="p-4 bg-blue-50 border border-blue-200">
-          <div className="flex items-center gap-3">
-            <Activity className="h-5 w-5 text-blue-600" />
-            <div>
-              <p className="font-medium text-blue-900">
-                {measurementData.length} fichier(s) de mesure traité(s)
-              </p>
-              <p className="text-sm text-blue-700">
-                {measurementData.reduce((acc, data) => {
-                  return acc + (data.measurements?.length || 0);
-                }, 0)} mesure(s) totale(s)
-              </p>
+        {hasData && (
+          <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-4 py-2">
+            <Activity className="h-4 w-4 text-blue-400 shrink-0" />
+            <div className="text-sm">
+              <span className="text-white font-medium">{measurementData.length}</span>
+              <span className="text-slate-400"> fichier(s) · </span>
+              <span className="text-white font-medium">
+                {measurementData.reduce((acc, d) => acc + (d.measurements?.length ?? 0), 0).toLocaleString('fr-FR')}
+              </span>
+              <span className="text-slate-400"> mesures</span>
             </div>
           </div>
-        </Card>
-      )}
+        )}
+      </div>
 
-      {/* Contenu principal */}
-      <Tabs value={currentStep} onValueChange={(v: any) => setCurrentStep(v)} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="upload" className="flex items-center gap-2">
-            <Upload className="h-4 w-4" />
-            Upload
-            {measurementData.length > 0 && (
-              <Badge variant="secondary" className="ml-2">
-                {measurementData.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="analysis" disabled={measurementData.length === 0} className="flex items-center gap-2">
-            <TrendingUp className="h-4 w-4" />
-            Analyse
-          </TabsTrigger>
-          <TabsTrigger value="visualization" disabled={measurementData.length === 0} className="flex items-center gap-2">
-            <BarChart3 className="h-4 w-4" />
-            Visualisation
-          </TabsTrigger>
-        </TabsList>
+      {/* Navigation onglets */}
+      <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-fit">
+        {tabs.map((tab) => {
+          const isActive = currentStep === tab.id;
+          const isLocked = tab.id !== 'upload' && !hasData;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => !isLocked && setCurrentStep(tab.id)}
+              disabled={isLocked}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all
+                ${isActive ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' :
+                  isLocked ? 'text-slate-600 cursor-not-allowed' :
+                  'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              {tab.icon}
+              {tab.label}
+              {tab.id === 'upload' && measurementData.length > 0 && (
+                <Badge className="ml-1 h-5 min-w-5 text-xs px-1 bg-blue-600/50 text-blue-300 border-0">
+                  {measurementData.length}
+                </Badge>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
-        {/* Onglet Upload */}
-        <TabsContent value="upload" className="space-y-4">
-          <Card className="p-6">
+      {/* Contenu */}
+      <div className="min-h-[400px]">
+        {/* Upload */}
+        {currentStep === 'upload' && (
+          <Card className="p-6 bg-white/5 border-white/10">
             <MeasurementUploadStep onFilesUploaded={handleMeasurementsReceived} />
           </Card>
-        </TabsContent>
+        )}
 
-        {/* Onglet Analyse */}
-        <TabsContent value="analysis" className="space-y-4">
-          {measurementData.length > 0 && (
-            <Card className="p-6">
-              <div className="space-y-6">
-                {/* Navigation entre fichiers */}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-medium">Analyse des mesures</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Fichier {currentDataIndex + 1} sur {measurementData.length}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentDataIndex(Math.max(0, currentDataIndex - 1))}
-                      disabled={currentDataIndex === 0}
-                    >
-                      Précédent
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentDataIndex(Math.min(measurementData.length - 1, currentDataIndex + 1))}
-                      disabled={currentDataIndex === measurementData.length - 1}
-                    >
-                      Suivant
-                    </Button>
-                  </div>
+        {/* Analyse */}
+        {currentStep === 'analysis' && hasData && (
+          <Card className="p-6 bg-white/5 border-white/10">
+            <div className="space-y-6">
+              {measurementData.length > 1 && (
+                <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-fit">
+                  <button onClick={() => setAnalysisMode('single')}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all
+                      ${analysisMode === 'single' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                    <FileText className="h-3.5 w-3.5" /> Par fichier
+                  </button>
+                  <button onClick={() => setAnalysisMode('comparison')}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all
+                      ${analysisMode === 'comparison' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                    <GitCompare className="h-3.5 w-3.5" /> Comparaison maître/esclave
+                  </button>
                 </div>
+              )}
 
-                {/* Affichage des KPIs */}
-                {currentData?.kpis && (
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {Object.entries(currentData.kpis).map(([key, value]) => (
-                      <div key={key} className="p-4 bg-muted/50 rounded-lg">
-                        <p className="text-xs text-muted-foreground uppercase">{key.replace(/_/g, ' ')}</p>
-                        <p className="text-xl font-semibold text-foreground mt-1">
-                          {typeof value === 'number' ? value.toFixed(2) : value}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Affichage des mesures */}
-                {currentData?.measurements && currentData.measurements.length > 0 && (
-                  <div>
-                    <h4 className="font-medium mb-3">Détail des mesures ({currentData.measurements.length})</h4>
-                    <div className="max-h-96 overflow-auto rounded-lg border">
-                      <table className="w-full text-sm">
-                        <thead className="sticky top-0 bg-muted border-b">
-                          <tr>
-                            {Object.keys(currentData.measurements[0] || {}).map((key) => (
-                              <th key={key} className="text-left p-3 font-medium">
-                                {key}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {currentData.measurements.map((measurement, idx) => (
-                            <tr key={idx} className="border-b hover:bg-muted/50">
-                              {Object.values(measurement).map((value, colIdx) => (
-                                <td key={colIdx} className="p-3">
-                                  {typeof value === 'number' ? value.toFixed(2) : String(value)}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                {!currentData?.kpis && !currentData?.measurements && (
-                  <div className="text-center py-8 text-muted-foreground">
-                    Aucune donnée d'analyse disponible pour ce fichier
-                  </div>
-                )}
-              </div>
-            </Card>
-          )}
-        </TabsContent>
-
-        {/* Onglet Visualisation */}
-        <TabsContent value="visualization" className="space-y-4">
-          <Card className="p-6">
-            <div className="space-y-4">
-              <div>
-                <h3 className="font-medium mb-4">Graphiques de consommation</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="p-4 bg-muted/30 rounded-lg flex items-center justify-center min-h-64">
-                    <div className="text-center">
-                      <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">Graphique à implémenter</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Utilisez une librairie comme recharts ou chart.js
-                      </p>
-                    </div>
-                  </div>
-                  <div className="p-4 bg-muted/30 rounded-lg flex items-center justify-center min-h-64">
-                    <div className="text-center">
-                      <TrendingUp className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">Tendances à implémenter</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Visualisez les tendances temporelles
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t">
-                <p className="text-sm text-muted-foreground">
-                  <span className="font-medium">À faire:</span> Intégrer une librairie de graphiques pour visualiser les données de consommation en temps réel
-                </p>
-              </div>
+              {analysisMode === 'single' ? (
+                <>
+                  <FileNav
+                    index={currentDataIndex}
+                    total={measurementData.length}
+                    label={currentData?.sensor_type ?? `Fichier ${currentDataIndex + 1}`}
+                    onPrev={() => setCurrentDataIndex((i) => Math.max(0, i - 1))}
+                    onNext={() => setCurrentDataIndex((i) => Math.min(measurementData.length - 1, i + 1))}
+                    onUploadMore={() => setCurrentStep('upload')}
+                  />
+                  {currentData ? (
+                    <MeasurementAnalysis data={currentData} />
+                  ) : (
+                    <p className="text-center py-8 text-slate-500">Aucune donnée pour ce fichier</p>
+                  )}
+                </>
+              ) : (
+                <SensorComparisonPanel measurementData={measurementData} />
+              )}
             </div>
           </Card>
-        </TabsContent>
-      </Tabs>
+        )}
+
+        {/* Visualisation */}
+        {currentStep === 'visualization' && hasData && (
+          <div className="space-y-4">
+            {measurementData.length > 1 && (
+              <Card className="px-4 py-3 bg-white/5 border-white/10">
+                <FileNav
+                  index={currentDataIndex}
+                  total={measurementData.length}
+                  label={currentData?.sensor_type ?? `Fichier ${currentDataIndex + 1}`}
+                  onPrev={() => setCurrentDataIndex((i) => Math.max(0, i - 1))}
+                  onNext={() => setCurrentDataIndex((i) => Math.min(measurementData.length - 1, i + 1))}
+                  onUploadMore={() => setCurrentStep('upload')}
+                />
+              </Card>
+            )}
+            <Card className="p-6 bg-white/5 border-white/10">
+              <MeasurementCharts
+                measurements={currentData?.measurements ?? []}
+                unit={currentData?.unit ?? currentData?.kpis?.unit ?? 'W'}
+                label={currentData?.metric_label ?? 'Valeur'}
+                quantityKind={currentData?.quantity_kind}
+              />
+            </Card>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---- Navigation multi-fichiers ---- */
+function FileNav({
+  index,
+  total,
+  label,
+  onPrev,
+  onNext,
+  onUploadMore,
+}: {
+  index: number;
+  total: number;
+  label: string;
+  onPrev: () => void;
+  onNext: () => void;
+  onUploadMore: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between flex-wrap gap-2">
+      <div>
+        <p className="text-white font-medium">{label}</p>
+        <p className="text-slate-500 text-xs">{index + 1} / {total}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        {total > 1 && (
+          <>
+            <Button variant="outline" size="sm" className="border-white/20 text-slate-300 hover:bg-white/5 h-8"
+              onClick={onPrev} disabled={index === 0}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="sm" className="border-white/20 text-slate-300 hover:bg-white/5 h-8"
+              onClick={onNext} disabled={index === total - 1}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </>
+        )}
+        <Button variant="outline" size="sm" className="border-white/20 text-slate-400 hover:text-white hover:bg-white/5 h-8 text-xs"
+          onClick={onUploadMore}>
+          <Upload className="h-3.5 w-3.5 mr-1.5" />
+          Ajouter des fichiers
+        </Button>
+      </div>
     </div>
   );
 }
