@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { computeMeasurementKpis, groupMeasurementsByDay, toDate, type ColumnStat, type QuantityKind } from '@/services/measurementStats';
 import { exportReportToDocx, exportReportToPdf, type MeasurementReport } from '@/services/measurementReportExport';
+import { PeriodFilter, dayRangeOf, filterByRange, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
 import {
   Activity,
   AlertTriangle,
@@ -34,13 +35,6 @@ interface AnalysisData {
   metric_label?: string;
   sensor_type?: string;
   quantity_kind?: QuantityKind;
-}
-
-/** epoch ms → valeur compatible avec un <input type="datetime-local"> (heure locale). */
-function toDatetimeLocalValue(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const PAGE_SIZE = 25;
@@ -94,46 +88,48 @@ function columnLabel(key: string, metricLabel: string): string {
   return key;
 }
 
-export function MeasurementAnalysis({ data }: { data: AnalysisData }) {
+interface MeasurementAnalysisProps {
+  data: AnalysisData;
+  /** Plage de période contrôlée par le parent (partagée avec l'onglet Visualisation). Sinon, état local. */
+  dateRange?: DateRange;
+  onDateRangeChange?: (range: DateRange) => void;
+}
+
+export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRangeChange }: MeasurementAnalysisProps) {
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
   const [selectedMeasures, setSelectedMeasures] = useState<string[] | null>(null);
-  const [dateRange, setDateRange] = useState<{ start: string; end: string } | null>(null);
+  const [localRange, setLocalRange] = useState<DateRange>(null);
   const [dailyMetric, setDailyMetric] = useState<string | null>(null);
+  const isControlled = controlledRange !== undefined;
+  const dateRange: DateRange = isControlled ? controlledRange : localRange;
+  const setDateRange = (range: DateRange) => {
+    if (isControlled) onDateRangeChange?.(range); else setLocalRange(range);
+  };
 
-  const measurements = data.measurements ?? [];
+  const measurements = useMemo(() => data.measurements ?? [], [data.measurements]);
   const unit = data.unit ?? data.kpis?.unit ?? '';
   const metricLabel = data.metric_label ?? 'Valeur';
   const quantityKind = data.quantity_kind ?? 'energy';
 
   // Bornes temporelles réelles du fichier — servent de valeurs par défaut au filtre de période.
-  const timestampBounds = useMemo(() => {
-    const times = measurements
-      .map((m) => toDate(String(m.timestamp)).getTime())
-      .filter((t) => Number.isFinite(t));
-    if (times.length === 0) return null;
-    return { min: Math.min(...times), max: Math.max(...times) };
-  }, [measurements]);
+  const timestampBounds = useTimestampBounds(measurements);
 
-  // Nouveau fichier chargé : on repart d'une sélection et d'une période complètes.
+  // Nouveau fichier chargé : on repart d'une sélection complète (la période est
+  // gérée par fichier par le parent quand elle est contrôlée).
   useEffect(() => {
     setSelectedMeasures(null);
-    setDateRange(null);
+    setLocalRange(null);
     setDailyMetric(null);
   }, [data]);
 
-  const rangeStartMs = dateRange?.start ? new Date(dateRange.start).getTime() : (timestampBounds?.min ?? -Infinity);
-  const rangeEndMs = dateRange?.end ? new Date(dateRange.end).getTime() : (timestampBounds?.max ?? Infinity);
   const isRangeFiltered = dateRange !== null;
 
   // Filtre de période : appliqué en amont de tout le reste (colonnes, stats, tableau, export).
-  const dateFiltered = useMemo(() => {
-    if (!timestampBounds) return measurements;
-    return measurements.filter((m) => {
-      const t = toDate(String(m.timestamp)).getTime();
-      return Number.isFinite(t) && t >= rangeStartMs && t <= rangeEndMs;
-    });
-  }, [measurements, timestampBounds, rangeStartMs, rangeEndMs]);
+  const dateFiltered = useMemo(
+    () => filterByRange(measurements, dateRange, timestampBounds),
+    [measurements, dateRange, timestampBounds],
+  );
 
   // KPIs recalculés côté client sur la période filtrée (voir measurementStats.ts).
   const kpis = useMemo(() => {
@@ -144,7 +140,6 @@ export function MeasurementAnalysis({ data }: { data: AnalysisData }) {
     }
   }, [dateFiltered, unit, metricLabel, quantityKind]);
 
-  const dayRangeOf = (day: string) => ({ start: `${day}T00:00`, end: `${day}T23:59` });
   const isDayActive = (day: string) => {
     const r = dayRangeOf(day);
     return dateRange?.start === r.start && dateRange?.end === r.end;
@@ -294,36 +289,8 @@ export function MeasurementAnalysis({ data }: { data: AnalysisData }) {
 
   return (
     <div className="space-y-6">
-      {/* Filtre de période : recalcule stats, tableau et rapport sur la plage choisie */}
-      {timestampBounds && timestampBounds.max > timestampBounds.min && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground mr-1">Période :</span>
-          <Input
-            type="datetime-local"
-            className="h-8 w-auto text-xs"
-            value={dateRange?.start ?? toDatetimeLocalValue(timestampBounds.min)}
-            onChange={(e) => setDateRange((prev) => ({
-              start: e.target.value,
-              end: prev?.end ?? toDatetimeLocalValue(timestampBounds.max),
-            }))}
-          />
-          <span className="text-xs text-muted-foreground">à</span>
-          <Input
-            type="datetime-local"
-            className="h-8 w-auto text-xs"
-            value={dateRange?.end ?? toDatetimeLocalValue(timestampBounds.max)}
-            onChange={(e) => setDateRange((prev) => ({
-              start: prev?.start ?? toDatetimeLocalValue(timestampBounds.min),
-              end: e.target.value,
-            }))}
-          />
-          {isRangeFiltered && (
-            <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setDateRange(null)}>
-              <RotateCcw className="h-3.5 w-3.5 mr-1" /> Période complète
-            </Button>
-          )}
-        </div>
-      )}
+      {/* Filtre de période : recalcule stats, tableau et rapport sur la plage choisie (partagé avec Visualisation) */}
+      <PeriodFilter bounds={timestampBounds} value={dateRange} onChange={setDateRange} />
 
       {/* Vue par jour : récap quotidien + drill-down (réutilise le filtre de période ci-dessus) */}
       {dailyGroups.length > 1 && (

@@ -8,6 +8,7 @@ import { MeasurementCharts } from './MeasurementCharts';
 import { MeasurementAnalysis } from './MeasurementAnalysis';
 import { SensorComparisonPanel } from './SensorComparisonPanel';
 import { ModelComparisonPanel } from './ModelComparisonPanel';
+import type { DateRange } from './MeasurementPeriodFilter';
 import { Upload, Activity, BarChart3, TrendingUp, ChevronLeft, ChevronRight, GitCompare, Columns2, Network } from 'lucide-react';
 
 type WorkflowStep = 'upload' | 'analysis' | 'visualization' | 'comparison';
@@ -22,6 +23,10 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
   const [measurementData, setMeasurementData] = useState<MeasurementData[]>([]);
   const [currentDataIndex, setCurrentDataIndex] = useState(0);
   const [comparisonMode, setComparisonMode] = useState<ComparisonMode>('models');
+  // Période choisie, par fichier — partagée entre les onglets Analyse et Visualisation.
+  const [ranges, setRanges] = useState<Record<number, DateRange>>({});
+  const currentRange: DateRange = ranges[currentDataIndex] ?? null;
+  const setCurrentRange = (range: DateRange) => setRanges((prev) => ({ ...prev, [currentDataIndex]: range }));
 
   const handleMeasurementsReceived = (data: MeasurementData[]) => {
     setMeasurementData((prev) => {
@@ -118,7 +123,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
                 onUploadMore={() => setCurrentStep('upload')}
               />
               {currentData ? (
-                <MeasurementAnalysis data={currentData} />
+                <MeasurementAnalysis data={currentData} dateRange={currentRange} onDateRangeChange={setCurrentRange} />
               ) : (
                 <p className="text-center py-8 text-slate-500">Aucune donnée pour ce fichier</p>
               )}
@@ -177,6 +182,9 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
                 unit={currentData?.unit ?? currentData?.kpis?.unit ?? 'W'}
                 label={currentData?.metric_label ?? 'Valeur'}
                 quantityKind={currentData?.quantity_kind}
+                title={currentData ? measurementLabel(currentData, currentDataIndex) : undefined}
+                dateRange={currentRange}
+                onDateRangeChange={setCurrentRange}
               />
             </Card>
           </div>

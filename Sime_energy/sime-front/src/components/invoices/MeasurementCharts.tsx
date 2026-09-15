@@ -12,7 +12,8 @@
  * s'adapte donc à n'importe quel capteur sans configuration.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import html2canvas from 'html2canvas';
 import {
   Area,
   Bar,
@@ -31,12 +32,16 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { integrateEnergy, type QuantityKind } from '@/services/measurementStats';
+import { useToast } from '@/hooks/use-toast';
+import { PeriodFilter, dayRangeOf, filterByRange, singleDayOf, toDatetimeLocalValue, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
 import {
   Activity,
   BarChart3,
   CalendarRange,
   Grid3x3,
+  Image as ImageIcon,
   LineChart as LineIcon,
+  Loader2,
   Sigma,
   Zap,
 } from 'lucide-react';
@@ -59,6 +64,11 @@ interface MeasurementChartsProps {
    * directe, "other" (ppm, °C, %, Hz, V, A…) → aucun cumul (seule la moyenne a un sens).
    */
   quantityKind?: QuantityKind;
+  /** Nom du relevé (titre de l'image exportée). */
+  title?: string;
+  /** Plage de période contrôlée par le parent (partagée avec l'onglet Analyse). Sinon, état local. */
+  dateRange?: DateRange;
+  onDateRangeChange?: (range: DateRange) => void;
 }
 
 type ViewMode = 'curve' | 'distribution' | 'profile' | 'period';
@@ -113,8 +123,55 @@ const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
 /* ------------------------------------------------------------------- main */
 
-export function MeasurementCharts({ measurements, unit = '', label = 'Valeur', quantityKind = 'other' }: MeasurementChartsProps) {
+export function MeasurementCharts({
+  measurements: allMeasurements, unit = '', label = 'Valeur', quantityKind = 'other', title,
+  dateRange: controlledRange, onDateRangeChange,
+}: MeasurementChartsProps) {
   const [mode, setMode] = useState<ViewMode>('curve');
+  const [localRange, setLocalRange] = useState<DateRange>(null);
+  const [exporting, setExporting] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
+
+  const isControlled = controlledRange !== undefined;
+  const dateRange: DateRange = isControlled ? controlledRange : localRange;
+  const setDateRange = (range: DateRange) => {
+    if (isControlled) onDateRangeChange?.(range); else setLocalRange(range);
+  };
+
+  // Filtre de période appliqué à toutes les vues (même plage que l'onglet Analyse).
+  const bounds = useTimestampBounds(allMeasurements ?? []);
+  const measurements = useMemo(
+    () => filterByRange(allMeasurements ?? [], dateRange, bounds),
+    [allMeasurements, dateRange, bounds],
+  );
+  const activeDay = singleDayOf(dateRange);
+
+  // Descente au détail : un jour cliqué dans la vue « Par période » devient la période, vue Courbe.
+  const drillToDay = (day: string) => {
+    setDateRange(dayRangeOf(day));
+    setMode('curve');
+  };
+
+  const exportImage = async () => {
+    if (!cardRef.current) return;
+    setExporting(true);
+    try {
+      const canvas = await html2canvas(cardRef.current, {
+        scale: 2, logging: false, useCORS: true,
+        ignoreElements: (el) => el.classList.contains('recharts-tooltip-wrapper') || el.hasAttribute('data-no-export'),
+      });
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL('image/png');
+      const slug = (title ?? label).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+      a.download = `${slug}_${mode}${activeDay ? `_${activeDay}` : ''}.png`;
+      a.click();
+    } catch (e) {
+      toast({ title: 'Export impossible', description: String(e), variant: 'destructive' });
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // Séries numériques disponibles (consommation = grandeur principale en tête).
   const series = useMemo(() => {
@@ -129,10 +186,11 @@ export function MeasurementCharts({ measurements, unit = '', label = 'Valeur', q
     list.sort((a, b) => (a === 'consumption' ? -1 : b === 'consumption' ? 1 : 0));
     return list.map((key, i) => ({
       key,
-      name: key === 'consumption' ? label : key,
+      // La grandeur principale porte son unité dans son nom, comme les colonnes secondaires ("P apparente (VA)").
+      name: key === 'consumption' ? (unit ? `${label} (${unit})` : label) : key,
       color: PALETTE[i % PALETTE.length],
     }));
-  }, [measurements, label]);
+  }, [measurements, label, unit]);
 
   const primary = series[0]?.key ?? 'consumption';
 
@@ -170,7 +228,7 @@ export function MeasurementCharts({ measurements, unit = '', label = 'Valeur', q
     };
   }, [measurements, primary, quantityKind, unit]);
 
-  if (!measurements || measurements.length === 0) {
+  if (!allMeasurements || allMeasurements.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
         <BarChart3 className="h-12 w-12 mb-3 opacity-40" />
@@ -182,7 +240,13 @@ export function MeasurementCharts({ measurements, unit = '', label = 'Valeur', q
 
   return (
     <div className="space-y-4">
+      {/* Période (partagée avec l'onglet Analyse) */}
+      <PeriodFilter bounds={bounds} value={dateRange} onChange={setDateRange} />
+
       {/* Bandeau KPIs rapides */}
+      {measurements.length === 0 && (
+        <p className="text-sm text-muted-foreground">Aucune mesure sur la période choisie.</p>
+      )}
       {stats && (
         <div className={`grid grid-cols-2 ${stats.total !== null ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}>
           <StatCard icon={<Activity className="h-4 w-4" />} label="Mesures" value={String(stats.count)} />
@@ -205,7 +269,8 @@ export function MeasurementCharts({ measurements, unit = '', label = 'Valeur', q
         </p>
       )}
 
-      {/* Sélecteur de vue */}
+      {/* Sélecteur de vue + export */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="flex flex-wrap items-center gap-1 p-1 bg-muted rounded-lg w-fit">
         <ModeButton active={mode === 'curve'} onClick={() => setMode('curve')} icon={<LineIcon className="h-4 w-4" />}>
           Courbe
@@ -220,8 +285,22 @@ export function MeasurementCharts({ measurements, unit = '', label = 'Valeur', q
           Par période
         </ModeButton>
       </div>
+      <Button variant="outline" size="sm" className="h-8 text-xs" onClick={exportImage} disabled={exporting || measurements.length === 0}>
+        {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5 mr-1.5" />}
+        Exporter en image
+      </Button>
+      </div>
 
-      <Card className="p-4">
+      <Card className="p-4" ref={cardRef}>
+        {/* En-tête repris dans l'image exportée */}
+        <p className="text-xs text-muted-foreground mb-2">
+          {title ? `${title} · ` : ''}{label}{unit ? ` (${unit})` : ''}
+          {' · '}
+          {mode === 'curve' ? 'Courbe' : mode === 'distribution' ? 'Distribution' : mode === 'profile' ? 'Profil journalier' : 'Par période'}
+          {bounds && (
+            <> · {formatTick(dateRange?.start ?? toDatetimeLocalValue(bounds.min))} → {formatTick(dateRange?.end ?? toDatetimeLocalValue(bounds.max))}</>
+          )}
+        </p>
         {mode === 'curve' && <CurveView measurements={measurements} series={series} unit={unit} />}
         {mode === 'distribution' && <DistributionView measurements={measurements} primary={primary} label={label} unit={unit} />}
         {mode === 'profile' && <DailyProfileView measurements={measurements} primary={primary} unit={unit} />}
@@ -232,6 +311,7 @@ export function MeasurementCharts({ measurements, unit = '', label = 'Valeur', q
             label={label}
             unit={unit}
             quantityKind={primary === 'consumption' ? quantityKind : 'other'}
+            onDrillDay={drillToDay}
           />
         )}
       </Card>
@@ -429,8 +509,10 @@ function DistributionView({
       <ResponsiveContainer width="100%" height={380}>
         <BarChart data={bins} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-          <XAxis dataKey="range" fontSize={10} tickLine={false} minTickGap={20} angle={-25} textAnchor="end" height={50} />
-          <YAxis fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+          <XAxis dataKey="range" fontSize={10} tickLine={false} minTickGap={20} angle={-25} textAnchor="end" height={60}
+            label={{ value: `${label}${unit ? ` (${unit})` : ''}`, position: 'insideBottom', offset: -2, fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
+          <YAxis fontSize={11} tickLine={false} axisLine={false} allowDecimals={false}
+            label={{ value: 'Nombre de mesures', angle: -90, position: 'insideLeft', fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
           <Tooltip
             contentStyle={tooltipStyle}
             formatter={(v: number) => [`${v} mesures`, 'Effectif']}
@@ -530,6 +612,7 @@ function PeriodView({
   label,
   unit,
   quantityKind,
+  onDrillDay,
 }: {
   measurements: Measurement[];
   primary: string;
@@ -537,6 +620,8 @@ function PeriodView({
   unit: string;
   /** 'other' si `primary` n'est pas la grandeur principale (pas de cumul/moyenne physique connu dans ce cas non plus, mais on affiche quand même la moyenne). */
   quantityKind: QuantityKind;
+  /** Clic sur un jour (granularité « Jour ») → descente au détail de ce jour. */
+  onDrillDay?: (day: string) => void;
 }) {
   const [gran, setGran] = useState<Granularity>('day');
 
@@ -585,6 +670,7 @@ function PeriodView({
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-sm text-muted-foreground">
           {isCumulative ? 'Total' : 'Moyenne'} de <span className="font-medium text-foreground">{label}</span> par période
+          {gran === 'day' && onDrillDay && <span className="text-xs"> — cliquez un jour pour voir sa courbe</span>}
         </p>
         <div className="flex gap-1 p-1 bg-muted rounded-lg">
           {(['day', 'week', 'month'] as Granularity[]).map((g) => (
@@ -598,9 +684,12 @@ function PeriodView({
         <BarChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
           <XAxis dataKey="period" fontSize={10} tickLine={false} minTickGap={15} angle={-25} textAnchor="end" height={50} />
-          <YAxis fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => formatValue(Number(v), periodUnit)} />
+          <YAxis fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => formatValue(Number(v), periodUnit)} width={80}
+            label={{ value: `${isCumulative ? 'Total' : 'Moyenne'}${periodUnit ? ` (${periodUnit})` : ''}`, angle: -90, position: 'insideLeft', fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
           <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [formatValue(Number(v), periodUnit), isCumulative ? 'Total' : 'Moyenne']} labelFormatter={(l) => `📅 ${l}`} />
-          <Bar dataKey="value" radius={[3, 3, 0, 0]} isAnimationActive={false}>
+          <Bar dataKey="value" radius={[3, 3, 0, 0]} isAnimationActive={false}
+            cursor={gran === 'day' && onDrillDay ? 'pointer' : undefined}
+            onClick={(d: { period?: string }) => { if (gran === 'day' && onDrillDay && d?.period) onDrillDay(d.period); }}>
             {data.map((d, i) => (
               <Cell key={i} fill={d.value < 0 ? 'hsl(38 92% 50%)' : 'hsl(var(--primary))'} />
             ))}
