@@ -17,10 +17,10 @@ import { integrateEnergy } from '@/services/measurementStats';
 
 export type BucketGranularity = 'hour' | 'day';
 
-type Family = 'active' | 'apparent' | 'reactive';
+export type Family = 'active' | 'apparent' | 'reactive';
 type Kind = 'power' | 'energy';
 
-interface UnitMeta {
+export interface UnitMeta {
   family: Family;
   kind: Kind;
   /** Facteur vers l'unité de base de sa famille (W, VA ou var / Wh, VAh ou varh). */
@@ -49,6 +49,23 @@ const BASE_ENERGY_UNIT: Record<Family, string> = {
   apparent: 'VAh',
   reactive: 'varh',
 };
+
+const BASE_POWER_UNIT: Record<Family, string> = {
+  active: 'W',
+  apparent: 'VA',
+  reactive: 'var',
+};
+
+/** Métadonnées d'une unité électrique connue (undefined pour ppm, °C, %…). */
+export function unitInfo(unit?: string): UnitMeta | undefined {
+  return unit ? UNIT_INFO[unit] : undefined;
+}
+
+/** Unité de puissance de base de la famille de `unit` (ex. "kVA" → "VA"). */
+export function powerUnitFor(unit?: string): string | undefined {
+  const info = unit ? UNIT_INFO[unit] : undefined;
+  return info ? BASE_POWER_UNIT[info.family] : unit;
+}
 
 /**
  * Deux unités sont comparables si elles décrivent la même grandeur électrique

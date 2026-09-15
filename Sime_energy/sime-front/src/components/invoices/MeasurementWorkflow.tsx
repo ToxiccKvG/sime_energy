@@ -7,9 +7,11 @@ import { MeasurementUploadStep } from './MeasurementUploadStep';
 import { MeasurementCharts } from './MeasurementCharts';
 import { MeasurementAnalysis } from './MeasurementAnalysis';
 import { SensorComparisonPanel } from './SensorComparisonPanel';
-import { Upload, Activity, BarChart3, TrendingUp, ChevronLeft, ChevronRight, FileText, GitCompare } from 'lucide-react';
+import { ModelComparisonPanel } from './ModelComparisonPanel';
+import { Upload, Activity, BarChart3, TrendingUp, ChevronLeft, ChevronRight, GitCompare, Columns2, Network } from 'lucide-react';
 
-type WorkflowStep = 'upload' | 'analysis' | 'visualization';
+type WorkflowStep = 'upload' | 'analysis' | 'visualization' | 'comparison';
+type ComparisonMode = 'models' | 'master';
 
 interface MeasurementWorkflowProps {
   auditId?: string;
@@ -19,7 +21,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
   const [currentStep, setCurrentStep] = useState<WorkflowStep>('upload');
   const [measurementData, setMeasurementData] = useState<MeasurementData[]>([]);
   const [currentDataIndex, setCurrentDataIndex] = useState(0);
-  const [analysisMode, setAnalysisMode] = useState<'single' | 'comparison'>('single');
+  const [comparisonMode, setComparisonMode] = useState<ComparisonMode>('models');
 
   const handleMeasurementsReceived = (data: MeasurementData[]) => {
     setMeasurementData((prev) => {
@@ -37,6 +39,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
     { id: 'upload',        label: 'Upload',        icon: <Upload className="h-4 w-4" /> },
     { id: 'analysis',      label: 'Analyse',       icon: <TrendingUp className="h-4 w-4" /> },
     { id: 'visualization', label: 'Visualisation', icon: <BarChart3 className="h-4 w-4" /> },
+    { id: 'comparison',    label: 'Comparaison',   icon: <GitCompare className="h-4 w-4" /> },
   ];
 
   return (
@@ -103,40 +106,49 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
         {currentStep === 'analysis' && hasData && (
           <Card className="p-6 bg-white/5 border-white/10">
             <div className="space-y-6">
-              {measurementData.length > 1 && (
+              <FileNav
+                index={currentDataIndex}
+                total={measurementData.length}
+                label={currentData?.sensor_type ?? `Fichier ${currentDataIndex + 1}`}
+                onPrev={() => setCurrentDataIndex((i) => Math.max(0, i - 1))}
+                onNext={() => setCurrentDataIndex((i) => Math.min(measurementData.length - 1, i + 1))}
+                onUploadMore={() => setCurrentStep('upload')}
+              />
+              {currentData ? (
+                <MeasurementAnalysis data={currentData} />
+              ) : (
+                <p className="text-center py-8 text-slate-500">Aucune donnée pour ce fichier</p>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {/* Comparaison */}
+        {currentStep === 'comparison' && hasData && (
+          <Card className="p-6 bg-white/5 border-white/10">
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-fit">
-                  <button onClick={() => setAnalysisMode('single')}
+                  <button onClick={() => setComparisonMode('models')}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all
-                      ${analysisMode === 'single' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-                    <FileText className="h-3.5 w-3.5" /> Par fichier
+                      ${comparisonMode === 'models' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                    <Columns2 className="h-3.5 w-3.5" /> Deux modèles côte à côte
                   </button>
-                  <button onClick={() => setAnalysisMode('comparison')}
+                  <button onClick={() => setComparisonMode('master')}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all
-                      ${analysisMode === 'comparison' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-                    <GitCompare className="h-3.5 w-3.5" /> Comparaison maître/esclave
+                      ${comparisonMode === 'master' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                    <Network className="h-3.5 w-3.5" /> Compteur général / sous-compteurs
                   </button>
                 </div>
-              )}
-
-              {analysisMode === 'single' ? (
-                <>
-                  <FileNav
-                    index={currentDataIndex}
-                    total={measurementData.length}
-                    label={currentData?.sensor_type ?? `Fichier ${currentDataIndex + 1}`}
-                    onPrev={() => setCurrentDataIndex((i) => Math.max(0, i - 1))}
-                    onNext={() => setCurrentDataIndex((i) => Math.min(measurementData.length - 1, i + 1))}
-                    onUploadMore={() => setCurrentStep('upload')}
-                  />
-                  {currentData ? (
-                    <MeasurementAnalysis data={currentData} />
-                  ) : (
-                    <p className="text-center py-8 text-slate-500">Aucune donnée pour ce fichier</p>
-                  )}
-                </>
-              ) : (
-                <SensorComparisonPanel measurementData={measurementData} />
-              )}
+                <p className="text-xs text-slate-500 max-w-md">
+                  {comparisonMode === 'models'
+                    ? 'Deux relevés (ex. C.A 8335 et Shelly sur le même départ, ou deux campagnes) alignés sur la même échelle de temps, avec l\'écart et les indicateurs face à face.'
+                    : 'Un compteur de référence comparé à la somme des sous-compteurs censés l\'expliquer.'}
+                </p>
+              </div>
+              {comparisonMode === 'models'
+                ? <ModelComparisonPanel measurementData={measurementData} />
+                : <SensorComparisonPanel measurementData={measurementData} />}
             </div>
           </Card>
         )}
