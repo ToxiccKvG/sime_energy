@@ -4,12 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { User, Mail, Building2, Shield, Loader2, Send } from "lucide-react";
+import { User, Mail, Building2, Shield, Loader2 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { inviteUserByEmail } from "@/lib/invite-service";
+import { OrganizationInvitations } from "@/components/auth/OrganizationInvitations";
 
 export default function Compte() {
   const { user, signOut } = useAuth();
@@ -32,8 +32,6 @@ export default function Compte() {
   const useCase = user?.user_metadata?.use_case;
   const [loading, setLoading] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviting, setInviting] = useState(false);
 
   // État du changement de mot de passe
   const [currentPassword, setCurrentPassword] = useState("");
@@ -211,48 +209,6 @@ export default function Compte() {
         description: "Erreur lors de la déconnexion",
         variant: "destructive",
       });
-    }
-  };
-
-  const handleInviteUser = async () => {
-    if (!inviteEmail.trim()) {
-      toast({
-        title: "Email requis",
-        description: "Veuillez saisir un email à inviter.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!organization?.id) {
-      toast({
-        title: "Erreur",
-        description: "Vous devez appartenir à une organisation pour inviter des utilisateurs.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setInviting(true);
-    try {
-      // Passer l'organization_id dans les métadonnées pour que l'utilisateur rejoigne automatiquement l'organisation
-      const response = await inviteUserByEmail(inviteEmail.trim(), {
-        organization_id: organization.id,
-        organization_name: organization.name,
-      });
-      toast({
-        title: "Invitation envoyée",
-        description: response.message || `Un email a été envoyé à ${inviteEmail}`,
-      });
-      setInviteEmail("");
-    } catch (error) {
-      toast({
-        title: "Erreur",
-        description: error instanceof Error ? error.message : "Impossible d'envoyer l'invitation",
-        variant: "destructive",
-      });
-    } finally {
-      setInviting(false);
     }
   };
 
@@ -449,38 +405,10 @@ export default function Compte() {
         </CardContent>
       </Card>
 
-      {/* Invitations */}
-      <Card className="border-white/10 bg-white/5 backdrop-blur">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-white">
-            <Send className="h-5 w-5" />
-            Invitations utilisateur
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-slate-400">
-            Envoyez une invitation par email. Le destinataire recevra un email pour créer son compte et définir son mot de passe.
-          </p>
-          <div className="flex flex-col md:flex-row gap-2">
-            <Input
-              type="email"
-              placeholder="inviter@exemple.com"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              className="md:flex-1 bg-white/5 text-white placeholder:text-slate-500 border-white/10 focus-visible:ring-primary/70 focus-visible:border-primary/40"
-            />
-            <Button
-              onClick={handleInviteUser}
-              disabled={inviting || !inviteEmail.trim()}
-              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              {inviting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              {inviting ? "Envoi..." : "Inviter"}
-            </Button>
-          </div>
-
-        </CardContent>
-      </Card>
+      {/* Invitations par lien (uniquement si l'utilisateur a une organisation) */}
+      {organization && (
+        <OrganizationInvitations organizationId={organization.id} organizationName={organization.name} />
+      )}
 
       {/* Sécurité */}
       <Card className="border-white/10 bg-white/5 backdrop-blur">
