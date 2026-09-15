@@ -53,79 +53,32 @@ export async function createInvitation(
   return data;
 }
 
-// Get invitation by code
-export async function getInvitationByCode(code: string): Promise<OrganizationInvitation | null> {
-  const { data, error } = await supabase
-    .from('organization_invitations')
-    .select('*')
-    .eq('code', code)
-    .eq('status', 'pending')
-    .single();
-
-  if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
-    throw error;
-  }
-
-  if (!data) return null;
-
-  // Check if invitation has expired
-  if (data.expires_at && new Date(data.expires_at) < new Date()) {
-    // Mark as expired
-    await supabase
-      .from('organization_invitations')
-      .update({ status: 'expired' })
-      .eq('id', data.id);
-    return null;
-  }
-
-  return data;
+// Lecture d'une invitation par son code — via RPC SECURITY DEFINER :
+// la table n'est plus lisible par code (sinon n'importe qui pouvait
+// lister toutes les invitations). La RPC renvoie aussi le nom de
+// l'organisation, que le futur membre n'a pas encore le droit de lire.
+export interface InvitationPreview {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  invited_email: string | null;
+  expires_at: string | null;
+  status: string;
 }
 
-// Accept invitation and add user to organization
-export async function acceptInvitation(
-  invitationCode: string,
-  userId: string
-): Promise<{ organization_id: string; invitation_id: string }> {
-  // Get the invitation
-  const invitation = await getInvitationByCode(invitationCode);
-  if (!invitation) {
-    throw new Error('Invitation not found or has expired');
-  }
+export async function getInvitationByCode(code: string): Promise<InvitationPreview | null> {
+  const { data, error } = await supabase.rpc('get_invitation_by_code', { p_code: code });
+  if (error) throw error;
+  return (data as InvitationPreview[] | null)?.[0] ?? null;
+}
 
-  // Add user to organization
-  const { error: memberError } = await supabase
-    .from('organization_users')
-    .insert([
-      {
-        organization_id: invitation.organization_id,
-        user_id: userId,
-        role: 'member',
-      },
-    ]);
-
-  if (memberError) {
-    // If user is already a member, that's ok
-    if (memberError.code !== '23505') { // 23505 = unique constraint violation
-      throw memberError;
-    }
-  }
-
-  // Mark invitation as accepted
-  const { error: updateError } = await supabase
-    .from('organization_invitations')
-    .update({
-      status: 'accepted',
-      accepted_at: new Date().toISOString(),
-      accepted_by_user_id: userId,
-    })
-    .eq('id', invitation.id);
-
-  if (updateError) throw updateError;
-
-  return {
-    organization_id: invitation.organization_id,
-    invitation_id: invitation.id,
-  };
+// Acceptation — via RPC : c'est la base qui vérifie le code, l'expiration
+// et l'e-mail invité, puis crée l'adhésion (les utilisateurs n'ont plus le
+// droit d'insérer eux-mêmes dans organization_users).
+export async function acceptInvitation(invitationCode: string): Promise<{ organization_id: string }> {
+  const { data, error } = await supabase.rpc('accept_invitation', { p_code: invitationCode });
+  if (error) throw error;
+  return { organization_id: data as string };
 }
 
 // Get invitations for an organization

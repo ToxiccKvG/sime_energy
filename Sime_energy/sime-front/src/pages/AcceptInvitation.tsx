@@ -6,8 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, CheckCircle, AlertCircle, LogIn } from 'lucide-react';
 import { acceptInvitation, getInvitationByCode } from '@/lib/organization-invitation-service';
-import type { OrganizationInvitation } from '@/lib/organization-invitation-service';
-import { supabase } from '@/lib/supabase';
+import type { InvitationPreview } from '@/lib/organization-invitation-service';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 
 export default function AcceptInvitation() {
@@ -18,8 +17,8 @@ export default function AcceptInvitation() {
 
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
-  const [invitation, setInvitation] = useState<OrganizationInvitation | null>(null);
-  const [organization, setOrganization] = useState<any>(null);
+  const [invitation, setInvitation] = useState<InvitationPreview | null>(null);
+  const [organization, setOrganization] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const code = searchParams.get('code');
@@ -41,16 +40,9 @@ export default function AcceptInvitation() {
         }
 
         setInvitation(inv);
-
-        // Fetch organization details
-        const { data: org, error: orgError } = await supabase
-          .from('organizations')
-          .select('*')
-          .eq('id', inv.organization_id)
-          .single();
-
-        if (orgError) throw orgError;
-        setOrganization(org);
+        // Le nom de l'organisation vient de la RPC : le futur membre n'a
+        // pas encore le droit de lire la table organizations.
+        setOrganization({ id: inv.organization_id, name: inv.organization_name });
       } catch (err) {
         console.error('Error loading invitation:', err);
         setError(err instanceof Error ? err.message : 'Erreur lors du chargement de l\'invitation');
@@ -74,7 +66,7 @@ export default function AcceptInvitation() {
 
     setAccepting(true);
     try {
-      await acceptInvitation(invitation.code, user.id);
+      await acceptInvitation(code!);
       toast({
         title: 'Succès',
         description: `Vous avez rejoint ${organization?.name}!`,
