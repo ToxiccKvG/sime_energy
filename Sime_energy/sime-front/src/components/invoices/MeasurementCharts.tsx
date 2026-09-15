@@ -14,6 +14,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
+import { isHoverArtifact } from '@/lib/chart-export';
 import {
   Area,
   Bar,
@@ -159,7 +160,7 @@ export function MeasurementCharts({
     try {
       const canvas = await html2canvas(cardRef.current, {
         scale: 2, logging: false, useCORS: true,
-        ignoreElements: (el) => el.classList.contains('recharts-tooltip-wrapper') || el.hasAttribute('data-no-export'),
+        ignoreElements: isHoverArtifact,
       });
       const a = document.createElement('a');
       a.href = canvas.toDataURL('image/png');

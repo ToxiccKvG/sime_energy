@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
+import { isHoverArtifact } from '@/lib/chart-export';
 import {
   Area, Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
@@ -128,7 +129,7 @@ export function AnalysisModelsPanel({ data, title, dateRange, onDateRangeChange 
     try {
       const canvas = await html2canvas(resultRef.current, {
         scale: 2, logging: false, useCORS: true, backgroundColor: '#0f111a',
-        ignoreElements: (el) => el.classList.contains('recharts-tooltip-wrapper') || el.hasAttribute('data-no-export'),
+        ignoreElements: isHoverArtifact,
       });
       const a = document.createElement('a');
       a.href = canvas.toDataURL('image/png');

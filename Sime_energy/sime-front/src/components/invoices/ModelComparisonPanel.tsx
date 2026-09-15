@@ -8,6 +8,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
+import { isHoverArtifact } from '@/lib/chart-export';
 import {
   Area, Brush, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis,
 } from 'recharts';
@@ -203,7 +204,7 @@ export function ModelComparisonPanel({ measurementData, onRename }: ModelCompari
     try {
       const canvas = await html2canvas(chartRef.current, {
         backgroundColor: '#0f111a', scale: 2, logging: false,
-        ignoreElements: (el) => el.classList.contains('recharts-tooltip-wrapper'),
+        ignoreElements: isHoverArtifact,
       });
       const a = document.createElement('a');
       a.href = canvas.toDataURL('image/png');
