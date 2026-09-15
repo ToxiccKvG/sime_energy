@@ -1,4 +1,4 @@
-# Guide utilisateur — Module Campagne de mesure
+# Guide utilisateur — Campagne de mesure et organisation
 
 > Plateforme SIMEE (CER2E) · Menu **Mesures**
 > Version du 15/09/2026 (fin du chantier 1 du plan de travail).
@@ -6,6 +6,7 @@
 Ce guide s'adresse à l'auditeur énergétique qui revient de terrain avec des fichiers
 exportés par ses appareils de mesure (analyseur réseau, compteur, station d'air,
 portail photovoltaïque…) et veut les lire, les comparer et en tirer des conclusions.
+La section 6 couvre la gestion de l'organisation (inviter un collègue, rôles).
 
 Le module se parcourt de gauche à droite : **Upload → Analyse → Visualisation →
 Modèles → Comparaison**. Les onglets restent grisés tant qu'aucun fichier n'est chargé.
@@ -166,7 +167,49 @@ sous-compté.
 
 ---
 
-## 6. Questions fréquentes
+## 6. Organisation et invitations (page Mon compte)
+
+Toutes les données de la plateforme (audits, factures, capteurs personnalisés, relevés
+Shelly…) sont rattachées à une **organisation**. Un utilisateur ne voit que celles de
+l'organisation dont il est membre.
+
+### Inviter un collègue — par lien
+Il n'y a pas d'envoi d'e-mail automatique : vous générez un lien et vous le transmettez
+vous-même.
+
+1. Ouvrir **Mon compte** (avatar en haut à droite) → bloc **Inviter dans <votre organisation>**.
+2. Facultatif : saisir l'**e-mail de l'invité**. Si vous le renseignez, seul un compte
+   connecté avec cette adresse pourra utiliser le lien (recommandé). Sinon le lien est
+   « ouvert » : toute personne qui l'a peut rejoindre.
+3. Cliquer **Générer un lien** : le lien `…/invite?code=XXXXXXXXXXXX` s'affiche et est
+   **copié dans le presse-papiers**. Il est valable **7 jours**.
+4. Envoyer le lien par le canal de votre choix (e-mail, WhatsApp…).
+5. La liste **Invitations en attente** permet de **recopier** un lien ou de le
+   **révoquer** (corbeille) tant qu'il n'a pas été utilisé. L'historique récent montre
+   les invitations acceptées, expirées ou révoquées.
+
+### Côté invité
+1. Ouvrir le lien reçu. S'il n'a pas encore de compte, il clique **Créer un compte** ;
+   sinon il se connecte. La page **Invitation** réapparaît ensuite avec le nom de
+   l'organisation.
+2. Cliquer **Accepter l'invitation** → il rejoint l'organisation comme **membre** et
+   arrive sur le tableau de bord.
+3. Messages possibles : *Invitation introuvable ou déjà utilisée* (lien révoqué ou déjà
+   consommé), *Invitation expirée* (plus de 7 jours → demander un nouveau lien),
+   *Cette invitation est destinée à …* (connecté avec un autre e-mail que celui invité).
+
+### Rôles
+- **Membre** : accès complet aux données de l'organisation.
+- **Admin** : en plus, peut changer les rôles et retirer des membres. Le créateur de
+  l'organisation est admin d'office. Un membre ne peut pas se promouvoir lui-même.
+
+### Créer sa propre organisation
+Un utilisateur sans organisation en crée une depuis **Mon compte → Organisation**
+(nom + description) ; il en devient automatiquement admin.
+
+---
+
+## 7. Questions fréquentes
 
 **Mon fichier est refusé.** Vérifiez le type d'appareil sur la ligne du fichier : un
 export « demand » chargé comme « trend » (ou l'inverse) est la cause n° 1. Pour un format

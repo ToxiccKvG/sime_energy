@@ -183,7 +183,26 @@ Tous les graphiques passent par `html2canvas` (échelle 2, fond `#0f111a`) avec 
 survol, les points actifs et tout élément marqué `data-no-export` (sélecteurs, boutons).
 Nom de fichier : slug du relevé + vue.
 
-## 8. Limites connues / hors périmètre du chantier 1
+## 8. Sécurité des données (audit du 15/09/2026)
+
+Migration `supabase/migrations/20260915_security_audit_app_tables.sql` (appliquée) :
+- RLS actif sur **toutes** les tables `public` ; isolation par organisation via
+  `organization_users` (helpers `SECURITY DEFINER` non récursifs `user_org_ids()`,
+  `user_admin_org_ids()`, `is_org_creator()`).
+- `organization_users` : lecture = membres ; modification/suppression = admins ;
+  insertion directe = créateur de l'organisation ; toute autre adhésion passe par la RPC
+  `accept_invitation(code)` (vérifie code, expiration, e-mail invité).
+  `get_invitation_by_code(code)` renvoie une invitation sans permettre l'énumération.
+- Rôle `anon` : aucun accès aux tables (sauf `auth_events INSERT`), privilèges par défaut
+  corrigés. Rôle `authenticated` : sans TRUNCATE / REFERENCES / TRIGGER ; Shelly en
+  lecture seule ; `fn_aggregate_*` réservées à `service_role`.
+- Invitations : générées côté front (`createInvitation`, code 12 caractères, 7 jours),
+  acceptées via RPC ; l'ancien endpoint backend `/auth/invite` n'existe plus.
+- Restent à traiter : e-mail super-admin codé en dur dans `join_requests`,
+  `building_type_params` modifiable par tout utilisateur connecté, bucket
+  `audit-documents` sans isolation par organisation.
+
+## 9. Limites connues / hors périmètre du chantier 1
 
 - **Pas de persistance** des relevés (état React). Prévu : stockage serveur.
 - Les modèles d'analyse portent sur la **grandeur principale** ; l'extension aux colonnes
@@ -193,7 +212,7 @@ Nom de fichier : slug du relevé + vue.
 - ESLint : 3 erreurs préexistantes dans `MeasurementCharts.tsx` (`any`, expression
   inutilisée), sans effet fonctionnel.
 
-## 9. Validation (15/09/2026)
+## 10. Validation (15/09/2026)
 
 - Modèles : jeu synthétique de 28 jours (talon 300 W, trou de 5 h, pic, valeur figée,
   action à J+14) passé par l'API réelle (`PV_SOLAREDGE`, 2 668 mesures) : les 4 modèles
