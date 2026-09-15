@@ -8,10 +8,11 @@ import { MeasurementCharts } from './MeasurementCharts';
 import { MeasurementAnalysis } from './MeasurementAnalysis';
 import { SensorComparisonPanel } from './SensorComparisonPanel';
 import { ModelComparisonPanel } from './ModelComparisonPanel';
+import { AnalysisModelsPanel } from './AnalysisModelsPanel';
 import type { DateRange } from './MeasurementPeriodFilter';
-import { Upload, Activity, BarChart3, TrendingUp, ChevronLeft, ChevronRight, GitCompare, Columns2, Network } from 'lucide-react';
+import { Upload, Activity, BarChart3, TrendingUp, ChevronLeft, ChevronRight, GitCompare, Columns2, Network, Sparkles } from 'lucide-react';
 
-type WorkflowStep = 'upload' | 'analysis' | 'visualization' | 'comparison';
+type WorkflowStep = 'upload' | 'analysis' | 'visualization' | 'models' | 'comparison';
 type ComparisonMode = 'models' | 'master';
 
 interface MeasurementWorkflowProps {
@@ -23,7 +24,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
   const [measurementData, setMeasurementData] = useState<MeasurementData[]>([]);
   const [currentDataIndex, setCurrentDataIndex] = useState(0);
   const [comparisonMode, setComparisonMode] = useState<ComparisonMode>('models');
-  // Période choisie, par fichier — partagée entre les onglets Analyse et Visualisation.
+  // Période choisie, par fichier — partagée entre les onglets Analyse, Visualisation et Modèles.
   const [ranges, setRanges] = useState<Record<number, DateRange>>({});
   const currentRange: DateRange = ranges[currentDataIndex] ?? null;
   const setCurrentRange = (range: DateRange) => setRanges((prev) => ({ ...prev, [currentDataIndex]: range }));
@@ -61,6 +62,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
     { id: 'upload',        label: 'Upload',        icon: <Upload className="h-4 w-4" /> },
     { id: 'analysis',      label: 'Analyse',       icon: <TrendingUp className="h-4 w-4" /> },
     { id: 'visualization', label: 'Visualisation', icon: <BarChart3 className="h-4 w-4" /> },
+    { id: 'models',        label: 'Modèles',       icon: <Sparkles className="h-4 w-4" /> },
     { id: 'comparison',    label: 'Comparaison',   icon: <GitCompare className="h-4 w-4" /> },
   ];
 
@@ -143,6 +145,32 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
               />
               {currentData ? (
                 <MeasurementAnalysis data={currentData} dateRange={currentRange} onDateRangeChange={setCurrentRange} />
+              ) : (
+                <p className="text-center py-8 text-slate-500">Aucune donnée pour ce fichier</p>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {/* Modèles d'analyse */}
+        {currentStep === 'models' && hasData && (
+          <Card className="p-6 bg-white/5 border-white/10">
+            <div className="space-y-6">
+              <FileNav
+                index={currentDataIndex}
+                total={measurementData.length}
+                label={currentData ? measurementLabel(currentData, currentDataIndex) : `Fichier ${currentDataIndex + 1}`}
+                onPrev={() => setCurrentDataIndex((i) => Math.max(0, i - 1))}
+                onNext={() => setCurrentDataIndex((i) => Math.min(measurementData.length - 1, i + 1))}
+                onUploadMore={() => setCurrentStep('upload')}
+              />
+              {currentData ? (
+                <AnalysisModelsPanel
+                  data={currentData}
+                  title={measurementLabel(currentData, currentDataIndex)}
+                  dateRange={currentRange}
+                  onDateRangeChange={setCurrentRange}
+                />
               ) : (
                 <p className="text-center py-8 text-slate-500">Aucune donnée pour ce fichier</p>
               )}
