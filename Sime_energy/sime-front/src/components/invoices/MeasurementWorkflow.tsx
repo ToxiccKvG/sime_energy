@@ -40,8 +40,22 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
   const renameMeasurement = (index: number, alias: string) =>
     setMeasurementData((prev) => prev.map((d, i) => (i === index ? { ...d, alias: alias.trim() || undefined } : d)));
 
+  const removeMeasurement = (index: number) => {
+    setMeasurementData((prev) => prev.filter((_, i) => i !== index));
+    setRanges((prev) => {
+      const next: Record<number, DateRange> = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const i = Number(k);
+        if (i < index) next[i] = v; else if (i > index) next[i - 1] = v;
+      });
+      return next;
+    });
+    setCurrentDataIndex((i) => Math.max(0, Math.min(i, measurementData.length - 2)));
+  };
+
   const currentData = measurementData[currentDataIndex];
   const hasData = measurementData.length > 0;
+  const effectiveStep: WorkflowStep = hasData ? currentStep : 'upload';
 
   const tabs: { id: WorkflowStep; label: string; icon: React.ReactNode }[] = [
     { id: 'upload',        label: 'Upload',        icon: <Upload className="h-4 w-4" /> },
@@ -77,7 +91,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
       {/* Navigation onglets */}
       <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-fit">
         {tabs.map((tab) => {
-          const isActive = currentStep === tab.id;
+          const isActive = effectiveStep === tab.id;
           const isLocked = tab.id !== 'upload' && !hasData;
           return (
             <button
@@ -104,9 +118,14 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
       {/* Contenu */}
       <div className="min-h-[400px]">
         {/* Upload */}
-        {currentStep === 'upload' && (
+        {effectiveStep === 'upload' && (
           <Card className="p-6 bg-white/5 border-white/10">
-            <MeasurementUploadStep onFilesUploaded={handleMeasurementsReceived} />
+            <MeasurementUploadStep
+              onFilesUploaded={handleMeasurementsReceived}
+              loaded={measurementData}
+              onRename={renameMeasurement}
+              onRemove={removeMeasurement}
+            />
           </Card>
         )}
 

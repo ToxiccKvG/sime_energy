@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Upload, Loader2, CheckCircle2, AlertCircle, FileSpreadsheet, X, Settings2, Pencil, Trash2 } from 'lucide-react';
+import { Upload, Loader2, CheckCircle2, AlertCircle, FileSpreadsheet, X, Settings2, Pencil, Trash2, Check, Sparkles, Database } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { uploadMeasurementFile, MeasurementData } from '@/services/measurementService';
+import { uploadMeasurementFile, MeasurementData, measurementLabel } from '@/services/measurementService';
+import { toDate } from '@/services/measurementStats';
 import { getCustomSensors, deleteCustomSensor, type CustomSensor, type CustomSensorInput } from '@/lib/custom-sensor-service';
 import { CustomSensorMapper } from './CustomSensorMapper';
 import { CustomSensorEditPanel } from './CustomSensorEditPanel';
@@ -12,6 +13,10 @@ import { useOrganization } from '@/context/OrganizationContext';
 interface MeasurementUploadStepProps {
   onFilesUploaded: (data: MeasurementData[]) => void;
   isLoading?: boolean;
+  /** Relevés déjà chargés dans la session (liste « Relevés chargés »). */
+  loaded?: MeasurementData[];
+  onRename?: (index: number, alias: string) => void;
+  onRemove?: (index: number) => void;
 }
 
 const BUILTIN_SENSORS: { value: string; label: string }[] = [
@@ -25,15 +30,38 @@ const BUILTIN_SENSORS: { value: string; label: string }[] = [
 
 const NEW_CUSTOM_KEY = '__new_custom__';
 
+/**
+ * Devine le capteur d'après le nom du fichier (exports nommés par les
+ * appareils/portails eux-mêmes). Renvoie undefined si rien ne colle : l'utilisateur
+ * choisit alors à la main.
+ */
+function guessSensorType(fileName: string): string | undefined {
+  const n = fileName.toLowerCase();
+  if (/trend/.test(n)) return 'CA8335_TREND';
+  if (/demand/.test(n)) return 'CA8335_DEMAND';
+  if (/air\s*station|m100|iaq/.test(n)) return 'AIR_STATION_M100';
+  if (/solaredge|pv-|photovolta/.test(n)) return 'PV_SOLAREDGE';
+  if (/fusionsolar|huawei|statistiques quotidiennes/.test(n)) return 'PV_HUAWEI';
+  if (/shelly|consumption|consommation/.test(n)) return 'SHELLY';
+  return undefined;
+}
+
+function sensorLabel(type: string, customSensors: CustomSensor[]): string {
+  return BUILTIN_SENSORS.find((b) => b.value === type)?.label ?? customSensors.find((c) => c.id === type)?.name ?? type;
+}
+
 type FileStatus = 'pending' | 'loading' | 'success' | 'error';
 
 interface FileEntry {
   file: File;
   status: FileStatus;
   error?: string;
+  /** Capteur propre à ce fichier (deviné au dépôt, modifiable) ; sinon celui du sélecteur global. */
+  sensorType?: string;
+  guessed?: boolean;
 }
 
-export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: MeasurementUploadStepProps) {
+export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, loaded = [], onRename, onRemove }: MeasurementUploadStepProps) {
   const { organization } = useOrganization();
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -75,7 +103,10 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
     if (valid.length === 0) return;
     setEntries((prev) => {
       const existing = new Set(prev.map((e) => e.file.name));
-      const news = valid.filter((f) => !existing.has(f.name)).map((file) => ({ file, status: 'pending' as FileStatus }));
+      const news = valid.filter((f) => !existing.has(f.name)).map((file) => {
+        const guess = guessSensorType(file.name);
+        return { file, status: 'pending' as FileStatus, sensorType: guess, guessed: !!guess };
+      });
       return [...prev, ...news];
     });
   }, [toast]);
@@ -96,13 +127,14 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
   const patchStatus = (name: string, patch: Partial<FileEntry>) =>
     setEntries((prev) => prev.map((e) => e.file.name === name ? { ...e, ...patch } : e));
 
-  // Résoudre la config du capteur sélectionné (custom ou built-in)
-  const getConfig = (): { type: string; config?: CustomSensorInput } | null => {
-    if (!sensorType) return null;
-    const custom = customSensors.find((c) => c.id === sensorType);
+  // Résoudre la config d'un capteur (custom ou built-in)
+  const resolveSensor = (type: string | undefined): { type: string; config?: CustomSensorInput } | null => {
+    if (!type) return null;
+    const custom = customSensors.find((c) => c.id === type);
     if (custom) return { type: 'CUSTOM', config: custom };
-    return { type: sensorType };
+    return { type };
   };
+  const entrySensor = (e: FileEntry) => e.sensorType || sensorType;
 
   const handleUpload = async () => {
     const pending = entries.filter((e) => e.status !== 'success');
@@ -110,9 +142,9 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
       toast({ title: 'Erreur', description: 'Aucun fichier à traiter', variant: 'destructive' });
       return;
     }
-    const resolved = getConfig();
-    if (!resolved) {
-      toast({ title: 'Erreur', description: 'Veuillez sélectionner un type de capteur', variant: 'destructive' });
+    const missing = pending.filter((e) => !resolveSensor(entrySensor(e)));
+    if (missing.length > 0) {
+      toast({ title: 'Capteur manquant', description: `Choisissez un type de capteur pour : ${missing.map((e) => e.file.name).join(', ')}`, variant: 'destructive' });
       return;
     }
 
@@ -121,6 +153,7 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
     let errors = 0;
 
     for (const entry of pending) {
+      const resolved = resolveSensor(entrySensor(entry))!;
       patchStatus(entry.file.name, { status: 'loading' });
       try {
         const data = await uploadMeasurementFile(entry.file, resolved.type, resolved.config);
@@ -180,16 +213,17 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
   };
 
   const busy = uploading || isLoading;
-  const canUpload = entries.some((e) => e.status !== 'success') && !!sensorType && !busy;
+  const pendingEntries = entries.filter((e) => e.status !== 'success');
+  const canUpload = pendingEntries.length > 0 && pendingEntries.every((e) => !!entrySensor(e)) && !busy;
 
   return (
     <div className="space-y-5">
       {/* Sélecteur capteur */}
       <div className="space-y-1.5">
-        <label className="text-sm font-medium text-slate-200">Type de capteur</label>
+        <label className="text-sm font-medium text-slate-200">Type de capteur <span className="text-slate-500 font-normal">(valeur par défaut pour les fichiers non reconnus)</span></label>
         <Select value={showMapper ? NEW_CUSTOM_KEY : sensorType} onValueChange={handleSensorChange}>
           <SelectTrigger className="bg-white/5 border-white/20 text-white">
-            <SelectValue placeholder="Sélectionnez un capteur…" />
+            <SelectValue placeholder="Deviné d'après le nom du fichier — ou choisissez ici…" />
           </SelectTrigger>
           <SelectContent className="bg-[#1a1d2e] border-white/20">
             <SelectGroup>
@@ -278,8 +312,7 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
         <>
           <div
             className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all select-none
-              ${dragOver ? 'border-blue-400 bg-blue-500/10' : 'border-white/20 hover:border-white/40 hover:bg-white/5'}
-              ${!sensorType ? 'opacity-50 pointer-events-none' : ''}`}
+              ${dragOver ? 'border-blue-400 bg-blue-500/10' : 'border-white/20 hover:border-white/40 hover:bg-white/5'}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={onDrop}
@@ -289,10 +322,10 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
               onChange={handleInputChange} disabled={busy} />
             <Upload className="mx-auto h-10 w-10 text-blue-400 mb-3" />
             <p className="text-white font-medium text-lg">Glisser-déposer ou cliquer pour importer</p>
-            <p className="text-slate-400 text-sm mt-1">CSV, XLS, XLSX — multi-fichiers supportés</p>
-            {!sensorType && (
-              <p className="text-amber-400/80 text-xs mt-2">Sélectionnez d'abord un type de capteur</p>
-            )}
+            <p className="text-slate-400 text-sm mt-1">CSV, XLS, XLSX — plusieurs fichiers, de modèles différents si besoin</p>
+            <p className="text-slate-500 text-xs mt-2 flex items-center justify-center gap-1">
+              <Sparkles className="h-3 w-3" /> Le capteur est deviné d'après le nom du fichier ; le sélecteur ci-dessus sert de valeur par défaut.
+            </p>
           </div>
 
           {/* Liste des fichiers */}
@@ -329,6 +362,25 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
                         {entry.status === 'error' && entry.error && <span className="text-red-400 ml-1">— {entry.error}</span>}
                       </p>
                     </div>
+                    {entry.status !== 'success' && (
+                      <select
+                        value={entry.sensorType ?? ''}
+                        onChange={(e) => patchStatus(entry.file.name, { sensorType: e.target.value || undefined, guessed: false })}
+                        disabled={busy}
+                        title={entry.guessed ? 'Capteur deviné d\'après le nom du fichier' : 'Capteur pour ce fichier'}
+                        className={`text-xs rounded-md px-2 py-1.5 bg-white/5 border max-w-[220px] ${entry.guessed ? 'border-blue-500/50 text-blue-300' : entrySensor(entry) ? 'border-white/20 text-slate-200' : 'border-amber-500/50 text-amber-300'}`}
+                      >
+                        <option value="" className="bg-[#1a1d2e]">{sensorType ? `(défaut) ${sensorLabel(sensorType, customSensors)}` : '— choisir un capteur —'}</option>
+                        <optgroup label="Capteurs intégrés" className="bg-[#1a1d2e]">
+                          {BUILTIN_SENSORS.map((t) => <option key={t.value} value={t.value} className="bg-[#1a1d2e]">{t.label}</option>)}
+                        </optgroup>
+                        {customSensors.length > 0 && (
+                          <optgroup label="Mes capteurs" className="bg-[#1a1d2e]">
+                            {customSensors.map((c) => <option key={c.id} value={c.id} className="bg-[#1a1d2e]">{c.name}</option>)}
+                          </optgroup>
+                        )}
+                      </select>
+                    )}
                     {entry.status !== 'loading' && (
                       <button className="text-slate-600 hover:text-red-400 transition-colors shrink-0"
                         onClick={() => removeEntry(entry.file.name)} disabled={busy}>
@@ -347,7 +399,7 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
               <Button onClick={handleUpload} disabled={!canUpload}
                 className="flex-1 bg-blue-600 hover:bg-blue-500 text-white">
                 {uploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {uploading ? 'Traitement en cours…' : `Traiter ${entries.filter((e) => e.status !== 'success').length} fichier(s)`}
+                {uploading ? 'Traitement en cours…' : `Traiter ${pendingEntries.length} fichier(s)`}
               </Button>
               <Button variant="outline" className="border-white/20 text-slate-300 hover:bg-white/5"
                 onClick={() => setEntries([])} disabled={busy}>
@@ -355,7 +407,75 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false }: Me
               </Button>
             </div>
           )}
+
+          {/* Relevés déjà chargés dans la session */}
+          {loaded.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <h4 className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
+                <Database className="h-3.5 w-3.5 text-blue-400" /> Relevés chargés ({loaded.length})
+              </h4>
+              <div className="space-y-1.5">
+                {loaded.map((d, i) => (
+                  <LoadedRow key={i} data={d} index={i} customSensors={customSensors} onRename={onRename} onRemove={onRemove} />
+                ))}
+              </div>
+            </div>
+          )}
         </>
+      )}
+    </div>
+  );
+}
+
+
+/* ---- Ligne d'un relevé déjà chargé : nom (alias éditable), capteur, mesures, période ---- */
+function LoadedRow({
+  data, index, customSensors, onRename, onRemove,
+}: {
+  data: MeasurementData; index: number; customSensors: CustomSensor[];
+  onRename?: (index: number, alias: string) => void; onRemove?: (index: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const n = data.measurements?.length ?? 0;
+  const first = n ? toDate(String(data.measurements![0].timestamp)) : null;
+  const last = n ? toDate(String(data.measurements![n - 1].timestamp)) : null;
+  const fmt = (d: Date | null) => (d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('fr-FR') : '—');
+  const commit = () => { onRename?.(index, draft); setEditing(false); };
+
+  return (
+    <div className="flex items-center gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/5">
+      <FileSpreadsheet className="h-4 w-4 text-emerald-400 shrink-0" />
+      <div className="flex-1 min-w-0">
+        {editing ? (
+          <div className="flex items-center gap-1.5">
+            <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={data.file_name ?? 'Nom du relevé'}
+              onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+              className="h-7 flex-1 px-2 rounded-md bg-white/5 border border-blue-500/50 text-white text-sm" />
+            <button className="text-emerald-400 hover:text-emerald-300" onClick={commit} title="Valider"><Check className="h-4 w-4" /></button>
+            <button className="text-slate-500 hover:text-white" onClick={() => setEditing(false)} title="Annuler"><X className="h-4 w-4" /></button>
+          </div>
+        ) : (
+          <p className="text-sm text-white truncate">
+            {measurementLabel(data, index)}
+            {data.alias && data.file_name && <span className="text-slate-500 text-xs ml-1.5">{data.file_name}</span>}
+          </p>
+        )}
+        <p className="text-xs text-slate-500 truncate">
+          {data.sensor_type ? sensorLabel(data.sensor_type, customSensors) : 'Capteur inconnu'}
+          {' · '}{n.toLocaleString('fr-FR')} mesures · {fmt(first)} → {fmt(last)}
+          {data.metric_label ? ` · ${data.metric_label} (${data.unit ?? '—'})` : ''}
+        </p>
+      </div>
+      {onRename && !editing && (
+        <button className="text-slate-400 hover:text-blue-400 transition-colors shrink-0" onClick={() => { setDraft(data.alias ?? ''); setEditing(true); }} title="Renommer">
+          <Pencil className="h-4 w-4" />
+        </button>
+      )}
+      {onRemove && (
+        <button className="text-slate-400 hover:text-red-400 transition-colors shrink-0" onClick={() => onRemove(index)} title="Retirer de la session">
+          <Trash2 className="h-4 w-4" />
+        </button>
       )}
     </div>
   );
