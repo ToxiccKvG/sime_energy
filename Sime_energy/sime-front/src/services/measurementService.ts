@@ -17,6 +17,15 @@ export interface MeasurementData {
   unit?: string;
   /** Nature de la grandeur principale — détermine le calcul du cumul (voir measurementStats.ts). */
   quantity_kind?: QuantityKind;
+  /** Nom du fichier importé (renseigné côté client à l'upload). */
+  file_name?: string;
+  /** Alias libre donné par l'utilisateur (ex. « Départ TGBT — CA 8335 »), prioritaire sur le nom de fichier. */
+  alias?: string;
+}
+
+/** Libellé d'un relevé : alias, sinon nom de fichier, sinon type de capteur. */
+export function measurementLabel(d: MeasurementData, index: number): string {
+  return d.alias?.trim() || d.file_name || d.sensor_type || `Fichier ${index + 1}`;
 }
 
 export interface HierarchyNode {
@@ -77,6 +86,7 @@ export async function uploadMeasurementFile(
   }
 
   const data: MeasurementData = await response.json();
+  data.file_name = file.name;
   try {
     data.kpis = computeMeasurementKpis(data.measurements ?? [], {
       unit: data.unit ?? '',

@@ -93,6 +93,14 @@ export interface ModelComparison {
   /** Écart des cumuls (ou des moyennes si non cumulable) en % de A. */
   biasPct: number | null;
   correlation: number | null;
+  /**
+   * Droite ajustée B = slope · A + intercept (moindres carrés). Un gain ≠ 1
+   * trahit un rapport de TC / un calibrage, un offset constant une charge
+   * fantôme ou un zéro décalé, un R² faible un vrai désaccord.
+   */
+  regression: { slope: number; intercept: number; r2: number } | null;
+  /** Décalage appliqué aux horodatages de B (ms), positif = B avancé. */
+  offsetBMs: number;
   /** Avertissements sur la validité physique de la comparaison. */
   warnings: string[];
 }
@@ -199,6 +207,22 @@ function stats(values: number[]): Omit<SideStats, 'total'> {
   return { count: n, mean, min: Math.min(...values), max: Math.max(...values), std };
 }
 
+function linearFit(xs: number[], ys: number[]): ModelComparison['regression'] {
+  const n = xs.length;
+  if (n < 3) return null;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+  }
+  if (sxx === 0 || syy === 0) return null;
+  const slope = sxy / sxx;
+  const intercept = my - slope * mx;
+  return { slope, intercept, r2: (sxy * sxy) / (sxx * syy) };
+}
+
 function pearson(xs: number[], ys: number[]): number | null {
   const n = xs.length;
   if (n < 2) return null;
@@ -219,13 +243,22 @@ function pearson(xs: number[], ys: number[]): number | null {
  * Compare deux séries sur une échelle de temps commune.
  * Renvoie `{ error }` si les séries ne se recouvrent pas ou sont vides.
  */
+export interface CompareOptions {
+  step?: StepKey | 'auto';
+  from?: number;
+  to?: number;
+  /** Décalage d'horloge appliqué à B (ms) : corrige deux appareils qui n'ont pas la même heure. */
+  offsetBMs?: number;
+}
+
 export function compareModels(
   a: SeriesSpec,
   b: SeriesSpec,
-  opts: { step?: StepKey | 'auto'; from?: number; to?: number } = {},
+  opts: CompareOptions = {},
 ): ModelComparison | { error: string } {
+  const offsetBMs = opts.offsetBMs ?? 0;
   const ptsA = toPoints(a);
-  const ptsB = toPoints(b);
+  const ptsB = toPoints(b).map((p) => ({ t: p.t + offsetBMs, v: p.v }));
   if (ptsA.length === 0) return { error: `« ${a.label} » ne contient aucune valeur numérique pour ${a.metricLabel}.` };
   if (ptsB.length === 0) return { error: `« ${b.label} » ne contient aucune valeur numérique pour ${b.metricLabel}.` };
 
@@ -351,6 +384,33 @@ export function compareModels(
     a: sideA, b: sideB, onlyA, onlyB,
     meanDelta, mae, rmse, maxAbsDelta, maxAbsDeltaAt, biasPct,
     correlation: pearson(valsA, valsB),
+    regression: linearFit(valsA, valsB),
+    offsetBMs,
     warnings,
   };
+}
+
+/**
+ * Cherche le décalage d'horloge de B (en minutes, dans ±`maxMinutes`) qui
+ * maximise la corrélation avec A. Le pas de recherche est le plus fin des
+ * deux échantillonnages natifs (au moins 1 min), pour ne pas rater un
+ * décalage plus petit que le pas de comparaison.
+ */
+export function detectClockOffset(
+  a: SeriesSpec,
+  b: SeriesSpec,
+  opts: Omit<CompareOptions, 'offsetBMs'> & { maxMinutes?: number } = {},
+): { offsetMinutes: number; correlation: number; baseline: number | null } | null {
+  const maxMin = opts.maxMinutes ?? 120;
+  const nat = Math.min(detectStepMs(toPoints(a)), detectStepMs(toPoints(b)));
+  const stepMin = Math.max(1, Math.min(15, Math.round(nat / 60_000)));
+  let best: { offsetMinutes: number; correlation: number } | null = null;
+  let baseline: number | null = null;
+  for (let m = -maxMin; m <= maxMin; m += stepMin) {
+    const r = compareModels(a, b, { ...opts, offsetBMs: m * 60_000 });
+    if ('error' in r || r.correlation == null || r.rows.length < 10) continue;
+    if (m === 0) baseline = r.correlation;
+    if (!best || r.correlation > best.correlation + 1e-9) best = { offsetMinutes: m, correlation: r.correlation };
+  }
+  return best ? { ...best, baseline } : null;
 }

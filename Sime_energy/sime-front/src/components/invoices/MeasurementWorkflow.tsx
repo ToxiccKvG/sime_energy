@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MeasurementData } from '@/services/measurementService';
+import { MeasurementData, measurementLabel } from '@/services/measurementService';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +31,9 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
     setCurrentDataIndex(0);
     if (data.length > 0) setCurrentStep('analysis');
   };
+
+  const renameMeasurement = (index: number, alias: string) =>
+    setMeasurementData((prev) => prev.map((d, i) => (i === index ? { ...d, alias: alias.trim() || undefined } : d)));
 
   const currentData = measurementData[currentDataIndex];
   const hasData = measurementData.length > 0;
@@ -109,7 +112,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
               <FileNav
                 index={currentDataIndex}
                 total={measurementData.length}
-                label={currentData?.sensor_type ?? `Fichier ${currentDataIndex + 1}`}
+                label={currentData ? measurementLabel(currentData, currentDataIndex) : `Fichier ${currentDataIndex + 1}`}
                 onPrev={() => setCurrentDataIndex((i) => Math.max(0, i - 1))}
                 onNext={() => setCurrentDataIndex((i) => Math.min(measurementData.length - 1, i + 1))}
                 onUploadMore={() => setCurrentStep('upload')}
@@ -147,7 +150,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
                 </p>
               </div>
               {comparisonMode === 'models'
-                ? <ModelComparisonPanel measurementData={measurementData} />
+                ? <ModelComparisonPanel measurementData={measurementData} onRename={renameMeasurement} />
                 : <SensorComparisonPanel measurementData={measurementData} />}
             </div>
           </Card>
@@ -161,7 +164,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
                 <FileNav
                   index={currentDataIndex}
                   total={measurementData.length}
-                  label={currentData?.sensor_type ?? `Fichier ${currentDataIndex + 1}`}
+                  label={currentData ? measurementLabel(currentData, currentDataIndex) : `Fichier ${currentDataIndex + 1}`}
                   onPrev={() => setCurrentDataIndex((i) => Math.max(0, i - 1))}
                   onNext={() => setCurrentDataIndex((i) => Math.min(measurementData.length - 1, i + 1))}
                   onUploadMore={() => setCurrentStep('upload')}

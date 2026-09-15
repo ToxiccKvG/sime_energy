@@ -9,36 +9,41 @@
 import { useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import {
-  Area, Brush, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, Brush, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis,
 } from 'recharts';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { exportMultiSheetXlsx } from '@/lib/excel-utils';
-import { MeasurementData } from '@/services/measurementService';
+import { MeasurementData, measurementLabel } from '@/services/measurementService';
 import {
-  compareModels, extractUnit, kindForUnit, numericKeys, STEPS,
+  compareModels, detectClockOffset, extractUnit, kindForUnit, numericKeys, STEPS,
   type ModelComparison, type SeriesSpec, type StepKey,
 } from '@/lib/model-comparison';
 import {
-  Activity, AlertTriangle, ArrowLeftRight, ChevronLeft, ChevronRight, Download, FileSpreadsheet,
-  Image as ImageIcon, Loader2, Sigma, TrendingDown, TrendingUp,
+  Activity, AlertTriangle, ArrowLeftRight, Check, ChevronLeft, ChevronRight, Clock, Download, FileSpreadsheet,
+  Image as ImageIcon, Loader2, Pencil, ScatterChart as ScatterIcon, Sigma, TrendingDown, TrendingUp, X,
 } from 'lucide-react';
 
 interface ModelComparisonPanelProps {
   measurementData: MeasurementData[];
+  /** Renomme un relevé (alias libre, vide = retour au nom de fichier). */
+  onRename?: (index: number, alias: string) => void;
 }
 
 const COLOR_A = 'hsl(38 92% 50%)';
 const COLOR_B = 'hsl(199 89% 48%)';
 const COLOR_DELTA = 'hsl(280 65% 60%)';
+const COLOR_OUT = 'hsl(0 84% 60%)';
 const PAGE_SIZE = 25;
+/** Nombre max de points tracés dans le nuage A vs B (les stats restent calculées sur tout). */
+const SCATTER_MAX = 2500;
 
 /* ------------------------------------------------------------------ utils */
 
 function fileLabel(d: MeasurementData, i: number): string {
-  return d.sensor_type ? `${d.sensor_type} — fichier ${i + 1}` : `Fichier ${i + 1}`;
+  return measurementLabel(d, i);
 }
 
 function fmt(v: number | null | undefined, unit = '', digits = 2): string {
@@ -80,7 +85,7 @@ function slug(s: string): string {
 
 /* ------------------------------------------------------------------- main */
 
-export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelProps) {
+export function ModelComparisonPanel({ measurementData, onRename }: ModelComparisonPanelProps) {
   const { toast } = useToast();
   const chartRef = useRef<HTMLDivElement>(null);
 
@@ -93,6 +98,9 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
   const [page, setPage] = useState(0);
   const [sortByDelta, setSortByDelta] = useState(false);
   const [exporting, setExporting] = useState<'png' | 'xlsx' | null>(null);
+  const [tolerancePct, setTolerancePct] = useState(5);
+  const [offsetMin, setOffsetMin] = useState(0);
+  const [detecting, setDetecting] = useState(false);
 
   const dataA = idxA != null ? measurementData[idxA] : undefined;
   const dataB = idxB != null ? measurementData[idxB] : undefined;
@@ -108,12 +116,16 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
       step,
       from: range.from ? new Date(range.from).getTime() : undefined,
       to: range.to ? new Date(range.to).getTime() : undefined,
+      offsetBMs: offsetMin * 60_000,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataA, dataB, specA?.metricKey, specB?.metricKey, step, range.from, range.to]);
+  }, [dataA, dataB, specA?.metricKey, specB?.metricKey, step, range.from, range.to, offsetMin]);
 
   const cmp: ModelComparison | null = result && !('error' in result) ? result : null;
   const error = result && 'error' in result ? result.error : null;
+
+  const isOut = (r: { deltaPct: number | null }) => r.deltaPct != null && Math.abs(r.deltaPct) > tolerancePct;
+  const outCount = useMemo(() => (cmp ? cmp.rows.filter(isOut).length : 0), [cmp, tolerancePct]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const chartData = useMemo(
     () => cmp?.rows.map((r) => ({
@@ -121,9 +133,54 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
       A: Number(r.a.toFixed(3)),
       B: Number(r.b.toFixed(3)),
       'Écart (B − A)': Number(r.delta.toFixed(3)),
+      'Hors tolérance': isOut(r) ? Number(r.delta.toFixed(3)) : null,
     })) ?? [],
-    [cmp],
+    [cmp, tolerancePct], // eslint-disable-line react-hooks/exhaustive-deps
   );
+
+  // Nuage A vs B : sous-échantillonné pour l'affichage, droites y = x et ajustée.
+  const scatter = useMemo(() => {
+    if (!cmp) return null;
+    const stride = Math.max(1, Math.ceil(cmp.rows.length / SCATTER_MAX));
+    const pts = cmp.rows.filter((_, i) => i % stride === 0).map((r) => ({ x: r.a, y: r.b, out: isOut(r) }));
+    const lo = Math.min(cmp.a.min, cmp.b.min);
+    const hi = Math.max(cmp.a.max, cmp.b.max);
+    const fit = cmp.regression;
+    return {
+      inside: pts.filter((p) => !p.out),
+      outside: pts.filter((p) => p.out),
+      lo, hi, stride,
+      identity: [{ x: lo, y: lo }, { x: hi, y: hi }],
+      fitted: fit ? [{ x: lo, y: fit.slope * lo + fit.intercept }, { x: hi, y: fit.slope * hi + fit.intercept }] : null,
+    };
+  }, [cmp, tolerancePct]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDetectOffset = () => {
+    if (!specA || !specB) return;
+    setDetecting(true);
+    // Laisse le temps au bouton de passer en « recherche… » avant le calcul synchrone.
+    setTimeout(() => {
+      try {
+        const found = detectClockOffset(specA, specB, {
+          step,
+          from: range.from ? new Date(range.from).getTime() : undefined,
+          to: range.to ? new Date(range.to).getTime() : undefined,
+        });
+        if (!found) {
+          toast({ title: 'Décalage introuvable', description: 'Pas assez de points communs pour estimer un décalage.', variant: 'destructive' });
+        } else {
+          setOffsetMin(found.offsetMinutes);
+          const gain = found.baseline != null ? ` (r ${found.baseline.toFixed(3)} → ${found.correlation.toFixed(3)})` : '';
+          toast({
+            title: found.offsetMinutes === 0 ? 'Horloges alignées' : `Décalage détecté : ${found.offsetMinutes > 0 ? '+' : ''}${found.offsetMinutes} min`,
+            description: found.offsetMinutes === 0 ? 'Aucun décalage n\'améliore la corrélation.' : `B décalé de ${found.offsetMinutes} min pour maximiser la corrélation${gain}.`,
+          });
+        }
+      } finally {
+        setDetecting(false);
+      }
+    }, 30);
+  };
 
   const tableRows = useMemo(() => {
     if (!cmp) return [];
@@ -203,6 +260,10 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
         ['Écart max', cmp.maxAbsDelta, cmp.unit, fmtTime(cmp.maxAbsDeltaAt, cmp.stepMs)],
         ['Écart global (% de A)', cmp.biasPct],
         ['Corrélation (r)', cmp.correlation],
+        ['Régression B = a·A + b', cmp.regression ? `a = ${cmp.regression.slope.toFixed(4)}, b = ${cmp.regression.intercept.toFixed(3)} ${cmp.unit}, R² = ${cmp.regression.r2.toFixed(4)}` : '—'],
+        ['Tolérance (± %)', tolerancePct],
+        ['Pas hors tolérance', outCount, cmp.rows.length ? (outCount / cmp.rows.length) * 100 : null, '%'],
+        ['Décalage horloge appliqué à B (min)', offsetMin],
         ...(cmp.warnings.length ? [[], ['Avertissements'], ...cmp.warnings.map((w) => [w])] : []),
       ];
       const indicateurs = indicatorRows(cmp).map((r) => ({
@@ -210,6 +271,7 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
       }));
       const ecarts = cmp.rows.map((r) => ({
         Horodatage: new Date(r.t), [A]: r3(r.a), [B]: r3(r.b), 'Écart (B − A)': r3(r.delta), 'Écart (%)': r3(r.deltaPct),
+        'Hors tolérance': isOut(r) ? 'oui' : '',
       }));
       await exportMultiSheetXlsx(
         [
@@ -257,6 +319,7 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
         <SidePicker
           tag="A" color={COLOR_A} data={measurementData} idx={idxA} keys={keysA} metricKey={specA?.metricKey ?? 'consumption'}
           onIdx={(i) => { setIdxA(i); setKeyA('consumption'); setPage(0); }} onKey={(k) => { setKeyA(k); setPage(0); }}
+          onRename={onRename}
         />
         <Button variant="outline" size="sm" className="border-white/20 text-slate-300 hover:bg-white/5 h-9 mb-0.5"
           onClick={swap} title="Inverser A et B">
@@ -265,6 +328,7 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
         <SidePicker
           tag="B" color={COLOR_B} data={measurementData} idx={idxB} keys={keysB} metricKey={specB?.metricKey ?? 'consumption'}
           onIdx={(i) => { setIdxB(i); setKeyB('consumption'); setPage(0); }} onKey={(k) => { setKeyB(k); setPage(0); }}
+          onRename={onRename}
         />
       </div>
 
@@ -297,6 +361,29 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
             )}
           </div>
         </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-slate-200">Tolérance</label>
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 text-sm">±</span>
+            <input type="number" min={0} max={100} step={0.5} value={tolerancePct}
+              onChange={(e) => setTolerancePct(Math.max(0, Number(e.target.value) || 0))}
+              className="h-9 w-20 px-2 rounded-md bg-white/5 border border-white/20 text-slate-200 text-sm text-right" />
+            <span className="text-slate-400 text-sm">%</span>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" /> Horloge de B</label>
+          <div className="flex items-center gap-1.5">
+            <input type="number" step={1} value={offsetMin} onChange={(e) => { setOffsetMin(Number(e.target.value) || 0); setPage(0); }}
+              className="h-9 w-20 px-2 rounded-md bg-white/5 border border-white/20 text-slate-200 text-sm text-right" title="Décalage appliqué aux horodatages de B" />
+            <span className="text-slate-400 text-sm">min</span>
+            <Button variant="outline" size="sm" className="border-white/20 text-slate-300 hover:bg-white/5 h-9 text-xs"
+              onClick={handleDetectOffset} disabled={!specA || !specB || detecting} title="Cherche le décalage (±2 h) qui maximise la corrélation entre A et B">
+              {detecting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Activity className="h-3.5 w-3.5 mr-1.5" />}
+              {detecting ? 'Recherche…' : 'Détecter'}
+            </Button>
+          </div>
+        </div>
       </div>
 
       {error && (
@@ -321,7 +408,7 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
           </p>
 
           {/* Résumé */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <StatCard icon={<Activity className="h-4 w-4 text-slate-300" />} label="Points comparés" value={String(cmp.rows.length)}
               hint={cmp.onlyA + cmp.onlyB > 0 ? `${cmp.onlyA + cmp.onlyB} sans vis-à-vis` : undefined} />
             <StatCard icon={cmp.meanDelta >= 0 ? <TrendingUp className="h-4 w-4 text-emerald-400" /> : <TrendingDown className="h-4 w-4 text-red-400" />}
@@ -329,7 +416,15 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
             <StatCard icon={<Sigma className="h-4 w-4 text-purple-400" />} label="Écart absolu moyen" value={fmt(cmp.mae, cmp.unit)} hint={`RMSE ${fmt(cmp.rmse, cmp.unit)}`} />
             <StatCard icon={<AlertTriangle className="h-4 w-4 text-amber-400" />} label="Écart max" value={fmt(cmp.maxAbsDelta, cmp.unit)} hint={fmtTime(cmp.maxAbsDeltaAt, cmp.stepMs)} />
             <StatCard icon={<Sigma className="h-4 w-4 text-blue-400" />} label={cmp.totalUnit ? 'Écart des cumuls' : 'Écart des moyennes'} value={fmtPct(cmp.biasPct)} />
-            <StatCard icon={<Activity className="h-4 w-4 text-purple-400" />} label="Corrélation (r)" value={cmp.correlation != null ? cmp.correlation.toFixed(3) : '—'} />
+            <StatCard icon={<Activity className="h-4 w-4 text-purple-400" />} label="Corrélation (r)" value={cmp.correlation != null ? cmp.correlation.toFixed(3) : '—'}
+              hint={cmp.offsetBMs !== 0 ? `B décalé de ${cmp.offsetBMs > 0 ? '+' : ''}${Math.round(cmp.offsetBMs / 60_000)} min` : undefined} />
+            <StatCard icon={<AlertTriangle className={`h-4 w-4 ${outCount > 0 ? 'text-red-400' : 'text-emerald-400'}`} />}
+              label={`Hors tolérance (± ${tolerancePct} %)`}
+              value={`${outCount} pas · ${cmp.rows.length ? ((outCount / cmp.rows.length) * 100).toFixed(1) : '0'} %`}
+              hint={`${cmp.rows.length - outCount} pas dans la tolérance`} />
+            <StatCard icon={<ScatterIcon className="h-4 w-4 text-blue-400" />} label="Régression B = a·A + b"
+              value={cmp.regression ? `a = ${cmp.regression.slope.toFixed(3)} · b = ${fmt(cmp.regression.intercept, cmp.unit, 1)}` : '—'}
+              hint={cmp.regression ? `R² = ${cmp.regression.r2.toFixed(4)}${Math.abs(cmp.regression.slope - 1) > 0.02 ? ' · gain ≠ 1 : calibrage / rapport de TC ?' : Math.abs(cmp.regression.intercept) > 0.05 * Math.max(1e-9, Math.abs(cmp.a.mean)) ? ' · offset constant : charge fantôme / zéro ?' : ' · A et B concordent'}` : undefined} />
           </div>
 
           {/* Graphique */}
@@ -376,11 +471,44 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
                     formatter={(v: number, n) => [fmt(Number(v), cmp.unit), n]} />
                   <ReferenceLine y={0} stroke="rgba(255,255,255,0.3)" />
                   <Area type="step" dataKey="Écart (B − A)" stroke={COLOR_DELTA} strokeWidth={1} fill={COLOR_DELTA} fillOpacity={0.3} baseValue={0} dot={false} isAnimationActive={false} />
+                  {/* Points hors tolérance : une ligne sans trait, seuls les points non nuls sont dessinés. */}
+                  <Line dataKey="Hors tolérance" stroke="none" dot={{ r: 2, fill: COLOR_OUT, stroke: 'none' }} activeDot={{ r: 3, fill: COLOR_OUT }} isAnimationActive={false} connectNulls={false} />
                   <Brush dataKey="label" height={22} stroke="rgba(255,255,255,0.3)" fill="#1a1d2e" travellerWidth={8} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
           </Card>
+
+          {/* Nuage A vs B + régression */}
+          {scatter && (
+            <Card className="p-4 bg-white/5 border-white/10">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+                <p className="text-sm font-medium text-slate-200">Nuage A vs B — droite y = x (pointillés) et droite ajustée</p>
+                <p className="text-xs text-slate-500">
+                  {cmp.regression ? `B = ${cmp.regression.slope.toFixed(4)} · A ${cmp.regression.intercept >= 0 ? '+' : '−'} ${fmt(Math.abs(cmp.regression.intercept), cmp.unit)} · R² = ${cmp.regression.r2.toFixed(4)}` : 'régression impossible'}
+                  {scatter.stride > 1 ? ` · 1 point sur ${scatter.stride} affiché` : ''}
+                </p>
+              </div>
+              <ResponsiveContainer width="100%" height={320}>
+                <ComposedChart margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis type="number" dataKey="x" name="A" domain={[scatter.lo, scatter.hi]} tick={{ fontSize: 11, fill: 'rgba(255,255,255,0.5)' }} tickFormatter={(v) => fmt(Number(v), '', 0)}
+                    label={{ value: `A — ${specA.label} (${cmp.unit})`, position: 'insideBottom', offset: -4, fill: COLOR_A, fontSize: 11 }} />
+                  <YAxis type="number" dataKey="y" name="B" domain={[scatter.lo, scatter.hi]} tick={{ fontSize: 11, fill: 'rgba(255,255,255,0.5)' }} width={80} tickFormatter={(v) => fmt(Number(v), '', 0)}
+                    label={{ value: `B — ${specB.label} (${cmp.unit})`, angle: -90, position: 'insideLeft', fill: COLOR_B, fontSize: 11 }} />
+                  <ZAxis range={[12, 12]} />
+                  <Tooltip contentStyle={{ background: '#1a1d2e', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, fontSize: 12 }}
+                    formatter={(v: number, n) => [fmt(Number(v), cmp.unit), n === 'x' ? 'A' : n === 'y' ? 'B' : n]} labelFormatter={() => ''} />
+                  <Scatter data={scatter.inside} fill={COLOR_DELTA} fillOpacity={0.55} isAnimationActive={false} name="dans la tolérance" />
+                  <Scatter data={scatter.outside} fill={COLOR_OUT} fillOpacity={0.8} isAnimationActive={false} name="hors tolérance" />
+                  <Line data={scatter.identity} dataKey="y" stroke="rgba(255,255,255,0.45)" strokeDasharray="6 4" strokeWidth={1.5} dot={false} isAnimationActive={false} name="y = x" />
+                  {scatter.fitted && (
+                    <Line data={scatter.fitted} dataKey="y" stroke={COLOR_B} strokeWidth={2} dot={false} isAnimationActive={false} name="ajustée" />
+                  )}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </Card>
+          )}
 
           {/* Indicateurs face à face */}
           <Card className="p-4 bg-white/5 border-white/10">
@@ -442,8 +570,10 @@ export function ModelComparisonPanel({ measurementData }: ModelComparisonPanelPr
                 </thead>
                 <tbody>
                   {pageRows.map((r) => (
-                    <tr key={r.t} className="border-b border-white/5">
-                      <td className="py-1.5 pr-3 text-slate-300 tabular-nums">{fmtTime(r.t, cmp.stepMs)}</td>
+                    <tr key={r.t} className={`border-b border-white/5 ${isOut(r) ? 'bg-red-500/10' : ''}`}>
+                      <td className="py-1.5 pr-3 text-slate-300 tabular-nums">
+                        {isOut(r) && <AlertTriangle className="h-3 w-3 text-red-400 inline mr-1.5 -mt-0.5" />}{fmtTime(r.t, cmp.stepMs)}
+                      </td>
                       <td className="py-1.5 px-3 text-right text-white tabular-nums">{fmt(r.a)}</td>
                       <td className="py-1.5 px-3 text-right text-white tabular-nums">{fmt(r.b)}</td>
                       <td className={`py-1.5 px-3 text-right tabular-nums ${deltaColor(r.delta)}`}>{fmt(r.delta)}</td>
@@ -479,30 +609,54 @@ function deltaColor(d: number | null): string {
 }
 
 function SidePicker({
-  tag, color, data, idx, keys, metricKey, onIdx, onKey,
+  tag, color, data, idx, keys, metricKey, onIdx, onKey, onRename,
 }: {
   tag: string; color: string; data: MeasurementData[]; idx: number | null; keys: string[]; metricKey: string;
-  onIdx: (i: number) => void; onKey: (k: string) => void;
+  onIdx: (i: number) => void; onKey: (k: string) => void; onRename?: (index: number, alias: string) => void;
 }) {
   const d = idx != null ? data[idx] : undefined;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  const startEdit = () => { setDraft(d?.alias ?? ''); setEditing(true); };
+  const commit = () => { if (idx != null) onRename?.(idx, draft); setEditing(false); };
+
   return (
     <div className="space-y-1.5">
       <label className="text-sm font-medium text-slate-200 flex items-center gap-2">
         <span className="inline-flex items-center justify-center h-5 w-5 rounded-full text-xs font-bold text-black" style={{ background: color }}>{tag}</span>
         Relevé {tag}
+        {d && onRename && !editing && (
+          <button className="text-slate-500 hover:text-white transition-colors" onClick={startEdit} title="Donner un nom à ce relevé">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        )}
       </label>
-      <Select value={idx != null ? String(idx) : undefined} onValueChange={(v) => onIdx(Number(v))}>
-        <SelectTrigger className="bg-white/5 border-white/20 text-white">
-          <SelectValue placeholder="Sélectionnez un fichier…" />
-        </SelectTrigger>
-        <SelectContent className="bg-[#1a1d2e] border-white/20">
-          {data.map((m, i) => (
-            <SelectItem key={i} value={String(i)} className="text-slate-200 focus:bg-white/10">
-              {fileLabel(m, i)}{m.metric_label ? <span className="text-slate-500 ml-1.5 text-xs">{m.metric_label} ({m.unit})</span> : null}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {editing ? (
+        <div className="flex items-center gap-1.5">
+          <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+            placeholder={d?.file_name ?? 'Nom du relevé'}
+            className="h-10 flex-1 px-3 rounded-md bg-white/5 border border-blue-500/50 text-white text-sm" />
+          <button className="text-emerald-400 hover:text-emerald-300" onClick={commit} title="Valider"><Check className="h-4 w-4" /></button>
+          <button className="text-slate-500 hover:text-white" onClick={() => setEditing(false)} title="Annuler"><X className="h-4 w-4" /></button>
+        </div>
+      ) : (
+        <Select value={idx != null ? String(idx) : undefined} onValueChange={(v) => onIdx(Number(v))}>
+          <SelectTrigger className="bg-white/5 border-white/20 text-white">
+            <SelectValue placeholder="Sélectionnez un fichier…" />
+          </SelectTrigger>
+          <SelectContent className="bg-[#1a1d2e] border-white/20">
+            {data.map((m, i) => (
+              <SelectItem key={i} value={String(i)} className="text-slate-200 focus:bg-white/10">
+                {fileLabel(m, i)}
+                <span className="text-slate-500 ml-1.5 text-xs">{m.sensor_type}{m.metric_label ? ` · ${m.metric_label} (${m.unit})` : ''}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      {d?.alias && !editing && <p className="text-[11px] text-slate-500 truncate">{d.file_name}</p>}
       {d && keys.length > 1 && (
         <Select value={metricKey} onValueChange={onKey}>
           <SelectTrigger className="bg-white/5 border-white/20 text-slate-200 h-8 text-xs">
