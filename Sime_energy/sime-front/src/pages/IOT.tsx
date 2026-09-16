@@ -15,7 +15,7 @@ import { Badge }             from '@/components/ui/badge';
 // ---- Définition des onglets ----
 const TABS = [
   { id: 'dashboard',  label: 'Dashboard',   icon: LayoutDashboard, description: 'Vue temps réel multi-sites' },
-  { id: 'sources',    label: 'Sources',     icon: Database,        description: 'Capteurs & sources' },
+  { id: 'sources',    label: 'Sources',     icon: Database,        description: 'Rôles électriques par site' },
   { id: 'fichiers',   label: 'Fichiers',    icon: FolderOpen,      description: 'Import & bibliothèque' },
   { id: 'nettoyage',  label: 'Nettoyage',   icon: Eraser,          description: 'Tri · filtre · édition' },
   { id: 'tcd',        label: 'Analyse',     icon: BarChart2,       description: 'Courbe · TCD · Heatmap · Distribution' },
@@ -27,14 +27,12 @@ type TabId = (typeof TABS)[number]['id'];
 // ---- Page intérieure (accès au contexte) ----
 function IOTInner() {
   const { state, setActiveTab } = useIOT();
-  const { activeTab, shellyRows, files, sources } = state;
+  const { activeTab, shellyRows, files } = state;
 
   const tabId = (activeTab as TabId) ?? 'dashboard';
 
-  // Badge Sources = nb sources actives (dynamique, masqué si 0)
-  const nbSourcesActives = sources.filter(s => s.actif).length;
+  // Les sources vivent en base (shelly_device_roles) : pas de badge local.
   const badges: Partial<Record<TabId, number>> = {
-    sources:  nbSourcesActives > 0 ? nbSourcesActives : undefined,
     fichiers: files.length > 0 ? files.length : undefined,
   };
 
@@ -56,12 +54,6 @@ function IOTInner() {
 
         {/* Indicateurs rapides */}
         <div className="flex flex-wrap gap-2 text-xs text-slate-400">
-          {sources.filter(s => s.actif).length > 0 && (
-            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
-              <p className="text-blue-400 font-bold text-sm">{sources.filter(s => s.actif).length}</p>
-              <p>source(s)</p>
-            </div>
-          )}
           {shellyRows.length > 0 && (
             <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
               <p className="text-green-400 font-bold text-sm">{shellyRows.length}</p>

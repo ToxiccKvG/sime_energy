@@ -1044,7 +1044,7 @@ export function NettoyageTab() {
       } else {
         addFile({
           id: cleanedId, name: cleanedName, type: sourceFile?.type ?? 'shelly',
-          sourceId: sourceFile?.sourceId, uploadedAt: new Date(),
+          uploadedAt: new Date(),
           rowCount: rowsRecalculees.length, columns, preview,
           rawData: serializedRows, statut: 'nettoyé',
           taille: sourceFile?.taille, parentId: sourceFile?.id,
@@ -1330,7 +1330,6 @@ export function NettoyageTab() {
         const pg     = expandedFilePage[f.id] ?? 0;
         const totalPg = Math.ceil(f.rawData.length / FILE_PAGE_SIZE);
         const pageRows = f.rawData.slice(pg * FILE_PAGE_SIZE, (pg + 1) * FILE_PAGE_SIZE);
-        const linkedSource = f.sourceId ? state.sources.find(s => s.id === f.sourceId) : null;
         return (
           <div key={f.id} className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
             <div className="flex items-center gap-3 p-3">
@@ -1341,12 +1340,6 @@ export function NettoyageTab() {
                   <Badge variant="outline" className="text-xs border-white/20 text-slate-300 h-5">
                     {f.type === 'shelly' ? 'Shelly 3EM' : f.type === 'facture' ? 'Facture PDF' : 'Autre'}
                   </Badge>
-                  {linkedSource && (
-                    <span className="text-xs" style={{ color: linkedSource.couleur }}>
-                      <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: linkedSource.couleur }} />
-                      {linkedSource.nom}
-                    </span>
-                  )}
                   <span className="text-slate-500 text-xs">{f.rowCount.toLocaleString('fr-FR')} lignes · {f.columns.length} col.</span>
                 </div>
               </div>
@@ -1500,7 +1493,6 @@ export function NettoyageTab() {
               id: cleanedId,
               name: cleanedName,
               type: sourceFile?.type ?? 'autre',
-              sourceId: sourceFile?.sourceId,
               uploadedAt: new Date(),
               rowCount: serialized.length,
               columns,
@@ -1584,7 +1576,6 @@ export function NettoyageTab() {
                     id: cleanedId,
                     name: cleanedName,
                     type: sourceFile?.type ?? 'shelly',
-                    sourceId: sourceFile?.sourceId,
                     uploadedAt: new Date(),
                     rowCount: rowsRecalculees.length,
                     columns,

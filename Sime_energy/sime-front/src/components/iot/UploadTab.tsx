@@ -3,19 +3,17 @@ import { parseExcelBuffer } from '@/lib/excel-utils';
 import {
   Upload, FileSpreadsheet, Trash2, CheckCircle, AlertCircle,
   ChevronLeft, ChevronRight, Hash, Calendar, Type, Database,
-  Tag, ChevronDown, FileText, Zap,
+  FileText, Zap,
 } from 'lucide-react';
 import { extraireTextePDF, parserFactureEnergie } from '@/lib/iot-pdf-engine';
 import type { FactureParsee } from '@/lib/iot-pdf-engine';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useIOT } from './IOTContext';
-import type { ImportedFile, ShellyRow, ProfilMi } from './shared';
-import { PROFIL_MI_LABELS, COLONNES_PROFIL_SHELLY } from './shared';
+import type { ImportedFile, ShellyRow } from './shared';
+import { COLONNES_PROFIL_SHELLY } from './shared';
 import { parseShellyRow, profilMiToShellyRow, detecterFormatShelly, parseShellySectionCSV } from '@/lib/iot-profil-engine';
 import { transformRowsToProfilMi, transformHoraireToProfilMi } from '@/lib/iot-supabase-service';
 
@@ -39,17 +37,21 @@ interface PDFEntry {
 
 const ROWS_PER_PAGE = 50;
 
-// Onglets PROFIL Mi reconnus dans les fichiers Shelly multi-sheets
+// Onglets PROFIL Mi reconnus dans les fichiers Shelly multi-sheets — même
+// vocabulaire que les rôles d'appareils (M1 = réseau, quel que soit le
+// distributeur ; « SENELEC » n'est gardé que comme motif de détection des
+// anciens fichiers).
+type ProfilMi = 'M1_RESEAU' | 'M2_SELECTEUR' | 'M3_CHARGE' | 'M4_GROUPE' | 'M5_PV';
 const PROFIL_SHEET_PATTERNS: { pattern: RegExp; profilMi: ProfilMi }[] = [
-  { pattern: /SENELEC|M1/i,   profilMi: 'M1_SENELEC' },
-  { pattern: /SELECTEUR|M2/i, profilMi: 'M2_SELECTEUR' },
-  { pattern: /CHARGE|M3/i,    profilMi: 'M3_CHARGE' },
-  { pattern: /GROUPE|M4/i,    profilMi: 'M4_GROUPE' },
-  { pattern: /PV|M5/i,        profilMi: 'M5_PV' },
+  { pattern: /RESEAU|SENELEC|M1/i, profilMi: 'M1_RESEAU' },
+  { pattern: /SELECTEUR|M2/i,      profilMi: 'M2_SELECTEUR' },
+  { pattern: /CHARGE|M3/i,         profilMi: 'M3_CHARGE' },
+  { pattern: /GROUPE|M4/i,         profilMi: 'M4_GROUPE' },
+  { pattern: /PV|M5/i,             profilMi: 'M5_PV' },
 ];
 
 const PROFIL_MI_COLORS: Record<ProfilMi, string> = {
-  M1_SENELEC:   '#3b82f6',
+  M1_RESEAU:    '#3b82f6',
   M2_SELECTEUR: '#a855f7',
   M3_CHARGE:    '#ef4444',
   M4_GROUPE:    '#f97316',
@@ -69,7 +71,6 @@ interface SheetData {
 interface FileEntry {
   file: File;
   type: FileType;
-  sourceIds: string[];   // multi-sélection : 0..N sources liées
   status: 'pending' | 'processing' | 'done' | 'error';
   error?: string;
   sheets: SheetData[];
@@ -277,7 +278,7 @@ function TableauSheet({
 // COMPOSANT PRINCIPAL
 // ============================================================
 export function UploadTab() {
-  const { state, addFile, setShellyRows, setSourceData } = useIOT();
+  const { state, addFile, setShellyRows } = useIOT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [pdfEntries, setPdfEntries] = useState<PDFEntry[]>([]);
@@ -288,7 +289,7 @@ export function UploadTab() {
   const pageKey = (entry: FileEntry) => `${entry.file.name}-${entry.activeSheet}`;
 
   // ---- Lecture complète d'un fichier ----
-  const processFile = useCallback(async (file: File, type: FileType, sourceIds: string[]): Promise<FileEntry> => {
+  const processFile = useCallback(async (file: File, type: FileType): Promise<FileEntry> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = async (e) => {
@@ -317,7 +318,7 @@ export function UploadTab() {
             .filter(s => s.rowCount > 0);
 
           if (sheets.length === 0) {
-            resolve({ file, type, sourceIds, status: 'error', error: 'Fichier vide ou format non reconnu', sheets: [], activeSheet: 0, page: 0 });
+            resolve({ file, type, status: 'error', error: 'Fichier vide ou format non reconnu', sheets: [], activeSheet: 0, page: 0 });
             return;
           }
 
@@ -339,9 +340,9 @@ export function UploadTab() {
             : detect.format === 'shelly_excel'     ? `Shelly 3EM${active.profilMi ? ' · ' + active.profilMi : ''} (${detect.hasRetour ? 'avec retour' : 'sans retour'})`
             : `${active.columns.length} colonnes — format générique`;
 
-          resolve({ file, type, sourceIds, status: 'done', sheets, activeSheet, page: 0, detected: detectedType });
+          resolve({ file, type, status: 'done', sheets, activeSheet, page: 0, detected: detectedType });
         } catch (err) {
-          resolve({ file, type, sourceIds, status: 'error', error: String(err), sheets: [], activeSheet: 0, page: 0 });
+          resolve({ file, type, status: 'error', error: String(err), sheets: [], activeSheet: 0, page: 0 });
         }
       };
       reader.readAsArrayBuffer(file);
@@ -388,11 +389,9 @@ export function UploadTab() {
     }
 
     if (dataFiles.length === 0) return;
-    const defaultSourceIds = state.sources[0]?.id ? [state.sources[0].id] : [];
     const newEntries: FileEntry[] = dataFiles.map(f => ({
       file: f,
       type: 'shelly' as FileType,
-      sourceIds: defaultSourceIds,
       status: 'pending' as const,
       sheets: [],
       activeSheet: 0,
@@ -402,10 +401,10 @@ export function UploadTab() {
 
     for (const entry of newEntries) {
       setEntries(prev => prev.map(e => e.file === entry.file ? { ...e, status: 'processing' } : e));
-      const processed = await processFile(entry.file, entry.type, entry.sourceIds);
-      setEntries(prev => prev.map(e => e.file === entry.file ? { ...processed, sourceIds: entry.sourceIds } : e));
+      const processed = await processFile(entry.file, entry.type);
+      setEntries(prev => prev.map(e => e.file === entry.file ? processed : e));
     }
-  }, [processFile, processPDFFile, state.sources]);
+  }, [processFile, processPDFFile]);
 
   // ---- Import facture PDF vers le contexte ----
   const handleImportPDF = useCallback((entry: PDFEntry) => {
@@ -439,13 +438,10 @@ export function UploadTab() {
     if (!sheet) return;
 
     const id = `${Date.now()}-${entry.file.name}`;
-    // Compat : sourceId = première source (héritage), sourceIds = toutes
-    const primarySourceId = entry.sourceIds[0];
     const importedFile: ImportedFile = {
       id,
       name: entry.file.name,
       type: entry.type,
-      sourceId: primarySourceId || undefined,
       uploadedAt: new Date(),
       rowCount: sheet.rawData.length,
       columns: sheet.columns,
@@ -483,36 +479,20 @@ export function UploadTab() {
       if (parsed.length === 0) {
         parsed = sheet.rawData.map(r => parseShellyRow(r, state.joursFerier)).filter((r): r is ShellyRow => r !== null);
       }
-      // Enrichir chaque ligne avec l'identité de l'appareil (basée sur la 1ère source)
-      const sourceName = state.sources.find(s => s.id === primarySourceId)?.nom
-        ?? entry.file.name.replace(/\.(csv|xlsx|xls)$/i, '');
+      // Enrichir chaque ligne avec l'identité de l'appareil (à défaut : nom du fichier)
+      const fallbackName = entry.file.name.replace(/\.(csv|xlsx|xls)$/i, '');
       const shellyRows = parsed.map(r => ({
         ...r,
-        nomAppareil:    r.nomAppareil    ?? sourceName,
+        nomAppareil:    r.nomAppareil    ?? fallbackName,
         deviceLocation: r.deviceLocation ?? entry.deviceLocation ?? undefined,
         deviceRoom:     r.deviceRoom     ?? entry.deviceRoom     ?? undefined,
       }));
 
       setShellyRows([...state.shellyRows, ...shellyRows]);
-
-      // Diffuse les données dans toutes les sources sélectionnées
-      for (const sid of entry.sourceIds) {
-        let cumKwh = 0;
-        setSourceData(sid, shellyRows.map(r => {
-          cumKwh += r.kwhNet ?? 0;
-          return {
-            timestamp: r.date,
-            sourceId: sid,
-            puissanceKw: r.puissKwTotal ?? 0,
-            energieKwh: r.kwhNet ?? 0,
-            energieCumKwh: cumKwh,
-          };
-        }));
-      }
     }
 
     setEntries(prev => prev.filter(e => e.file !== entry.file));
-  }, [addFile, setShellyRows, setSourceData, state]);
+  }, [addFile, setShellyRows, state]);
 
   const patchEntry = useCallback((file: File, patch: Partial<FileEntry>) => {
     setEntries(prev => prev.map(e => e.file === file ? { ...e, ...patch } : e));
@@ -735,101 +715,6 @@ export function UploadTab() {
                           <SelectItem value="autre">Autre / Générique</SelectItem>
                         </SelectContent>
                       </Select>
-
-                      {/* Sources liées (multi-sélection) */}
-                      {state.sources.length > 0 && (
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" size="sm"
-                              className="bg-white/5 border-white/20 text-white text-sm h-8 min-w-[12rem] justify-between gap-2">
-                              <div className="flex items-center gap-1.5 flex-1 truncate">
-                                {entry.sourceIds.length === 0 ? (
-                                  <span className="text-slate-400">Aucune source</span>
-                                ) : entry.sourceIds.length === 1 ? (
-                                  (() => {
-                                    const src = state.sources.find(s => s.id === entry.sourceIds[0]);
-                                    if (!src) return <span className="text-slate-400">…</span>;
-                                    return (
-                                      <>
-                                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: src.couleur }} />
-                                        <span className="truncate">{src.nom}</span>
-                                        {src.profilMi && <span className="text-slate-500 text-xs">· {src.profilMi.split('_')[0]}</span>}
-                                      </>
-                                    );
-                                  })()
-                                ) : (
-                                  <>
-                                    <div className="flex -space-x-1">
-                                      {entry.sourceIds.slice(0, 3).map(sid => {
-                                        const s = state.sources.find(x => x.id === sid);
-                                        return s ? (
-                                          <span key={sid} className="w-3 h-3 rounded-full border border-[#1a1d2e]" style={{ backgroundColor: s.couleur }} />
-                                        ) : null;
-                                      })}
-                                    </div>
-                                    <span className="text-xs">{entry.sourceIds.length} sources sélectionnées</span>
-                                  </>
-                                )}
-                              </div>
-                              <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-72 bg-[#1a1d2e] border-white/20 p-2" align="start">
-                            <div className="flex items-center justify-between px-2 py-1 mb-1">
-                              <span className="text-slate-400 text-xs">Sources liées ({entry.sourceIds.length}/{state.sources.length})</span>
-                              <button
-                                onClick={() => patchEntry(entry.file, {
-                                  sourceIds: entry.sourceIds.length === state.sources.length ? [] : state.sources.map(s => s.id),
-                                })}
-                                className="text-xs text-blue-400 hover:text-blue-300"
-                              >
-                                {entry.sourceIds.length === state.sources.length ? 'Aucune' : 'Toutes'}
-                              </button>
-                            </div>
-                            <div className="max-h-72 overflow-y-auto space-y-0.5">
-                              {state.sources.map(src => {
-                                const checked = entry.sourceIds.includes(src.id);
-                                return (
-                                  <label
-                                    key={src.id}
-                                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer"
-                                  >
-                                    <Checkbox
-                                      checked={checked}
-                                      onCheckedChange={(v) => {
-                                        const next = v
-                                          ? [...entry.sourceIds, src.id]
-                                          : entry.sourceIds.filter(id => id !== src.id);
-                                        patchEntry(entry.file, { sourceIds: next });
-                                      }}
-                                    />
-                                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: src.couleur }} />
-                                    <span className="text-white text-sm flex-1 truncate">{src.nom}</span>
-                                    {src.profilMi && (
-                                      <span className="text-slate-500 text-xs">{src.profilMi.split('_')[0]}</span>
-                                    )}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-                      )}
-
-                      {/* Badges ProfilMi des sources sélectionnées */}
-                      {entry.sourceIds.length > 0 && entry.sourceIds.map(sid => {
-                        const src = state.sources.find(s => s.id === sid);
-                        if (!src?.profilMi) return null;
-                        return (
-                          <Badge key={sid}
-                            className="text-xs border-0 h-7 flex items-center gap-1"
-                            style={{ backgroundColor: PROFIL_MI_COLORS[src.profilMi] + '25', color: PROFIL_MI_COLORS[src.profilMi] }}
-                          >
-                            <Tag className="h-3 w-3" />
-                            {PROFIL_MI_LABELS[src.profilMi]}
-                          </Badge>
-                        );
-                      })}
 
                       {/* Localisation appareil */}
                       <Input

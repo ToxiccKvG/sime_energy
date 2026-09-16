@@ -2,70 +2,14 @@
 // IOT MODULE — Shared Types
 // Note : la couche facturation/tarification SENELEC a été retirée
 // (sera réintroduite par le merge avec le code du dev billing).
-// Conservé ici : sources, mesures énergie, capteurs, calendrier, jours d'activité.
+// Conservé ici : mesures énergie, capteurs, calendrier, jours d'activité.
+//
+// Les « sources » ne sont plus un modèle local : une source est un rôle
+// électrique rattaché à un appareil (table shelly_device_roles, voir
+// lib/shelly-device-role-service.ts et SourcesTab.tsx). L'ancien modèle
+// riche (types SENELEC/PV…, modes A–F, transfert, tableaux, profils Mi)
+// a été retiré le 2026-09-16 : aucun calcul ne le lisait.
 // ============================================================
-
-// ============================================================
-// SOURCES — Onglet Sources
-// ============================================================
-
-export type SourceType = 'SENELEC' | 'PV' | 'BESS' | 'GROUPE' | 'SECOURS' | 'CHARGE' | 'SELECTEUR';
-export type SensorType = 'Shelly' | 'SMA' | 'Voltcraft' | 'Fluke' | 'DENT' | 'Sentinel' | 'Manuel' | 'Autre';
-
-// ---- Configuration avancée (matrice LEGENDE) ----
-export type ModeSource = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
-export type TransfertEnergie = 'Selecteur' | 'Inverseur' | 'Direct';
-export type TypeTableau = 'TGBT' | 'TD1' | 'TD2' | 'TD3' | 'Autre';
-export type ChargeId = 'CH1_TGBT' | 'CH2_TGBT' | 'CH3_TD1' | 'CH4_TD2' | 'Autre' | '';
-export type ProfilMi = 'M1_SENELEC' | 'M2_SELECTEUR' | 'M3_CHARGE' | 'M4_GROUPE' | 'M5_PV';
-export type ModeGrid = 'ON-GRID' | 'OFF-GRID';
-
-export const PROFIL_MI_LABELS: Record<ProfilMi, string> = {
-  M1_SENELEC:   'M1 — SENELEC',
-  M2_SELECTEUR: 'M2 — Sélecteur PV/SENELEC',
-  M3_CHARGE:    'M3 — Charge totale',
-  M4_GROUPE:    'M4 — Groupe électrogène',
-  M5_PV:        'M5 — Production PV',
-};
-
-export const SOURCE_TYPE_COLORS: Record<SourceType, string> = {
-  SENELEC:   '#3b82f6',
-  PV:        '#eab308',
-  BESS:      '#22c55e',
-  GROUPE:    '#f97316',
-  SECOURS:   '#f97316',
-  CHARGE:    '#ef4444',
-  SELECTEUR: '#a855f7',
-};
-
-export const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
-  SENELEC:   'Réseau SENELEC',
-  PV:        'Production solaire (PV)',
-  BESS:      'Batterie (BESS)',
-  GROUPE:    'Groupe électrogène',
-  SECOURS:   'Groupe électrogène (secours)',
-  CHARGE:    'Circuit de consommation',
-  SELECTEUR: 'ATS / Inverseur réseau',
-};
-
-export interface Source {
-  id: string;
-  nom: string;
-  type: SourceType;
-  description: string;
-  couleur: string;
-  capteur: SensorType;
-  actif: boolean;
-  ordre: number;
-  siteId?: string;
-  modes?: ModeSource[];
-  linkedSourceIds?: string[];
-  transfert?: TransfertEnergie;
-  tableau?: TypeTableau;
-  chargeId?: ChargeId;
-  profilMi?: ProfilMi;
-  modeGrid?: ModeGrid;
-}
 
 // ---- Colonnes disponibles pour export Supabase / TCD ----
 export interface ColonneProfilShelly {
@@ -154,24 +98,6 @@ export const COLONNES_PROFIL_SHELLY: ColonneProfilShelly[] = [
   { key: 'Emplacement',       label: 'Emplacement',               groupe: 'classifieur' },
   { key: 'Piece',             label: 'Pièce / Zone',              groupe: 'classifieur' },
 ];
-
-// ============================================================
-// SÉRIES TEMPORELLES — données multi-sources normalisées
-// ============================================================
-
-export interface TimeSeriesRow {
-  timestamp: Date;
-  sourceId: string;
-  puissanceKw: number;
-  energieKwh: number;
-  energieCumKwh: number;
-  facteurPuissance?: number;
-  tensionV?: number;
-  courantA?: number;
-  jourActivites?: ShellyRow['jourActivites'];
-  saison?: ShellyRow['saison'];
-  periodeclimatique?: ShellyRow['periodeclimatique'];
-}
 
 // ============================================================
 // CALENDRIER — jours d'activité, horaires, jours fériés
@@ -317,7 +243,6 @@ export interface ImportedFile {
   id: string;
   name: string;
   type: 'shelly' | 'autre' | 'facture';
-  sourceId?: string;
   uploadedAt: Date;
   rowCount: number;
   columns: string[];

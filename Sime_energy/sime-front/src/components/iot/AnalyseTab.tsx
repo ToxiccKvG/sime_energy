@@ -790,14 +790,38 @@ function SupabaseExportPanel({
     rooms?: string[];
   }>({ sites: [], devices: [] });
   const [loadingMeta, setLoadingMeta] = useState(false);
+  // Vrai une fois le catalogue reçu (loadingMeta est faux avant même le départ du fetch).
+  const [metaLoaded, setMetaLoaded] = useState(false);
 
   useEffect(() => {
     setLoadingMeta(true);
     fetchDisponibles().then(d => {
       setDisponibles(d);
       setLoadingMeta(false);
+      setMetaLoaded(true);
     });
   }, []);
+
+  // Raccourci venu de l'onglet Sources (« Analyser ») : pré-coche les appareils
+  // de la source et cale le site, puis se consomme. Tout reste modifiable — le
+  // chargement libre (site / famille / appareil / période) n'est pas touché.
+  const { state: { analysePreset }, setAnalysePreset } = useIOT();
+  const [presetLabel, setPresetLabel] = useState<string | null>(null);
+  // Appareils à cocher une fois les filtres posés (voir l'effet après la purge).
+  const [pendingPresetIds, setPendingPresetIds] = useState<string[] | null>(null);
+  useEffect(() => {
+    // Attend le catalogue : la purge ci-dessous retire toute sélection absente
+    // des appareils filtrés, et un catalogue vide viderait la pré-sélection.
+    if (!analysePreset || !metaLoaded) return;
+    setSite(analysePreset.site);
+    setDeviceFamily('');            // la source peut mêler plusieurs familles
+    setDeviceRoom('');
+    setDeviceSearch('');
+    setPendingPresetIds(analysePreset.deviceIds);
+    setPresetLabel(analysePreset.label);
+    setOpen(true);
+    setAnalysePreset(null);
+  }, [analysePreset, metaLoaded, setAnalysePreset]);
 
   const siteDeviceCounts = disponibles.devices.reduce<Record<string, number>>((acc, d) => {
     const key = d.site || 'Sans site';
@@ -863,6 +887,14 @@ function SupabaseExportPanel({
     const availableIds = new Set(devicesFiltres.map(d => d.device_id));
     setSelectedDeviceIds(prev => prev.filter(id => availableIds.has(id)));
   }, [site, deviceFamily, deviceRoom, deviceSearch, disponibles.devices]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pré-sélection venue de l'onglet Sources : appliquée APRÈS la purge
+  // ci-dessus (même commit, déclaré ensuite), une fois site et famille en place.
+  useEffect(() => {
+    if (!pendingPresetIds) return;
+    setSelectedDeviceIds(pendingPresetIds);
+    setPendingPresetIds(null);
+  }, [pendingPresetIds, site, deviceFamily]);
 
   const toggleCol = (key: string) => {
     setColsAuto(false);
@@ -1026,6 +1058,16 @@ function SupabaseExportPanel({
                       placeholder={loadingMeta ? 'Chargement…' : 'Rechercher un appareil...'}
                       className="h-9 text-xs bg-white/5 border-white/20 text-white"
                     />
+                    {presetLabel && selectedDeviceIds.length > 0 && (
+                      <div className="flex items-center justify-between gap-2 text-xs rounded-md border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5">
+                        <span className="text-blue-200">
+                          Pré-sélection depuis la source <span className="font-medium">{presetLabel}</span> — {selectedDeviceIds.length} appareil{selectedDeviceIds.length > 1 ? 's' : ''}, modifiable.
+                        </span>
+                        <button className="text-blue-300 hover:text-white shrink-0" onClick={() => { setPresetLabel(null); setSelectedDeviceIds([]); }}>
+                          Tout désélectionner
+                        </button>
+                      </div>
+                    )}
                     {selectedDeviceIds.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
                         {selectedDeviceIds.map(id => {
