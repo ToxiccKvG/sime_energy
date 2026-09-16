@@ -1,8 +1,8 @@
-# Module Mesures — Documentation technique
+# Modules Mesures & IOT — Documentation technique
 
 > Plateforme SIMEE (CER2E) — Module 3 « Campagne de mesure »
 > Référence : formats supportés, architecture, contrats de données, algorithmes.
-> Dernière mise à jour : 15/09/2026 (clôture du chantier 1 du plan de travail).
+> Dernière mise à jour : 16/09/2026 (chantier 1 clôturé, chantier 2 Sources IOT).
 > Guide utilisateur : [`guide-utilisateur-mesures.md`](./guide-utilisateur-mesures.md).
 
 ## 1. Vue d'ensemble
@@ -202,7 +202,48 @@ Migration `supabase/migrations/20260915_security_audit_app_tables.sql` (appliqu�
   `building_type_params` modifiable par tout utilisateur connecté, bucket
   `audit-documents` sans isolation par organisation.
 
-## 9. Limites connues / hors périmètre du chantier 1
+## 9. Module IOT — Sources et rôles des appareils (chantier 2, 16/09/2026)
+
+### Modèle
+- **Table `shelly_device_roles`** (migration `SHELLY_GCP_00/.../20260901_create_shelly_device_roles.sql`) :
+  `device_id` (clé — jamais le nom, qui change côté Shelly Cloud) → `role`
+  (`M1_RESEAU | M2_SELECTEUR | M3_CHARGE | M4_GROUPE | M5_PV | BESS | DEPART | AMBIANCE | AUTRE`),
+  `libelle`, `sens_inverse` (TC monté à l'envers), `origine` (`auto | manuel`),
+  `confirme_at` (`NULL` = proposition non validée, jamais présentée comme acquise).
+  Règle : **aucun distributeur ni pays dans le vocabulaire** (`M1_SENELEC` a été renommé).
+- **Une source = un rôle sur un site.** Le catalogue des appareils vient de la vue
+  `shelly_devices_catalog` (`fetchDisponibles()`), les rôles de `fetchDeviceRoles()`
+  (`lib/shelly-device-role-service.ts`). Plus rien n'est stocké en localStorage pour les
+  sources ; l'ancien modèle riche (`Source`, `SourceType`, modes A–F, transfert, tableaux,
+  `ProfilMi`, liens) a été supprimé de `components/iot/shared.ts` et du contexte
+  (`STORAGE_KEY` `sime-iot-v2` → `v3`, reset propre).
+
+### Écrans
+| Fichier | Rôle |
+|---|---|
+| `components/iot/ShellyDeviceRolesPanel.tsx` | Paramètres → Rôles : propositions à confirmer, appareils sans rôle par site avec pré-remplissage par famille (`ENERGIE_1PH/LUMIERE → DEPART`, `CAPTEUR_ENV → AMBIANCE`, `ETAT → AUTRE` ; 3PH/2PH/INCONNU sans suggestion), rattachements confirmés, `sens_inverse` |
+| `components/iot/SourcesTab.tsx` | Lecture : `buildSites()` regroupe le catalogue par site puis par rôle (`SOURCE_ORDER`), rôles non confirmés à part, `NON_CLASSE` pour les appareils sans rôle ; légende (9 rôles + schémas A–F `public/images/modes/*.png`, aperçu au survol) |
+| `components/iot/IOTContext.tsx` | `analysePreset: { label, site, deviceIds } \| null` (non persisté) posé par **Analyser** |
+| `components/iot/AnalyseTab.tsx › SupabaseExportPanel` | Consomme le préréglage : `site` posé, `deviceFamily = ''`, appareils pré-cochés, bandeau « Pré-sélection depuis la source … modifiable » |
+
+### Règle de conception (posée par l'utilisateur)
+Une source est un **raccourci, jamais un préalable** : `exporterDonneesSupabase()` ne connaît
+que site / famille / appareils / période ; un appareil sans rôle reste extractible ; les rôles
+non confirmés ne sont jamais utilisés silencieusement.
+
+### Piège d'implémentation
+La pré-sélection doit être appliquée par un effet **déclaré après** l'effet de purge de
+`selectedDeviceIds` (qui retire tout appareil absent des filtres courants) et **seulement
+une fois le catalogue reçu** (`metaLoaded`) ; sinon la purge, exécutée dans le même commit
+avec les filtres de l'ancien rendu, vide la sélection. D'où `pendingPresetIds` appliqué au
+rendu suivant.
+
+### Détection des feuilles Excel « profil Mi »
+`UploadTab.tsx` garde un type local `ProfilMi` (`M1_RESEAU`…) et des motifs
+(`RESEAU|SENELEC|M1`, …) uniquement pour reconnaître les feuilles M1..M5 des anciens
+classeurs ; c'est du parsing, pas un modèle de source.
+
+## 10. Limites connues / hors périmètre du chantier 1
 
 - **Pas de persistance** des relevés (état React). Prévu : stockage serveur.
 - Les modèles d'analyse portent sur la **grandeur principale** ; l'extension aux colonnes
@@ -212,7 +253,7 @@ Migration `supabase/migrations/20260915_security_audit_app_tables.sql` (appliqu�
 - ESLint : 3 erreurs préexistantes dans `MeasurementCharts.tsx` (`any`, expression
   inutilisée), sans effet fonctionnel.
 
-## 10. Validation (15/09/2026)
+## 11. Validation (15/09/2026)
 
 - Modèles : jeu synthétique de 28 jours (talon 300 W, trou de 5 h, pic, valeur figée,
   action à J+14) passé par l'API réelle (`PV_SOLAREDGE`, 2 668 mesures) : les 4 modèles

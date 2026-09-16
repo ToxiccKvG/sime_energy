@@ -1,12 +1,13 @@
-# Guide utilisateur — Campagne de mesure et organisation
+# Guide utilisateur — Campagne de mesure, organisation et sources IOT
 
-> Plateforme SIMEE (CER2E) · Menu **Mesures**
-> Version du 15/09/2026 (fin du chantier 1 du plan de travail).
+> Plateforme SIMEE (CER2E) · Menus **Mesures** et **IOT**
+> Version du 16/09/2026 (chantiers 1 et 2 du plan de travail).
 
 Ce guide s'adresse à l'auditeur énergétique qui revient de terrain avec des fichiers
 exportés par ses appareils de mesure (analyseur réseau, compteur, station d'air,
 portail photovoltaïque…) et veut les lire, les comparer et en tirer des conclusions.
-La section 6 couvre la gestion de l'organisation (inviter un collègue, rôles).
+La section 6 couvre la gestion de l'organisation (inviter un collègue, rôles) et la
+section 7 les sources du module IOT (rôles des appareils, raccourci vers l'analyse).
 
 Le module se parcourt de gauche à droite : **Upload → Analyse → Visualisation →
 Modèles → Comparaison**. Les onglets restent grisés tant qu'aucun fichier n'est chargé.
@@ -209,7 +210,61 @@ Un utilisateur sans organisation en crée une depuis **Mon compte → Organisati
 
 ---
 
-## 7. Questions fréquentes
+## 7. Module IOT — Sources et rôles des appareils
+
+Le module **IOT** (menu éclair) suit en continu les compteurs et capteurs Shelly des sites.
+Pour que la plateforme sache **ce que mesure** chaque appareil (arrivée réseau, production
+PV, groupe, départ…), on lui donne un **rôle**. Un rôle sur un site = une **source**.
+
+### Vocabulaire des rôles
+
+| Rôle | Ce que l'appareil mesure |
+|---|---|
+| **M1 — Arrivée réseau** | l'énergie soutirée au distributeur public (SENELEC, SONABEL… — le rôle ne nomme jamais le distributeur) |
+| **M2 — Sélecteur / inverseur** | le point de bascule réseau ↔ production locale |
+| **M3 — Charge totale** | tout ce que le site consomme, quelle que soit la source |
+| **M4 — Groupe électrogène** | la production de secours |
+| **M5 — Production PV** | la production photovoltaïque |
+| **Batterie (BESS)** | charge / décharge du stockage |
+| **Départ / sous-charge** | un circuit ou équipement individuel (clim, prise, éclairage…) |
+| **Capteur d'ambiance** | température, humidité, CO₂, pression… |
+| **Autre** | relais, contacts, boutons, détecteurs |
+
+Les schémas de raccordement **A à F** (réseau seul, réseau + PV, PV + batterie, groupe seul,
+réseau + groupe, PV + groupe) indiquent où se placent M1…M5 selon l'architecture du site ;
+ils sont visibles dans la légende de l'onglet Sources (survoler une lettre pour agrandir).
+
+### Rattacher les appareils — `IOT → Paramètres → Rôles des appareils`
+1. **Propositions à confirmer** : rôles déduits automatiquement du nom de l'appareil
+   (ex. « M4_Groupe électrogène »). Vérifier, puis **Confirmer** (ou **Tout confirmer**).
+   Tant qu'un rôle n'est pas confirmé, il est affiché « à confirmer » et n'est pas utilisé
+   par les raccourcis.
+2. **Appareils sans rôle**, groupés par site : un rôle est **pré-rempli** d'après la famille
+   du matériel (prise/lumière → Départ, capteur → Ambiance, relais → Autre). Le bouton
+   **Rattacher les N déductibles** les valide d'un coup. Les compteurs triphasés/biphasés
+   et les appareils de famille inconnue n'ont pas de proposition : c'est une vraie
+   décision (arrivée générale ? tableau divisionnaire ? charge totale ?) à prendre avec
+   la personne qui connaît le câblage.
+3. **Rattachements confirmés** : modifiables à tout moment ; l'option **TC inversé** signale
+   un transformateur de courant monté à l'envers (soutirage et injection permutés).
+
+Les rôles sont enregistrés en base : ils sont partagés entre utilisateurs et postes.
+
+### Lire les sources — `IOT → Sources`
+- Une carte par **site**, et dans chaque site une ligne par rôle avec ses appareils.
+  Les rôles « à confirmer » apparaissent en pointillés ; les appareils **Non classés**
+  restent listés (ils ne sont jamais cachés).
+- **Analyser** ouvre l'onglet Analyse avec les appareils de la source **pré-cochés** —
+  la sélection reste modifiable et le chargement libre par site, famille, appareil et
+  période fonctionne exactement comme avant. Une source est un raccourci, jamais un
+  préalable : un appareil sans rôle s'extrait toujours.
+- **Rattacher des appareils** / **Classer** renvoient vers l'écran des rôles.
+- Les compteurs en tête (appareils, rattachés, à confirmer, non classés) donnent l'état
+  d'avancement du rattachement.
+
+---
+
+## 8. Questions fréquentes
 
 **Mon fichier est refusé.** Vérifiez le type d'appareil sur la ligne du fichier : un
 export « demand » chargé comme « trend » (ou l'inverse) est la cause n° 1. Pour un format
