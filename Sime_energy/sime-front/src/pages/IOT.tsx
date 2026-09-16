@@ -11,6 +11,7 @@ import { AnalyseTab }        from '@/components/iot/AnalyseTab';
 import { NettoyageTab }      from '@/components/iot/NettoyageTab';
 import { ParametresTab }     from '@/components/iot/ParametresTab';
 import { Badge }             from '@/components/ui/badge';
+import { TablePrefsProvider, TableDisplayToggle, useTablePrefs } from '@/components/iot/tablePrefs';
 
 // ---- Définition des onglets ----
 const TABS = [
@@ -28,6 +29,7 @@ type TabId = (typeof TABS)[number]['id'];
 function IOTInner() {
   const { state, setActiveTab } = useIOT();
   const { activeTab, shellyRows, files } = state;
+  const { fit, density } = useTablePrefs();
 
   const tabId = (activeTab as TabId) ?? 'dashboard';
 
@@ -36,8 +38,11 @@ function IOTInner() {
     fichiers: files.length > 0 ? files.length : undefined,
   };
 
+  // Onglets qui affichent des tableaux larges : le sélecteur Ajuster/Défiler y est utile
+  const hasTables = tabId === 'fichiers' || tabId === 'nettoyage' || tabId === 'tcd';
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-table-fit={fit} data-table-density={density}>
       {/* En-tête */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -69,8 +74,9 @@ function IOTInner() {
         </div>
       </div>
 
-      {/* Navigation onglets — scrollable horizontal sur mobile */}
-      <div className="overflow-x-auto">
+      {/* Navigation onglets — scrollable horizontal sur mobile — + affichage des tableaux */}
+      <div className="flex flex-wrap items-center gap-3">
+      <div className="overflow-x-auto flex-1 min-w-0">
         <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-max min-w-full sm:w-fit">
           {TABS.map(tab => {
             const Icon = tab.icon;
@@ -100,6 +106,8 @@ function IOTInner() {
           })}
         </div>
       </div>
+      {hasTables && <TableDisplayToggle />}
+      </div>
 
       {/* Contenu onglet */}
       <div className="min-h-[400px]">
@@ -118,9 +126,11 @@ function IOTInner() {
 export default function IOT() {
   return (
     <IOTProvider>
-      <ErrorBoundary title="Erreur Module IOT">
-        <IOTInner />
-      </ErrorBoundary>
+      <TablePrefsProvider>
+        <ErrorBoundary title="Erreur Module IOT">
+          <IOTInner />
+        </ErrorBoundary>
+      </TablePrefsProvider>
     </IOTProvider>
   );
 }

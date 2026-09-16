@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useIOT } from './IOTContext';
+import { usePinnedColumns } from './tablePrefs';
 import type { ShellyRow } from './shared';
 import { COLONNES_PROFIL_SHELLY } from './shared';
 import { parseShellyRow, profilMiToShellyRow, detecterFormatShelly, parseShellySectionCSV, ajouterCumulatifs } from '@/lib/iot-profil-engine';
@@ -561,6 +562,9 @@ export function NettoyageTab() {
   const [frCol, setFrCol]             = useState<string>('all');
   const [frCase, setFrCase]           = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
+  // Colonnes figées à gauche : case à cocher, #, Date, Appareil
+  const tableWrapRef = useRef<HTMLDivElement>(null);
+  usePinnedColumns(tableWrapRef, 4);
   const sortedRef    = useRef<ShellyRow[]>([]);
 
   // ---- Colonnes pertinentes selon le contenu réel des données chargées ----
@@ -2243,7 +2247,7 @@ export function NettoyageTab() {
           <span className="ml-auto text-slate-500">kWh Net — moy:{kwhStats.mean.toFixed(2)} · σ:{kwhStats.std.toFixed(2)} · min:{kwhStats.min.toFixed(2)} · max:{kwhStats.max.toFixed(2)}</span>
         </div>
 
-        <div className="overflow-auto" style={{ maxHeight: '62vh' }}>
+        <div ref={tableWrapRef} className="overflow-auto" style={{ maxHeight: '62vh' }}>
           <table className="min-w-full text-xs border-collapse">
             <thead className="sticky top-0 z-10" style={{ backgroundColor: '#131520' }}>
               <tr>

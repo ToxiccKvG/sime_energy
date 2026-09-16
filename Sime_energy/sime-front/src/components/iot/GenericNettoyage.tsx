@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { usePinnedColumns } from './tablePrefs';
 import { exportJsonToXlsx } from '@/lib/excel-utils';
 import {
   AlertTriangle, CheckCircle2, Columns, Download, Eraser, Filter, Replace,
@@ -463,6 +464,9 @@ export function GenericNettoyage({
 
   // Init key col once
   const didInitRef = useRef(false);
+  // Colonnes figées à gauche : #, première colonne
+  const tableWrapRef = useRef<HTMLDivElement>(null);
+  usePinnedColumns(tableWrapRef, 2);
   if (!didInitRef.current && columns.length > 0) {
     didInitRef.current = true;
     const k = pickLikelyKeyColumn(columns);
@@ -783,7 +787,7 @@ export function GenericNettoyage({
 
       {/* Table */}
       <div className="rounded-xl border border-white/10 overflow-hidden">
-        <div className="overflow-auto" style={{ maxHeight: '62vh' }}>
+        <div ref={tableWrapRef} className="overflow-auto" style={{ maxHeight: '62vh' }}>
           <table className="min-w-full text-xs border-collapse">
             <thead className="sticky top-0 z-10" style={{ backgroundColor: '#131520' }}>
               <tr>

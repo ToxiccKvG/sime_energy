@@ -138,3 +138,41 @@ All colors MUST be HSL.
     @apply font-semibold;
   }
 }
+
+/* ============================================================================
+   Tableaux IOT — préférences globales (voir components/iot/tablePrefs.tsx)
+   Attributs posés sur le conteneur du module : data-table-fit, data-table-density.
+   Ciblent tous les <table class="min-w-full"> du module.
+   ============================================================================ */
+
+/* Mode "Ajuster" : le tableau tient dans la largeur disponible. Largeur de
+   chaque colonne proportionnelle à son contenu (les nombres restent étroits),
+   marges latérales réduites, et le texte long passe à la ligne (aux espaces de
+   préférence) plutôt que de forcer un défilement. Les largeurs mini inline
+   (style={{minWidth}}) sont annulées. */
+[data-table-fit="fit"] table.min-w-full { width: 100%; table-layout: auto; }
+[data-table-fit="fit"] table.min-w-full th,
+[data-table-fit="fit"] table.min-w-full td {
+  min-width: 0 !important;
+  max-width: none !important;
+  padding-left: 6px;
+  padding-right: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+[data-table-fit="fit"] table.min-w-full td.px-0 { padding: 0; }
+/* Les pastilles (badges) ne se coupent pas : elles passent à la ligne entières */
+[data-table-fit="fit"] table.min-w-full td > :is(span, div)[class*="rounded"] { display: inline-block; white-space: nowrap; overflow-wrap: normal; }
+
+/* Densité "Compact" : police et marges réduites */
+[data-table-density="compact"] table.min-w-full { font-size: 10px; line-height: 1.25; }
+[data-table-density="compact"] table.min-w-full th,
+[data-table-density="compact"] table.min-w-full td { padding: 2px 6px; }
+[data-table-density="compact"] table.min-w-full td.px-0 { padding: 0; }
+[data-table-density="compact"] table.min-w-full :is(input, select) { font-size: 10px; }
+
+/* Colonnes figées à gauche (usePinnedColumns) : fond opaque pour couvrir le
+   contenu qui défile dessous, léger trait sur la dernière colonne figée. */
+.iot-pinned { position: sticky; z-index: 5; background-color: #12141f; }
+thead .iot-pinned { z-index: 15; background-color: #1c1e29; }
+.iot-pinned-last { box-shadow: 1px 0 0 rgba(255, 255, 255, 0.08); }

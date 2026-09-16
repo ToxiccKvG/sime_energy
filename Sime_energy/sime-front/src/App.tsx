@@ -70,9 +70,9 @@ const App = () => (
                   <OrganizationProvider>
                     <div className="flex min-h-screen w-full bg-[#0f111a] text-slate-100">
                       <AppSidebar />
-                      <div className="flex flex-1 flex-col">
+                      <div className="flex flex-1 flex-col min-w-0">
                         <AppHeader />
-                        <main className="flex-1 bg-transparent p-6 pl-24">
+                        <main className="flex-1 min-w-0 overflow-x-hidden bg-transparent p-6 pl-24">
                           <Routes>
                             <Route path="/" element={<Index />} />
                             <Route path="/facturation" element={<Facturation />} />
