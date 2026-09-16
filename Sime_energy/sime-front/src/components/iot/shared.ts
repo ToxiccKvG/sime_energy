@@ -247,7 +247,14 @@ export interface ImportedFile {
   rowCount: number;
   columns: string[];
   preview: Record<string, unknown>[];
+  /**
+   * Contenu complet. Vide tant que `contentLoaded` est false : les
+   * fichiers viennent de la base sans leur contenu, chargé à la demande
+   * via `ensureFileContent` (IOTContext). Ne pas tester `rawData.length`
+   * pour savoir si un fichier est vide — tester `contentLoaded` d'abord.
+   */
   rawData: Record<string, unknown>[];
+  contentLoaded?: boolean;
   statut?: 'original' | 'nettoyé' | 'analysé';
   taille?: number;
   parentId?: string;

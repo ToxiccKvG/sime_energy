@@ -419,7 +419,7 @@ function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
 // ============================================================
 
 export function NettoyageTab() {
-  const { state, setShellyRows, addFile, updateFile, setSelectedFile, setActiveTab } = useIOT();
+  const { state, setShellyRows, addFile, updateFile, ensureFileContent, setSelectedFile, setActiveTab } = useIOT();
   const { shellyRows } = state;
 
   // ---- Source de données ----
@@ -684,6 +684,22 @@ export function NettoyageTab() {
     setIssues([]);
     setShowGapDates(false);
   }, [shellyRows, state.joursFerier]);
+
+  // Fichier choisi ailleurs (bouton « Nettoyer » de la bibliothèque, ou
+  // reprise de session) : le charger ici, une seule fois par sélection et
+  // seulement si l'onglet est visible — après « Sauvegarder et stocker »
+  // la sélection change mais l'onglet bascule sur Fichiers, on ne recharge pas.
+  const handledSelectionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const { selectedFileId, activeTab, filesLoaded } = state;
+    if (!selectedFileId || !filesLoaded) return;
+    if (handledSelectionRef.current === selectedFileId) return;
+    handledSelectionRef.current = selectedFileId;
+    if (activeTab !== 'nettoyage') return;
+    if (selectedFileId === localFileId || selectedFileId === genericFileId) return;
+    void ensureFileContent(selectedFileId).then(full => { if (full) loadFromImported(full); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.selectedFileId, state.activeTab, state.filesLoaded]);
 
   // ============================================================
   // UNDO
@@ -1039,7 +1055,7 @@ export function NettoyageTab() {
       const existingCleaned = sourceFile
         ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
         : null;
-      const cleanedId = existingCleaned?.id ?? `clean-${Date.now()}`;
+      const cleanedId = existingCleaned?.id ?? crypto.randomUUID();
       if (existingCleaned) {
         updateFile(existingCleaned.id, {
           name: cleanedName, rowCount: rowsRecalculees.length, columns, preview,
@@ -1332,8 +1348,10 @@ export function NettoyageTab() {
       {state.files.map(f => {
         const isExp  = expandedFileId === f.id;
         const pg     = expandedFilePage[f.id] ?? 0;
-        const totalPg = Math.ceil(f.rawData.length / FILE_PAGE_SIZE);
-        const pageRows = f.rawData.slice(pg * FILE_PAGE_SIZE, (pg + 1) * FILE_PAGE_SIZE);
+        // Contenu pas encore téléchargé : on montre l'aperçu (10 lignes) en attendant
+        const viewRows = f.contentLoaded ? f.rawData : f.preview;
+        const totalPg = Math.ceil(viewRows.length / FILE_PAGE_SIZE);
+        const pageRows = viewRows.slice(pg * FILE_PAGE_SIZE, (pg + 1) * FILE_PAGE_SIZE);
         return (
           <div key={f.id} className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
             <div className="flex items-center gap-3 p-3">
@@ -1359,7 +1377,7 @@ export function NettoyageTab() {
                       setLocalRows([]); setLocalFileName(null); setLocalFileId(null);
                       setGenericRows([]); setGenericFileName(null); setGenericFileId(null);
                     } else {
-                      loadFromImported(f);
+                      void ensureFileContent(f.id).then(full => { if (full) loadFromImported(full); });
                     }
                   }}
                 >
@@ -1367,7 +1385,11 @@ export function NettoyageTab() {
                 </Button>
                 <Button size="sm" variant="ghost"
                   className={`h-7 gap-1.5 text-xs ${isExp ? 'text-blue-400 bg-blue-500/10' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-                  onClick={() => { setExpandedFileId(isExp ? null : f.id); setExpandedFilePage(p => ({ ...p, [f.id]: 0 })); }}
+                  onClick={() => {
+                    setExpandedFileId(isExp ? null : f.id);
+                    setExpandedFilePage(p => ({ ...p, [f.id]: 0 }));
+                    if (!isExp && !f.contentLoaded) void ensureFileContent(f.id);
+                  }}
                 >
                   {isExp ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                   {isExp ? 'Masquer' : 'Voir'}
@@ -1375,7 +1397,7 @@ export function NettoyageTab() {
               </div>
             </div>
 
-            {isExp && f.rawData.length > 0 && (
+            {isExp && viewRows.length > 0 && (
               <>
                 <div className="overflow-auto border-t border-white/10" style={{ maxHeight: '40vh' }}>
                   <table className="min-w-full text-xs border-collapse">
@@ -1383,7 +1405,7 @@ export function NettoyageTab() {
                       <tr>
                         <th className="w-10 px-2 py-1.5 text-slate-600 text-right border-b border-r border-white/10 font-normal select-none bg-white/5">#</th>
                         {f.columns.map(col => {
-                          const ct = detectColType(col, f.rawData);
+                          const ct = detectColType(col, viewRows);
                           return (
                             <th key={col} className="px-3 py-1.5 text-left border-b border-r border-white/10 whitespace-nowrap font-medium bg-white/5">
                               <div className="flex items-center gap-1">{COL_TYPE_ICON[ct]}<span className={COL_TYPE_COLOR[ct]}>{col}</span></div>
@@ -1398,7 +1420,7 @@ export function NettoyageTab() {
                           <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none font-mono text-[10px]">{pg * FILE_PAGE_SIZE + ri + 1}</td>
                           {f.columns.map(col => {
                             const val = String(row[col] ?? '');
-                            const ct  = detectColType(col, f.rawData);
+                            const ct  = detectColType(col, viewRows);
                             return (
                               <td key={col} className={`px-3 py-1 border-r border-white/5 whitespace-nowrap max-w-[200px] truncate ${ct === 'number' ? 'text-right font-mono text-emerald-300/80' : ct === 'date' ? 'text-blue-300/80' : 'text-slate-400'}`} title={val.length > 30 ? val : undefined}>{val}</td>
                             );
@@ -1409,7 +1431,7 @@ export function NettoyageTab() {
                   </table>
                 </div>
                 <div className="flex items-center justify-between px-4 py-2 border-t border-white/10">
-                  <span className="text-slate-500 text-xs">{pg * FILE_PAGE_SIZE + 1}–{Math.min((pg + 1) * FILE_PAGE_SIZE, f.rawData.length)} / {f.rowCount.toLocaleString('fr-FR')} lignes</span>
+                  <span className="text-slate-500 text-xs">{pg * FILE_PAGE_SIZE + 1}–{Math.min((pg + 1) * FILE_PAGE_SIZE, viewRows.length)} / {f.rowCount.toLocaleString('fr-FR')} lignes{!f.contentLoaded && ' · aperçu'}</span>
                   <div className="flex items-center gap-2">
                     <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-slate-400 hover:text-white" disabled={pg === 0} onClick={() => setExpandedFilePage(p => ({ ...p, [f.id]: pg - 1 }))}><ChevronLeft className="h-4 w-4" /></Button>
                     <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-slate-400 hover:text-white" disabled={pg >= totalPg - 1} onClick={() => setExpandedFilePage(p => ({ ...p, [f.id]: pg + 1 }))}><ChevronRight className="h-4 w-4" /></Button>
@@ -1480,7 +1502,7 @@ export function NettoyageTab() {
           const existingCleaned = sourceFile
             ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
             : null;
-          const cleanedId = existingCleaned?.id ?? `clean-${Date.now()}`;
+          const cleanedId = existingCleaned?.id ?? crypto.randomUUID();
 
           if (existingCleaned) {
             updateFile(existingCleaned.id, {
@@ -1563,7 +1585,7 @@ export function NettoyageTab() {
                 const existingCleaned = sourceFile
                   ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
                   : null;
-                const cleanedId = existingCleaned?.id ?? `clean-${Date.now()}`;
+                const cleanedId = existingCleaned?.id ?? crypto.randomUUID();
 
                 if (existingCleaned) {
                   updateFile(existingCleaned.id, {

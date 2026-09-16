@@ -243,6 +243,54 @@ rendu suivant.
 (`RESEAU|SENELEC|M1`, …) uniquement pour reconnaître les feuilles M1..M5 des anciens
 classeurs ; c'est du parsing, pas un modèle de source.
 
+## 9 bis. Module IOT — Persistance serveur des fichiers (16/09/2026)
+
+### Avant
+Tout l'état du module (`files` avec `rawData`, `shellyRows`, calendriers…) était sérialisé
+en `localStorage` (`sime-iot-v3`) : aucune reprise sur un autre poste, aucune isolation entre
+utilisateurs d'un même navigateur, et **perte silencieuse** au-delà du quota (~5 Mo, soit
+~4 000 lignes nettoyées à ~1,3 Ko la `ShellyRow` sérialisée — `saveToStorage` avalait
+l'erreur).
+
+### Modèle (migration `sime-front/supabase/migrations/20260916_iot_files.sql`)
+- **Table `iot_files`** : métadonnées (`name`, `type`, `statut`, `row_count`, `columns`,
+  `preview` = 10 lignes, `taille`, `parent_id` nettoyé → original en `on delete set null`,
+  `device_location`, `device_room`) + `storage_path` / `content_encoding`.
+  `id` est un **uuid généré côté client** (`crypto.randomUUID()`) pour que les onglets
+  puissent référencer le fichier avant la réponse serveur.
+- **Bucket privé `iot-files`** : le contenu (`rawData`) en JSON **gzippé dans le navigateur**
+  (`CompressionStream`, repli `identity` si l'API manque), chemin `{auth.uid()}/{id}.json.gz`.
+  Ordre de grandeur : 240 `ShellyRow` = 5,3 Ko au lieu de ~310 Ko.
+- **Isolation par utilisateur** (décision manager du 27/08) : policies `created_by = auth.uid()`
+  sur la table, `(storage.foldername(name))[1] = auth.uid()` sur les objets. `organization_id`
+  est stocké (nullable) pour un partage d'équipe futur sans migration de données. `anon` n'a
+  rien, `authenticated` n'a pas TRUNCATE.
+
+### Front
+| Fichier | Rôle |
+|---|---|
+| `lib/iot-file-service.ts` | `listFiles`, `createFile` (ligne puis objet ; un envoi interrompu laisse `storage_path NULL`, signalé à l'ouverture), `updateFile` (métadonnées, et contenu si `rawData` fourni), `deleteFile` (objet puis ligne), `fetchFileContent` (+ `dateReviver`, même convention que l'ancien localStorage) |
+| `components/iot/IOTContext.tsx` | Liste chargée à la connexion (`filesLoading` / `filesLoaded`) ; `addFile` / `updateFile` / `removeFile` mettent l'UI à jour immédiatement puis persistent — un échec remonte en **toast destructif**, jamais silencieux ; **`ensureFileContent(id)`** télécharge `rawData` à la demande (dédoublonné via `pendingContent`) et pose `contentLoaded` ; `STORAGE_KEY` `v3 → v4`, le localStorage ne garde plus que `selectedFileId`, `donneesTechniques`, `joursFerier`, `calendriers`, `activeTab` |
+| `components/iot/shared.ts` | `ImportedFile.contentLoaded?: boolean` — ne pas tester `rawData.length` pour savoir si un fichier est vide |
+| `NettoyageTab` / `AnalyseTab` / `StockageTab` | Tous les chemins qui lisent `rawData` passent par `ensureFileContent` (bouton Charger, Procéder au Nettoyage, effet sur `selectedFileId`, panneau « Voir » qui affiche `preview` en attendant) ; `NettoyageTab` réagit désormais à un fichier choisi depuis la bibliothèque (une fois par sélection, seulement si l'onglet est visible — pas de rechargement après « Sauvegarder et stocker ») ; spinner de chargement dans la bibliothèque ; filtre « Facturation » corrigé (`type === 'facture'`) |
+
+### Conséquence assumée
+`shellyRows` (jeu actif) n'est plus persisté : après rechargement, le fichier sélectionné est
+rechargé par Analyse et Nettoyage depuis la base ; le badge « jours » de l'en-tête n'apparaît
+qu'une fois un fichier ouvert.
+
+### Validation (16/09/2026, localhost)
+Import xlsx 240 lignes → ligne + objet gzip (931 o) ; rechargement → liste depuis la base,
+localStorage à 1 Ko ; Nettoyer → téléchargement du contenu, 240 lignes parsées ;
+« Sauvegarder et stocker » → fichier nettoyé créé (`parent_id` posé, 5,3 Ko) puis **mis à jour
+en place** au second enregistrement ; Analyse après rechargement → dates restaurées ;
+suppression → ligne et objet retirés.
+
+### Point ouvert
+L'import **CSV** échoue (« Can't find end of central directory ») : `processFile` passe tout
+par `parseExcelBuffer` (ExcelJS) alors que la zone accepte `.csv`. Préexistant, hors de ce
+chantier.
+
 ## 10. Limites connues / hors périmètre du chantier 1
 
 - **Pas de persistance** des relevés (état React). Prévu : stockage serveur.

@@ -262,6 +262,20 @@ Les rôles sont enregistrés en base : ils sont partagés entre utilisateurs et 
 - Les compteurs en tête (appareils, rattachés, à confirmer, non classés) donnent l'état
   d'avancement du rattachement.
 
+### Bibliothèque de fichiers — `IOT → Fichiers`
+- Les fichiers importés (originaux, nettoyés, factures) sont **enregistrés sur le
+  serveur** au moment de l'import : ils sont retrouvés à la prochaine connexion, sur
+  n'importe quel poste ou navigateur.
+- Chacun ne voit que **ses propres fichiers** — ils ne sont pas partagés avec les autres
+  membres de l'organisation.
+- Le contenu d'un fichier n'est téléchargé qu'à sa première ouverture (Nettoyer, Analyse,
+  Voir) ; l'aperçu de la carte et les 10 premières lignes sont disponibles tout de suite.
+- Si un enregistrement échoue (connexion coupée), un message rouge le signale en bas à
+  droite : le fichier reste utilisable dans la session mais ne sera pas retrouvé ensuite —
+  réimportez-le.
+- **Nettoyer** / **Analyse** depuis une carte ouvrent directement le fichier dans l'onglet
+  visé, y compris après un rechargement de page.
+
 ---
 
 ## 8. Questions fréquentes

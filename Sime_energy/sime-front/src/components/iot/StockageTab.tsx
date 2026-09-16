@@ -216,12 +216,12 @@ function FichierCard({
 // ============================================================
 export function StockageTab() {
   const { state, removeFile, updateFile, setSelectedFile, setActiveTab } = useIOT();
-  const { files } = state;
+  const { files, filesLoading } = state;
   const [filter, setFilter] = useState<'tous' | 'shelly' | 'facturation' | 'nettoyé'>('tous');
 
   const filtered = files.filter(f => {
     if (filter === 'shelly')      return f.type === 'shelly';
-    if (filter === 'facturation') return f.type === 'facturation';
+    if (filter === 'facturation') return f.type === 'facture';
     if (filter === 'nettoyé')     return f.statut === 'nettoyé';
     return true;
   });
@@ -261,7 +261,12 @@ export function StockageTab() {
       </div>
 
       {/* Grille de fichiers */}
-      {filtered.length === 0 ? (
+      {filesLoading && files.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+          <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-4" />
+          <p className="text-sm">Chargement de la bibliothèque…</p>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-slate-500">
           <HardDrive className="h-14 w-14 opacity-20 mb-4" />
           <p className="text-base font-medium">

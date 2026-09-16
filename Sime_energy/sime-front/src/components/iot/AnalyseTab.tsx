@@ -1380,8 +1380,8 @@ function MultiSelectFilter({ label, icon, options, selected, onChange }: {
 // COMPOSANT PRINCIPAL
 // ============================================================
 export function AnalyseTab() {
-  const { state, setActiveTab, setShellyRows } = useIOT();
-  const { shellyRows, joursFerier, files, selectedFileId } = state;
+  const { state, setActiveTab, setShellyRows, ensureFileContent } = useIOT();
+  const { shellyRows, joursFerier, selectedFileId, filesLoaded } = state;
 
   // ---- Profil Mi actif ----
 
@@ -1860,16 +1860,23 @@ export function AnalyseTab() {
     }
   }, [parseImportedFileToShellyRows]);
 
+  // Fichier sélectionné (bibliothèque ou reprise de session) : le contenu
+  // vient de la base à la demande, d'où l'attente de la liste puis du
+  // téléchargement. Une sélection devenue obsolète (autre fichier choisi
+  // entre-temps) est ignorée.
   useEffect(() => {
-    if (!selectedFileId) return;
-    const file = files.find(f => f.id === selectedFileId);
-    if (!file) return;
-    setDataFromLibrary(true); // données depuis la bibliothèque → pas de rapport qualité
-    loadFromImported(file);
-    setSupabaseRows([]);
-    setSupabaseFileName('');
-    setMode('tcd');
-  }, [selectedFileId, files, loadFromImported]);
+    if (!selectedFileId || !filesLoaded) return;
+    let stale = false;
+    void ensureFileContent(selectedFileId).then(file => {
+      if (stale || !file) return;
+      setDataFromLibrary(true); // données depuis la bibliothèque → pas de rapport qualité
+      loadFromImported(file);
+      setSupabaseRows([]);
+      setSupabaseFileName('');
+      setMode('tcd');
+    });
+    return () => { stale = true; };
+  }, [selectedFileId, filesLoaded, ensureFileContent, loadFromImported]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragOver(false);
@@ -2388,7 +2395,8 @@ export function AnalyseTab() {
                         </div>
                         {isActive
                           ? <Badge className="bg-blue-600/30 text-blue-300 border-0 text-xs">Actif</Badge>
-                          : <Button size="sm" className="h-7 text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30" onClick={() => loadFromImported(f)}>Charger</Button>
+                          : <Button size="sm" className="h-7 text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30"
+                              onClick={() => { void ensureFileContent(f.id).then(full => { if (full) loadFromImported(full); }); }}>Charger</Button>
                         }
                       </div>
                     );

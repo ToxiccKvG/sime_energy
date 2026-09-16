@@ -415,7 +415,7 @@ export function UploadTab() {
     const debut = entry.editDebut ? new Date(entry.editDebut) : undefined;
     const fin   = entry.editFin   ? new Date(entry.editFin)   : undefined;
 
-    const id = `${Date.now()}-${entry.file.name}`;
+    const id = crypto.randomUUID(); // clé de iot_files (uuid)
     addFile({
       id,
       name: entry.file.name,
@@ -437,7 +437,7 @@ export function UploadTab() {
     const sheet = entry.sheets[entry.activeSheet];
     if (!sheet) return;
 
-    const id = `${Date.now()}-${entry.file.name}`;
+    const id = crypto.randomUUID(); // clé de iot_files (uuid)
     const importedFile: ImportedFile = {
       id,
       name: entry.file.name,
