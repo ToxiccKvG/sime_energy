@@ -238,6 +238,24 @@ une fois le catalogue reçu** (`metaLoaded`) ; sinon la purge, exécutée dans l
 avec les filtres de l'ancien rendu, vide la sélection. D'où `pendingPresetIds` appliqué au
 rendu suivant.
 
+### Câblage réel des sites (réponses de l'utilisateur, 17/09/2026)
+Consigné dans `shelly_device_roles.notes` (migration `20260917_wiring_answers_notes.sql`) ;
+les 75 propositions auto du 17/09 (`20260917_propose_device_roles.sql`) restent à confirmer.
+
+| Site / lieu | Câblage | Conséquence pour le modèle |
+|---|---|---|
+| **Ma Maison** | Schéma A. SHEM 2 canaux : canal 1 = arrivée SENELEC (M1 = M3), canal 2 = circuit d'éclairage. Les 10 prises 1PH couvrent 87 % de l'arrivée sur 30 j. | Rien à trancher. |
+| **Donsin** | **PV en aval** de l'« Arrivée générale » (Pro 3EM) : le compteur ne voit que le complément SONABEL. PC1 + PC2 = 0,9 % de l'arrivée. | Schéma B **sans M3 ni M5** : aucun bilan possible tant qu'un compteur n'est pas posé côté PV/charge. |
+| **Académie — Building communal 50 kW** | Schéma B : M1 (Pro 3EM 400 A) → M2 sélecteur → M3 charge ; PV 50 kW en amont du sélecteur, TC inversé (`sens_inverse`). Surplus PV de midi **injecté au réseau**. **M4 (groupe), Cafétéria_TD, Charges_TD : capteurs désactivés** (pas une panne). | M2 ≈ M3 vérifié (corr. 0,99). **Anomalie ouverte** : M1 ne remonte aucune injection (0 kWh, p_min −8 W mai→juil) alors que M2/M3 voient jusqu'à −2,2 kW ; et M1 + PV − M3 ≈ −40 kWh/j. Config du Pro 3EM ou rapport de TC du PV à vérifier (chantier qualité des données). |
+| **Académie — EPT Thiès** | `TGBT_EPT Thiès` : **compteur SENELEC séparé, sans PV**. Les données le confirmaient (dépasse M3 sur 313 h). | Rôle `AUTRE` faute de « second site » ; deviendra M1/M3 de son propre lieu quand Paramètres distinguera les lieux d'un compte. |
+| **Académie — Bureau CER2E-Thiès** | **Compteur Woyofal (prépayé) propre** : prises 1–4, Box Wifi, Télé, Caméra, éclairages, frigo, PC, ventilo, ECL Salle Formation, Wifi & Télé 2. | Départs **hors bilan M1–M5** (`DEPART` est déjà `bilan: false`). |
+| **Académie — Maquette résidentiel** | Capteurs pédagogiques (H&T, eau, fumée, mouvement, porte), aucune puissance. | `AMBIANCE` / `AUTRE`. |
+
+**Point structurel** : le modèle fait *site = compte Shelly* (`shelly_accounts.site` UNIQUE) alors
+que le compte Académie couvre au moins trois arrivées SENELEC distinctes (building communal,
+EPT, bureau Woyofal). À traiter au chantier Paramètres (un « lieu » sous le compte), sinon les
+bilans M1–M5 de l'Académie mélangent des bâtiments sans arrivée commune.
+
 ### Détection des feuilles Excel « profil Mi »
 `UploadTab.tsx` garde un type local `ProfilMi` (`M1_RESEAU`…) et des motifs
 (`RESEAU|SENELEC|M1`, …) uniquement pour reconnaître les feuilles M1..M5 des anciens
