@@ -12,10 +12,9 @@
 
 import { supabase } from '@/lib/supabase';
 import type { ImportedFile } from '@/components/iot/shared';
+import { uploadJson, downloadJson, removeObject, type ContentEncoding } from '@/lib/storage-json';
 
 const BUCKET = 'iot-files';
-
-type ContentEncoding = 'gzip' | 'identity';
 
 /** Ligne iot_files telle que renvoyée par PostgREST. */
 interface IotFileRow {
@@ -77,57 +76,13 @@ function fileToRow(f: Partial<ImportedFile>): Partial<IotFileRow> {
   return row;
 }
 
-// ---- Sérialisation du contenu ----
+// ---- Contenu : JSON gzippé dans le bucket (lib/storage-json.ts) ----
 //
-// Même convention que l'ancien localStorage : JSON.stringify sérialise
-// les Date en ISO, dateReviver les restaure à la lecture. Sans ça, les
-// fichiers nettoyés (ShellyRow avec date: Date) reviendraient en string.
-
-function dateReviver(_key: string, value: unknown): unknown {
-  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
-    const d = new Date(value);
-    if (!isNaN(d.getTime())) return d;
-  }
-  return value;
-}
-
-const canGzip = typeof CompressionStream !== 'undefined' && typeof DecompressionStream !== 'undefined';
-
-async function encodeContent(rawData: Record<string, unknown>[]): Promise<{ blob: Blob; encoding: ContentEncoding }> {
-  const json = JSON.stringify(rawData);
-  if (!canGzip) {
-    return { blob: new Blob([json], { type: 'application/json' }), encoding: 'identity' };
-  }
-  const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
-  const gz = await new Response(stream).blob();
-  return { blob: new Blob([gz], { type: 'application/gzip' }), encoding: 'gzip' };
-}
-
-async function decodeContent(blob: Blob, encoding: ContentEncoding): Promise<Record<string, unknown>[]> {
-  let text: string;
-  if (encoding === 'gzip') {
-    if (!canGzip) throw new Error('Ce navigateur ne sait pas décompresser le contenu (DecompressionStream absent).');
-    const stream = blob.stream().pipeThrough(new DecompressionStream('gzip'));
-    text = await new Response(stream).text();
-  } else {
-    text = await blob.text();
-  }
-  const parsed = JSON.parse(text, dateReviver);
-  return Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : [];
-}
-
-function storagePath(userId: string, fileId: string, encoding: ContentEncoding): string {
-  return `${userId}/${fileId}.json${encoding === 'gzip' ? '.gz' : ''}`;
-}
+// Même convention que l'ancien localStorage : les Date sérialisées en ISO
+// sont restaurées à la lecture (fichiers nettoyés, ShellyRow.date).
 
 async function uploadContent(userId: string, fileId: string, rawData: Record<string, unknown>[]) {
-  const { blob, encoding } = await encodeContent(rawData);
-  const path = storagePath(userId, fileId, encoding);
-  const { error } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, blob, { upsert: true, contentType: blob.type });
-  if (error) throw error;
-  return { path, encoding };
+  return uploadJson(BUCKET, userId, fileId, rawData);
 }
 
 // ---- API ----
@@ -191,10 +146,7 @@ export async function deleteFile(id: string): Promise<void> {
   if (error) throw error;
 
   const path = (data as { storage_path: string | null } | null)?.storage_path;
-  if (path) {
-    const { error: rmError } = await supabase.storage.from(BUCKET).remove([path]);
-    if (rmError) throw rmError;
-  }
+  if (path) await removeObject(BUCKET, path);
   const { error: delError } = await supabase.from('iot_files').delete().eq('id', id);
   if (delError) throw delError;
 }
@@ -210,7 +162,6 @@ export async function fetchFileContent(id: string): Promise<Record<string, unkno
   const { storage_path, content_encoding } = data as Pick<IotFileRow, 'storage_path' | 'content_encoding'>;
   if (!storage_path) throw new Error("Le contenu de ce fichier n'a pas été enregistré (envoi interrompu). Réimportez-le.");
 
-  const { data: blob, error: dlError } = await supabase.storage.from(BUCKET).download(storage_path);
-  if (dlError) throw dlError;
-  return decodeContent(blob, content_encoding);
+  const rows = await downloadJson<unknown>(BUCKET, storage_path, content_encoding, { reviveDates: true });
+  return Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
 }

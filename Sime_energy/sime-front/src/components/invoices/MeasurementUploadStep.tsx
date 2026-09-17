@@ -445,7 +445,8 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, load
           {loaded.length > 0 && (
             <div className="space-y-2 pt-2">
               <h4 className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
-                <Database className="h-3.5 w-3.5 text-blue-400" /> Relevés chargés ({loaded.length})
+                <Database className="h-3.5 w-3.5 text-blue-400" /> Mes relevés ({loaded.length})
+                <span className="text-slate-500 font-normal text-xs ml-1">— enregistrés sur le serveur, retrouvés à chaque connexion</span>
               </h4>
               <div className="space-y-1.5">
                 {loaded.map((d, i) => (
@@ -470,6 +471,8 @@ function LoadedRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  // Depuis la persistance serveur, retirer = supprimer définitivement : on confirme en ligne.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const n = data.measurements?.length ?? 0;
   const first = n ? toDate(String(data.measurements![0].timestamp)) : null;
   const last = n ? toDate(String(data.measurements![n - 1].timestamp)) : null;
@@ -505,10 +508,19 @@ function LoadedRow({
           <Pencil className="h-4 w-4" />
         </button>
       )}
-      {onRemove && (
-        <button className="text-slate-400 hover:text-red-400 transition-colors shrink-0" onClick={() => onRemove(index)} title="Retirer de la session">
+      {onRemove && !confirmDelete && (
+        <button className="text-slate-400 hover:text-red-400 transition-colors shrink-0" onClick={() => setConfirmDelete(true)} title="Supprimer le relevé (définitif)">
           <Trash2 className="h-4 w-4" />
         </button>
+      )}
+      {onRemove && confirmDelete && (
+        <div className="flex items-center gap-1.5 shrink-0 text-xs">
+          <span className="text-red-300">Supprimer ?</span>
+          <button className="px-2 py-0.5 rounded bg-red-600/30 border border-red-500/50 text-red-200 hover:bg-red-600/50"
+            onClick={() => { setConfirmDelete(false); onRemove(index); }}>Oui</button>
+          <button className="px-2 py-0.5 rounded border border-white/15 text-slate-300 hover:bg-white/10"
+            onClick={() => setConfirmDelete(false)}>Non</button>
+        </div>
       )}
     </div>
   );

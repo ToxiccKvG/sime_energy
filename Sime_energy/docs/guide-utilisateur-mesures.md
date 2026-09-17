@@ -29,10 +29,10 @@ Modèles → Comparaison**. Les onglets restent grisés tant qu'aucun fichier n'
 3. Cliquer **Traiter N fichier(s)**. Les fichiers valides passent en vert ; un fichier
    refusé affiche la raison (le cas le plus fréquent : *le fichier ne correspond pas au
    capteur sélectionné*).
-4. La liste **Relevés chargés** en bas récapitule tout ce qui est en session : appareil,
+4. La liste **Mes relevés** en bas récapitule tout ce qui est enregistré : appareil,
    nombre de mesures, période couverte, grandeur. Le crayon permet de **donner un nom**
    au relevé (ex. « Départ TGBT — CA 8335 ») ; c'est ce nom qui apparaîtra partout
-   ensuite. La corbeille retire le relevé de la session.
+   ensuite. La corbeille **supprime** le relevé du serveur (confirmation demandée).
 
 ### Appareils reconnus
 
@@ -310,11 +310,13 @@ Les rôles sont enregistrés en base : ils sont partagés entre utilisateurs et 
 export « demand » chargé comme « trend » (ou l'inverse) est la cause n° 1. Pour un format
 inconnu, créez un capteur personnalisé.
 
-**Les données ne sont pas conservées d'une session à l'autre.** Les relevés restent
-chargés tant que l'onglet du navigateur est ouvert — vous pouvez passer par IOT ou un
-audit et revenir, tout est encore là. Ils disparaissent au rechargement de la page ou à
-la fermeture de l'onglet : rechargez les fichiers à la prochaine session (la persistance
-serveur est prévue dans un chantier ultérieur).
+**Mes relevés sont-ils conservés ?** Oui. Chaque relevé traité est enregistré sur le
+serveur au moment de l'import et retrouvé à la prochaine connexion, sur n'importe quel
+poste — la liste **Mes relevés** de l'onglet Upload les récapitule. Chacun ne voit que ses
+propres relevés. La corbeille **supprime définitivement** le relevé (une confirmation
+est demandée) ; le crayon le renomme. Si un enregistrement échoue (connexion coupée), un
+message rouge le signale : le relevé reste utilisable dans la session mais ne sera pas
+retrouvé ensuite — réimportez-le.
 
 **Le cumul d'une puissance me paraît faux.** Vérifiez le *type de grandeur* du capteur :
 une puissance déclarée comme énergie est sommée au lieu d'être intégrée.

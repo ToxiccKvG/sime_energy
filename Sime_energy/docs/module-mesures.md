@@ -135,6 +135,13 @@ réels ne sont pas affectés.
 | `lib/excel-utils.ts` | `parseExcelBuffer` : xlsx (ExcelJS), CSV/TSV (préambule sauté, `meta` = paires clé/valeur du préambule), refus explicite du `.xls` binaire |
 | `lib/chart-export.ts` | Filtre html2canvas (exclut infobulle, curseur, points actifs, `data-no-export`) |
 
+### 4.3 Persistance des relevés (17/09/2026)
+
+- **Session** (`services/measurementSession.ts`) : store au niveau du module JS + `useSyncExternalStore`. Le workflow n'a plus de `useState` pour les relevés : passer par IOT ou un audit ne perd rien.
+- **Serveur** (migration `20260917_measurement_files.sql`) : table `measurement_files` (`file_name`, `alias`, `sensor_type`, `sensor_label`, `metric_label`, `unit`, `quantity_kind`, `measurement_count`, `period_start/end`, `storage_path`) + bucket privé `measurement-files` (contenu = mesures normalisées du backend, JSON gzippé, chemin `{uid}/{id}.json.gz`). Isolation **par utilisateur** (`created_by = auth.uid()`, policies storage sur le 1er segment du chemin) ; `organization_id` stocké, nullable. Même patron que `iot_files` ; helper commun `lib/storage-json.ts` (gzip navigateur, repli `identity`).
+- **Cycle** : `ensureMeasurementLibrary(userId)` à l'entrée du module → liste + contenus (4 téléchargements en parallèle), KPI recalculés (`computeMeasurementKpis`), ouverture directe sur Analyse s'il y a des relevés. `addMeasurements` (id `crypto.randomUUID()`, UI d'abord, `createMeasurementFile` ensuite), `renameMeasurement` → `alias`, `removeMeasurement` → **suppression définitive** (objet puis ligne), avec confirmation en ligne dans la liste « Mes relevés ». Tout échec serveur = toast destructif.
+- **Conséquences** : (1) « Retirer de la session » n'existe plus, retirer = supprimer ; (2) tout est chargé à l'entrée — au-delà de quelques dizaines de relevés volumineux, prévoir une bibliothèque avec chargement à la demande (comme IOT) ; (3) un relevé dont l'envoi a échoué garde `storage_path NULL` et est signalé illisible au chargement suivant : le réimporter.
+
 ### 4.2 Statistiques (`measurementStats.ts`)
 - Percentiles par interpolation linéaire (identique à pandas `.quantile()`), écart-type
   d'échantillon (ddof = 1).
@@ -328,7 +335,7 @@ un message explicite. Bénéficie aussi à `AnalyseTab` et `CustomSensorMapper`.
 
 ## 10. Limites connues / hors périmètre du chantier 1
 
-- **Pas de persistance durable** des relevés : depuis le 17/09 la session (`services/measurementSession.ts`, store module + `useSyncExternalStore`) survit à la navigation entre modules, mais pas au rechargement de la page. Volontairement sans localStorage (quota, échec silencieux). Prévu : stockage serveur.
+- ~~Pas de persistance des relevés~~ **Réglé le 17/09** : voir § 4.3 — relevés enregistrés sur le serveur par utilisateur.
 - Les modèles d'analyse portent sur la **grandeur principale** ; l'extension aux colonnes
   secondaires (phases, T°…) n'est pas faite.
 - Jours fériés = dates fixes du Sénégal uniquement (pas les fêtes mobiles).

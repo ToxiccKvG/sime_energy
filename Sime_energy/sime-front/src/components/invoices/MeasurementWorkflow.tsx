@@ -1,8 +1,13 @@
 import { MeasurementData, measurementLabel } from '@/services/measurementService';
+import { useEffect } from 'react';
 import {
-  useMeasurementSession, updateMeasurementSession,
+  useMeasurementSession, updateMeasurementSession, ensureMeasurementLibrary,
+  addMeasurements, renameMeasurement as renameInSession, removeMeasurement as removeFromSession,
   type WorkflowStep, type ComparisonMode,
 } from '@/services/measurementSession';
+import { useAuth } from '@/context/AuthContext';
+import { useOrganization } from '@/context/OrganizationContext';
+import { Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -22,42 +27,26 @@ interface MeasurementWorkflowProps {
 export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowProps) {
   // Session au niveau du module (services/measurementSession) : les relevés
   // survivent à un passage par IOT ou un audit, contrairement à un useState.
-  const { currentStep, measurementData, currentDataIndex, comparisonMode, ranges } = useMeasurementSession();
+  const { currentStep, measurementData, currentDataIndex, comparisonMode, ranges, libraryStatus } = useMeasurementSession();
+  const { user } = useAuth();
+  const { organization } = useOrganization();
   const setCurrentStep = (step: WorkflowStep) => updateMeasurementSession({ currentStep: step });
-  const setMeasurementData = (fn: (prev: MeasurementData[]) => MeasurementData[]) =>
-    updateMeasurementSession((prev) => ({ measurementData: fn(prev.measurementData) }));
   const setCurrentDataIndex = (v: number | ((i: number) => number)) =>
     updateMeasurementSession((prev) => ({ currentDataIndex: typeof v === 'function' ? v(prev.currentDataIndex) : v }));
   const setComparisonMode = (mode: ComparisonMode) => updateMeasurementSession({ comparisonMode: mode });
-  const setRanges = (fn: (prev: Record<number, DateRange>) => Record<number, DateRange>) =>
-    updateMeasurementSession((prev) => ({ ranges: fn(prev.ranges) }));
   const currentRange: DateRange = ranges[currentDataIndex] ?? null;
-  const setCurrentRange = (range: DateRange) => setRanges((prev) => ({ ...prev, [currentDataIndex]: range }));
+  const setCurrentRange = (range: DateRange) =>
+    updateMeasurementSession((prev) => ({ ranges: { ...prev.ranges, [currentDataIndex]: range } }));
+
+  // Bibliothèque serveur de l'utilisateur (une fois par compte)
+  useEffect(() => { void ensureMeasurementLibrary(user?.id ?? null); }, [user?.id]);
 
   const handleMeasurementsReceived = (data: MeasurementData[]) => {
-    setMeasurementData((prev) => {
-      const merged = [...prev, ...data];
-      return merged;
-    });
+    addMeasurements(data, user?.id ?? null, organization?.id ?? null);
     setCurrentDataIndex(0);
-    if (data.length > 0) setCurrentStep('analysis');
   };
-
-  const renameMeasurement = (index: number, alias: string) =>
-    setMeasurementData((prev) => prev.map((d, i) => (i === index ? { ...d, alias: alias.trim() || undefined } : d)));
-
-  const removeMeasurement = (index: number) => {
-    setMeasurementData((prev) => prev.filter((_, i) => i !== index));
-    setRanges((prev) => {
-      const next: Record<number, DateRange> = {};
-      Object.entries(prev).forEach(([k, v]) => {
-        const i = Number(k);
-        if (i < index) next[i] = v; else if (i > index) next[i - 1] = v;
-      });
-      return next;
-    });
-    setCurrentDataIndex((i) => Math.max(0, Math.min(i, measurementData.length - 2)));
-  };
+  const renameMeasurement = renameInSession;
+  const removeMeasurement = removeFromSession;
 
   const currentData = measurementData[currentDataIndex];
   const hasData = measurementData.length > 0;
@@ -80,6 +69,11 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
           <p className="text-slate-400 text-sm mt-1">Upload · Analyse · Visualisation des données de consommation</p>
         </div>
 
+        {libraryStatus === 'loading' && (
+          <div className="flex items-center gap-2 text-slate-400 text-sm bg-white/5 border border-white/10 rounded-lg px-4 py-2">
+            <Loader2 className="h-4 w-4 animate-spin text-blue-400" /> Chargement de vos relevés…
+          </div>
+        )}
         {hasData && (
           <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-4 py-2">
             <Activity className="h-4 w-4 text-blue-400 shrink-0" />
@@ -203,7 +197,7 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
                 <p className="text-xs text-slate-500 max-w-md">
                   {comparisonMode === 'models'
                     ? 'Deux relevés (ex. C.A 8335 et Shelly sur le même départ, ou deux campagnes) alignés sur la même échelle de temps, avec l\'écart et les indicateurs face à face.'
-                    : 'Un compteur de référence comparé à la somme des sous-compteurs censés l\'expliquer.'}
+                    : 'Les sous-compteurs expliquent-ils l\'arrivée ? Le relevé du compteur général est comparé à la somme des départs mesurés : part non mesurée, double comptage, capteur mal câblé.'}
                 </p>
               </div>
               {comparisonMode === 'models'

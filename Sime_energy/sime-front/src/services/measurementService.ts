@@ -6,7 +6,11 @@
 import { computeMeasurementKpis, MeasurementKpis, QuantityKind } from './measurementStats';
 
 export interface MeasurementData {
+  /** Identifiant du relevé en base (measurement_files) ; absent tant qu'il n'est pas persisté. */
+  id?: string;
   measurements?: any[];
+  /** Renvoyé par le backend : original_rows, valid_measurements, sensor_label… */
+  processing_info?: { original_rows?: number; valid_measurements?: number; sensor_label?: string; [k: string]: unknown };
   /** Calculé côté client (voir measurementStats.ts) à partir des mesures brutes reçues du backend. */
   kpis?: MeasurementKpis;
   /** Clé du capteur (cf. SENSOR_REGISTRY backend). */
