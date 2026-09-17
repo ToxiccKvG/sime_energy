@@ -108,7 +108,24 @@ function parseCsv(text: string, delimiter: string): unknown[][] {
   }
   row.push(cell);
   if (row.some(c => c.trim() !== '')) rows.push(row.map(coerceCell));
-  return rows;
+  return stripPreamble(rows);
+}
+
+/**
+ * Les exports d'enregistreurs (loggers H&T, analyseurs) commencent souvent par
+ * un en-tête libre — « >>Logging Name:… », « >>Sample Rate:1800 sec. », une
+ * ligne de tirets — avant le vrai tableau. Ces lignes n'ont qu'une cellule
+ * alors que le tableau en a N : on saute tout ce qui précède la première ligne
+ * ayant le nombre de colonnes majoritaire.
+ */
+function stripPreamble(rows: unknown[][]): unknown[][] {
+  if (rows.length < 3) return rows;
+  const counts = new Map<number, number>();
+  for (const r of rows) counts.set(r.length, (counts.get(r.length) ?? 0) + 1);
+  const modal = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  if (modal < 2) return rows;
+  const start = rows.findIndex(r => r.length >= modal);
+  return start > 0 ? rows.slice(start) : rows;
 }
 
 // READ: parse a spreadsheet ArrayBuffer (xlsx or CSV/TSV); returns sheet names + raw rows per sheet
