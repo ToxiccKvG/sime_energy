@@ -1,5 +1,8 @@
-import { useState } from 'react';
 import { MeasurementData, measurementLabel } from '@/services/measurementService';
+import {
+  useMeasurementSession, updateMeasurementSession,
+  type WorkflowStep, type ComparisonMode,
+} from '@/services/measurementSession';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,20 +15,22 @@ import { AnalysisModelsPanel } from './AnalysisModelsPanel';
 import type { DateRange } from './MeasurementPeriodFilter';
 import { Upload, Activity, BarChart3, TrendingUp, ChevronLeft, ChevronRight, GitCompare, Columns2, Network, Sparkles } from 'lucide-react';
 
-type WorkflowStep = 'upload' | 'analysis' | 'visualization' | 'models' | 'comparison';
-type ComparisonMode = 'models' | 'master';
-
 interface MeasurementWorkflowProps {
   auditId?: string;
 }
 
 export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowProps) {
-  const [currentStep, setCurrentStep] = useState<WorkflowStep>('upload');
-  const [measurementData, setMeasurementData] = useState<MeasurementData[]>([]);
-  const [currentDataIndex, setCurrentDataIndex] = useState(0);
-  const [comparisonMode, setComparisonMode] = useState<ComparisonMode>('models');
-  // Période choisie, par fichier — partagée entre les onglets Analyse, Visualisation et Modèles.
-  const [ranges, setRanges] = useState<Record<number, DateRange>>({});
+  // Session au niveau du module (services/measurementSession) : les relevés
+  // survivent à un passage par IOT ou un audit, contrairement à un useState.
+  const { currentStep, measurementData, currentDataIndex, comparisonMode, ranges } = useMeasurementSession();
+  const setCurrentStep = (step: WorkflowStep) => updateMeasurementSession({ currentStep: step });
+  const setMeasurementData = (fn: (prev: MeasurementData[]) => MeasurementData[]) =>
+    updateMeasurementSession((prev) => ({ measurementData: fn(prev.measurementData) }));
+  const setCurrentDataIndex = (v: number | ((i: number) => number)) =>
+    updateMeasurementSession((prev) => ({ currentDataIndex: typeof v === 'function' ? v(prev.currentDataIndex) : v }));
+  const setComparisonMode = (mode: ComparisonMode) => updateMeasurementSession({ comparisonMode: mode });
+  const setRanges = (fn: (prev: Record<number, DateRange>) => Record<number, DateRange>) =>
+    updateMeasurementSession((prev) => ({ ranges: fn(prev.ranges) }));
   const currentRange: DateRange = ranges[currentDataIndex] ?? null;
   const setCurrentRange = (range: DateRange) => setRanges((prev) => ({ ...prev, [currentDataIndex]: range }));
 

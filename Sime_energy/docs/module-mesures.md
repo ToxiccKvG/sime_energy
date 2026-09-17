@@ -115,7 +115,7 @@ réels ne sont pas affectés.
 
 | Fichier | Rôle |
 |---|---|
-| `components/invoices/MeasurementWorkflow.tsx` | Onglets, relevés en session, alias, période partagée par relevé |
+| `components/invoices/MeasurementWorkflow.tsx` | Onglets, alias, période partagée par relevé — état lu/écrit dans `services/measurementSession.ts` (survit à un passage par IOT ou un audit) |
 | `components/invoices/MeasurementUploadStep.tsx` | Dépôt multi-fichiers **et dossiers** (`lib/folder-import.ts`), capteur par fichier deviné par le nom ou par l'**empreinte des colonnes** (`findSensorBySignature`, lecture des seuls en-têtes en arrière-plan), liste « Relevés chargés », capteurs personnalisés |
 | `components/invoices/CustomSensorMapper.tsx`, `CustomSensorEditPanel.tsx` | Création / édition d'un capteur personnalisé : **pré-remplissage** (`suggestMapping`), colonne heure séparée (`time_col`), **aperçu des dates interprétées** (`previewTimestamps`, `inferDayFirst`) avec choix jour-mois / mois-jour qui écrit `timestamp_format`, colonnes supplémentaires proposées |
 | `components/invoices/MeasurementAnalysis.tsx` | KPIs, vue par jour, stats par colonne, table, export CSV, rapport PDF/Word |
@@ -328,7 +328,7 @@ un message explicite. Bénéficie aussi à `AnalyseTab` et `CustomSensorMapper`.
 
 ## 10. Limites connues / hors périmètre du chantier 1
 
-- **Pas de persistance** des relevés (état React). Prévu : stockage serveur.
+- **Pas de persistance durable** des relevés : depuis le 17/09 la session (`services/measurementSession.ts`, store module + `useSyncExternalStore`) survit à la navigation entre modules, mais pas au rechargement de la page. Volontairement sans localStorage (quota, échec silencieux). Prévu : stockage serveur.
 - Les modèles d'analyse portent sur la **grandeur principale** ; l'extension aux colonnes
   secondaires (phases, T°…) n'est pas faite.
 - Jours fériés = dates fixes du Sénégal uniquement (pas les fêtes mobiles).

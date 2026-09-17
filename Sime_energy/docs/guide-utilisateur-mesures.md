@@ -310,9 +310,11 @@ Les rôles sont enregistrés en base : ils sont partagés entre utilisateurs et 
 export « demand » chargé comme « trend » (ou l'inverse) est la cause n° 1. Pour un format
 inconnu, créez un capteur personnalisé.
 
-**Les données ne sont pas conservées d'une session à l'autre.** C'est le comportement
-actuel : les relevés vivent dans l'onglet ouvert. Rechargez les fichiers à la prochaine
-session (la persistance serveur est prévue dans un chantier ultérieur).
+**Les données ne sont pas conservées d'une session à l'autre.** Les relevés restent
+chargés tant que l'onglet du navigateur est ouvert — vous pouvez passer par IOT ou un
+audit et revenir, tout est encore là. Ils disparaissent au rechargement de la page ou à
+la fermeture de l'onglet : rechargez les fichiers à la prochaine session (la persistance
+serveur est prévue dans un chantier ultérieur).
 
 **Le cumul d'une puissance me paraît faux.** Vérifiez le *type de grandeur* du capteur :
 une puissance déclarée comme énergie est sommée au lieu d'être intégrée.
