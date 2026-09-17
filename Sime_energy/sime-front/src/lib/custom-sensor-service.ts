@@ -125,6 +125,31 @@ export function labelFromHeader(header: string): string {
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
+/** Unité devinée d'après le NOM de la colonne quand l'en-tête n'en donne pas (exports de tables, loggers). */
+const UNIT_BY_NAME: [RegExp, string][] = [
+  [/temp|t°|celsius|ressenti|feels|dew|ros[ée]e/i, '°C'],
+  [/humid|hum\b|rh\b|moisture|battery_pct|batterie|pct|percent|taux/i, '%'],
+  [/pression|pressure|hpa/i, 'hPa'],
+  [/lux|illumin|lumino/i, 'lux'],
+  [/uv/i, ''],
+  [/ppm|co2|concentration/i, 'ppm'],
+  [/kwh|energ|^wh|_wh|wh_/i, 'Wh'],
+  [/power|puiss|_w$|^p_[abc]$/i, 'W'],
+  [/volt|tension|^v_[abc]$|_v$/i, 'V'],
+  [/current|courant|intensit|^i_[abc]$|_a$/i, 'A'],
+  [/freq|hz/i, 'Hz'],
+  [/wind|vent|_ms$|m\/s/i, 'm/s'],
+  [/rain|pluie|precip|_mm$/i, 'mm'],
+  [/rssi|signal|dbm/i, 'dBm'],
+  [/direction|_deg$|angle|tilt/i, '°'],
+];
+
+export function unitFromName(header: string): string {
+  const h = header.trim();
+  for (const [re, u] of UNIT_BY_NAME) if (re.test(h)) return u;
+  return '';
+}
+
 function unitFromMeta(meta: Record<string, string>, header: string): string {
   // « Temperature Unit:Celsius » → °C, « Fahrenheit » → °F
   const key = Object.keys(meta).find(k => /unit/i.test(k) && new RegExp(header.split(/[^a-z]/i)[0] || '.', 'i').test(k));
@@ -141,11 +166,13 @@ const NUM_RE = /^-?\d{1,3}(?:[ \u00a0]\d{3})*(?:[.,]\d+)?$|^-?\d+(?:[.,]\d+)?(?:
  * sont des nombres — tolère quelques « -- », « n/a » ou cellules texte d'un logger,
  * sans prendre pour numérique une colonne de texte ou de booléens.
  */
+const EMPTY_TOKENS = new Set(['', 'nan', 'none', 'null', '-', '--', '---', 'n/a', 'na', 'n.a.']);
+
 export function isNumericColumn(sample: Record<string, unknown>[], col: string): boolean {
   let n = 0, ok = 0;
   for (const r of sample) {
     const v = r[col];
-    if (v === null || v === undefined || String(v).trim() === '') continue;
+    if (v === null || v === undefined || EMPTY_TOKENS.has(String(v).trim().toLowerCase())) continue;
     n++;
     if (typeof v === 'number' || (typeof v === 'string' && NUM_RE.test(v.trim()))) ok++;
     if (n >= 200) break;
@@ -153,15 +180,61 @@ export function isNumericColumn(sample: Record<string, unknown>[], col: string):
   return n > 0 && ok / n >= 0.8;
 }
 
-/** Toutes les colonnes numériques d'un fichier, prêtes à servir de colonnes supplémentaires. */
-export function allNumericExtraCols(
-  columns: string[],
-  sample: Record<string, unknown>[],
-  exclude: string[],
-): ExtraCol[] {
-  return columns
-    .filter(c => !exclude.includes(c) && !INDEX_COL_RE.test(c.trim()) && isNumericColumn(sample, c))
-    .map(c => { const u = unitFromHeader(c); return { col: c, label: u ? `${labelFromHeader(c)} (${u})` : labelFromHeader(c) }; });
+/** Vrai si la colonne contient au moins une valeur (hors vides et « -- », « n/a »…) sur l'échantillon. */
+export function hasAnyValue(sample: Record<string, unknown>[], col: string): boolean {
+  return sample.some(r => { const v = r[col]; return v !== null && v !== undefined && !EMPTY_TOKENS.has(String(v).trim().toLowerCase()); });
+}
+
+/**
+ * Vrai si la colonne a la même valeur sur toutes les lignes renseignées de
+ * l'échantillon (≥ 2 lignes) : site, pièce, nom d'appareil, identifiant… Ce sont
+ * des métadonnées d'export, pas des mesures — on les écarte par défaut, elles
+ * restent disponibles via « Ajouter ».
+ */
+export function isConstantColumn(sample: Record<string, unknown>[], col: string): boolean {
+  let firstVal: string | null = null; let n = 0;
+  for (const r of sample) {
+    const v = r[col];
+    if (v === null || v === undefined || EMPTY_TOKENS.has(String(v).trim().toLowerCase())) continue;
+    const sv = v instanceof Date ? v.toISOString() : String(v).trim();
+    if (firstVal === null) firstVal = sv;
+    else if (sv !== firstVal) return false;
+    n++;
+  }
+  return n >= 2;
+}
+
+export interface ExtraColsTriage {
+  proposed: ExtraCol[];
+  /** Colonnes sans aucune valeur dans ce fichier. */
+  empty: string[];
+  /** Colonnes à valeur unique (métadonnées : site, pièce, appareil…). */
+  constant: string[];
+}
+
+/** Tri des colonnes candidates : proposées / vides / constantes. */
+export function triageExtraCols(columns: string[], sample: Record<string, unknown>[], exclude: string[]): ExtraColsTriage {
+  const empty: string[] = []; const constant: string[] = []; const proposed: ExtraCol[] = [];
+  for (const c of columns) {
+    if (exclude.includes(c) || INDEX_COL_RE.test(c.trim())) continue;
+    if (!hasAnyValue(sample, c)) { empty.push(c); continue; }
+    if (isConstantColumn(sample, c)) { constant.push(c); continue; }
+    const u = unitFromHeader(c);
+    proposed.push({ col: c, label: u ? `${labelFromHeader(c)} (${u})` : labelFromHeader(c) });
+  }
+  return { proposed, empty, constant };
+}
+
+/**
+ * Toutes les colonnes d'un fichier prêtes à servir de colonnes supplémentaires —
+ * texte compris (le backend garde une colonne texte telle quelle : état, mode,
+ * commentaire… visible dans le tableau et l'export, ignorée par les graphiques).
+ * Écartées : les colonnes déjà mappées, le compteur de lignes, et les colonnes
+ * ENTIÈREMENT VIDES — un export de table brute (ex. shelly_cl pour une station
+ * météo) traîne des dizaines de colonnes qui ne concernent pas cet appareil.
+ */
+export function allExtraCols(columns: string[], sample: Record<string, unknown>[], exclude: string[]): ExtraCol[] {
+  return triageExtraCols(columns, sample, exclude).proposed;
 }
 
 export interface MappingSuggestion {
@@ -197,13 +270,12 @@ export function suggestMapping(
 
   const numericCols = columns.filter(c => c !== timestampCol && c !== timeCol && !INDEX_COL_RE.test(c.trim()) && isNumericColumn(sample, c));
   const valueCol = numericCols[0] ?? '';
-  const unit = valueCol ? (unitFromHeader(valueCol) || unitFromMeta(meta, valueCol)) : '';
+  const unit = valueCol ? (unitFromHeader(valueCol) || unitFromMeta(meta, valueCol) || unitFromName(valueCol)) : '';
   const metricLabel = valueCol ? labelFromHeader(valueCol) : '';
 
-  const extraCols: ExtraCol[] = numericCols.slice(1).map(c => {
-    const u = unitFromHeader(c);
-    return { col: c, label: u ? `${labelFromHeader(c)} (${u})` : labelFromHeader(c) };
-  });
+  // Toutes les autres colonnes, texte compris (choix de l'utilisateur, 17/09) :
+  // le tableau et l'export les gardent, les graphiques ne tracent que le numérique.
+  const extraCols: ExtraCol[] = allExtraCols(columns, sample, [timestampCol, timeCol, valueCol]);
 
   const metaName = Object.entries(meta).find(([k]) => /logging name|name|nom|point|location|site/i.test(k))?.[1];
   const name = (metaName ?? fileName.replace(/\.[^.]+$/, '')).trim();
@@ -215,12 +287,15 @@ export function suggestMapping(
  * Même heuristique que le backend (`_infer_dayfirst`) : une composante > 12
  * tranche ; sinon celle qui change le plus souvent est le jour ; sinon null.
  */
-export function inferDayFirst(samples: string[]): boolean | null {
+/** true = jour-mois, false = mois-jour, 'iso' = année en tête (rien à deviner), null = ambigu. */
+export type DayFirst = boolean | 'iso' | null;
+
+export function inferDayFirst(samples: string[]): DayFirst {
   const pairs: [number, number][] = [];
   for (const v of samples) {
     const m = v.match(DATE_RE);
     if (!m) continue;
-    if (m[1].length === 4) return null; // ISO
+    if (m[1].length === 4) return 'iso';
     pairs.push([Number(m[1]), Number(m[2])]);
   }
   if (pairs.length === 0) return null;
@@ -246,7 +321,7 @@ export function parseTimestampLike(text: string, dayFirst: boolean): Date | null
 }
 
 export interface TimestampPreview {
-  dayFirst: boolean | null;
+  dayFirst: DayFirst;
   first: Date | null;
   last: Date | null;
   /** Pas médian entre deux relevés, en secondes (null si < 2 relevés). */
@@ -270,8 +345,9 @@ export function previewTimestamps(
     const ds = d instanceof Date ? d.toISOString() : String(d ?? '');
     return `${ds} ${t instanceof Date ? '' : String(t ?? '')}`.trim();
   }).filter(Boolean);
-  const dayFirst = forcedDayFirst !== undefined && forcedDayFirst !== null ? forcedDayFirst : inferDayFirst(texts);
-  const dates = texts.map(t => parseTimestampLike(t, dayFirst ?? true));
+  const inferred = inferDayFirst(texts);
+  const dayFirst: DayFirst = inferred === 'iso' ? 'iso' : (forcedDayFirst !== undefined && forcedDayFirst !== null ? forcedDayFirst : inferred);
+  const dates = texts.map(t => parseTimestampLike(t, dayFirst === true || dayFirst === null));
   const valid = dates.filter((d): d is Date => d !== null);
   const steps: number[] = [];
   for (let i = 1; i < valid.length; i++) steps.push(Math.abs(valid[i].getTime() - valid[i - 1].getTime()) / 1000);

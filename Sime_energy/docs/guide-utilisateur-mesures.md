@@ -52,8 +52,14 @@ déposer un fichier exemple. **Le formulaire se pré-remplit** d'après le fichi
 (repris de l'en-tête de l'enregistreur, ex. « Logging Name »), colonne de date, colonne
 d'heure si elle est séparée (loggers DATE / TIME), grandeur principale (première colonne
 numérique hors compteur de lignes), unité (lue dans l'en-tête « Temperature(°C) » ou le
-préambule), libellé, et toutes les autres colonnes numériques proposées en colonnes
-supplémentaires — supprimez celles qui ne servent pas. Vérifiez, corrigez, puis
+préambule, ou devinée d'après le nom : `temperature` → °C, `humidity` → %…), libellé, et
+**toutes les autres colonnes** proposées en colonnes supplémentaires, texte compris — une
+colonne texte (état, mode, commentaire) est gardée telle quelle dans le tableau et l'export,
+mais n'apparaît pas dans les graphiques (étiquette « texte »). Sont écartées d'office les
+colonnes **vides** et les colonnes **constantes** (site, pièce, nom d'appareil… même valeur
+sur toutes les lignes : ce sont des métadonnées d'export) ; le compteur au-dessus de la
+liste dit combien, et « Ajouter » permet d'en reprendre une. Les boutons **Toutes les
+colonnes** / **Aucune** évitent de les cocher une à une. Vérifiez, corrigez, puis
 **Analyser maintenant** ou **Sauvegarder le capteur**.
 
 L'encadré **Dates interprétées** montre le premier et le dernier relevé, le pas et le

@@ -159,7 +159,13 @@ def _build_measurements(
         }
         for label, col in extra_cols.items():
             if col in df.columns:
-                row[label] = _to_float(r[col])
+                v = r[col]
+                # Colonne texte (état, mode, commentaire…) : gardée telle quelle,
+                # visible dans le tableau et l'export, ignorée par les graphiques.
+                if isinstance(v, str):
+                    row[label] = v if v.strip() else None
+                else:
+                    row[label] = _to_float(v)
         rows.append(row)
     return rows
 
@@ -605,9 +611,28 @@ def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
     for extra in config.get("extra_cols", []):
         col = extra.get("col") or extra.get("column")
         if col and col in raw.columns:
-            df[col] = pd.to_numeric(raw[col].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+            df[col] = _numeric_or_text(raw[col])
 
     return df
+
+
+def _numeric_or_text(series: pd.Series) -> pd.Series:
+    """Colonne supplémentaire : numérique si ≥ 80 % des valeurs non vides sont
+    des nombres (tolère quelques « -- » ou « n/a »), sinon conservée en texte
+    (état, mode, commentaire…) — utile dans le tableau et l'export."""
+    text = series.astype(str).str.strip()
+    # « -- », « n/a », « - »… = valeur manquante, pas du texte
+    empty = text.str.lower().isin(_EMPTY_TOKENS)
+    nonempty = text[~empty]
+    if nonempty.empty:
+        return pd.to_numeric(text.where(~empty, None).str.replace(",", ".", regex=False), errors="coerce")
+    as_num = pd.to_numeric(nonempty.str.replace(",", ".", regex=False), errors="coerce")
+    if as_num.notna().mean() >= 0.8:
+        return pd.to_numeric(text.where(~empty, None).str.replace(",", ".", regex=False), errors="coerce")
+    return text.where(~empty, None)
+
+
+_EMPTY_TOKENS = {"", "nan", "none", "null", "-", "--", "---", "n/a", "na", "n.a."}
 
 
 # ---------------------------------------------------------------------------

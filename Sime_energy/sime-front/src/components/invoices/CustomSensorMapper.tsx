@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
-  saveCustomSensor, guessQuantityKind, suggestMapping, previewTimestamps, columnsSignature, allNumericExtraCols,
+  saveCustomSensor, guessQuantityKind, suggestMapping, previewTimestamps, columnsSignature, allExtraCols, triageExtraCols, isNumericColumn,
   type CustomSensor, type CustomSensorInput, type ExtraCol, type QuantityKind,
 } from '@/lib/custom-sensor-service';
 import { useOrganization } from '@/context/OrganizationContext';
@@ -351,6 +351,9 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
                   <span className="text-red-300">Aucune date lisible dans « {timestampCol} »{timeCol ? ` + « ${timeCol} »` : ''} — vérifiez les colonnes ou indiquez le format.</span>
                 )}
               </div>
+              {tsPreview.dayFirst === 'iso' ? (
+                <p className="text-slate-500">Dates ISO (année en tête) : aucune ambiguïté.</p>
+              ) : (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-slate-500">Ordre des dates :</span>
                 {([['auto', tsPreview.dayFirst === null ? 'Auto (ambigu → jour-mois)' : tsPreview.dayFirst ? 'Auto : jour-mois' : 'Auto : mois-jour'], ['dmy', 'Jour-mois (FR)'], ['mdy', 'Mois-jour (US)']] as [DateOrder, string][]).map(([v, l]) => (
@@ -363,6 +366,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
                   <span className="text-amber-400 flex items-center gap-1"><AlertCircle className="h-3 w-3" /> Un seul jour, valeurs ≤ 12 : choisissez l'ordre si les dates ci-dessus sont fausses.</span>
                 )}
               </div>
+              )}
             </div>
           )}
 
@@ -427,14 +431,23 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
             <div className="flex items-center justify-between flex-wrap gap-2">
               <label className="text-sm font-medium text-slate-300">
                 Colonnes supplémentaires
-                {fileData && <span className="text-slate-500 font-normal ml-1.5">{extraCols.filter((e) => e.col).length} / {allNumericExtraCols(cols, fileData.sample, [timestampCol, timeCol, valueCol]).length} numériques</span>}
+                {fileData && (() => {
+                  const t = triageExtraCols(cols, fileData.sample, [timestampCol, timeCol, valueCol]);
+                  return (
+                    <span className="text-slate-500 font-normal ml-1.5">
+                      {extraCols.filter((e) => e.col).length} / {t.proposed.length}
+                      {t.empty.length > 0 && <span title={`Sans aucune valeur dans ce fichier : ${t.empty.join(', ')}`}> · {t.empty.length} vide(s) écartée(s)</span>}
+                      {t.constant.length > 0 && <span title={`Même valeur sur toutes les lignes (métadonnées) : ${t.constant.join(', ')} — disponibles via « Ajouter »`}> · {t.constant.length} constante(s) écartée(s)</span>}
+                    </span>
+                  );
+                })()}
               </label>
               <div className="flex items-center gap-3">
-                {/* Tout prendre d'un coup : le cas courant est « je veux garder toutes les grandeurs du fichier » */}
+                {/* Tout prendre d'un coup, texte compris : c'est le défaut au dépôt du fichier */}
                 <button type="button"
                   className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                  onClick={() => fileData && setExtraCols(allNumericExtraCols(cols, fileData.sample, [timestampCol, timeCol, valueCol]))}>
-                  Toutes les colonnes numériques
+                  onClick={() => fileData && setExtraCols(allExtraCols(cols, fileData.sample, [timestampCol, timeCol, valueCol]))}>
+                  Toutes les colonnes
                 </button>
                 <button type="button"
                   className="text-xs text-slate-400 hover:text-white transition-colors"
@@ -451,6 +464,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
             </div>
             <p className="text-slate-600 text-xs">
               Mettez l'unité entre parenthèses si la grandeur en a une (ex. « Tension (V) ») — sinon elle sera traitée comme sans unité (ex. « Cos φ », un ratio).
+              Une colonne <span className="text-slate-400">texte</span> (état, mode, commentaire…) est gardée telle quelle : visible dans le tableau et l'export, absente des graphiques.
             </p>
             {extraCols.map((ec, i) => (
               <div key={i} className="flex items-center gap-2">
@@ -469,6 +483,9 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
                   placeholder="ex: Cos φ, ou Tension (V)"
                   className="bg-white/5 border-white/20 text-white text-sm flex-1"
                 />
+                {fileData && ec.col && !isNumericColumn(fileData.sample, ec.col) && (
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500 border border-white/10 rounded px-1.5 py-0.5 shrink-0" title="Colonne texte : tableau et export seulement">texte</span>
+                )}
                 <button className="text-slate-500 hover:text-red-400 shrink-0"
                   onClick={() => setExtraCols((p) => p.filter((_, j) => j !== i))}>
                   <Trash2 className="h-4 w-4" />
@@ -478,7 +495,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
             {extraCols.length === 0 ? (
               <p className="text-slate-600 text-xs">Aucune — les colonnes supplémentaires apparaissent dans les graphiques multi-séries.</p>
             ) : (
-              <p className="text-slate-600 text-xs">Proposées d'après les colonnes numériques du fichier — supprimez celles qui ne vous servent pas.</p>
+              <p className="text-slate-600 text-xs">Toutes les colonnes renseignées du fichier sont proposées (les colonnes vides sont écartées) — supprimez celles qui ne vous servent pas.</p>
             )}
           </div>
 
