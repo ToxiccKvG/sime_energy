@@ -30,7 +30,14 @@ interface FileColumns {
   columns: string[];
   /** 5 premières lignes, pour le tableau d'aperçu. */
   preview: Record<string, unknown>[];
-  /** Jusqu'à 2 000 lignes, pour l'aperçu des dates (première, dernière, pas). */
+  rowCount: number;
+  /**
+   * TOUTES les lignes (échantillonnées au-delà de 50 000) : le tri des colonnes
+   * doit voir le fichier entier — un export de table brute peut n'avoir ses
+   * colonnes météo renseignées qu'à partir d'une certaine date (colonnes
+   * ajoutées en cours de collecte), et les 2 000 premières lignes les
+   * diraient « vides » à tort.
+   */
   sample: Record<string, unknown>[];
   meta: SpreadsheetMeta;
 }
@@ -118,9 +125,12 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
         columns.forEach((c, i) => { row[c] = r[i] ?? null; });
         return row;
       };
-      const sample = rows.slice(1, 2001).map(toObj);
-      const preview = sample.slice(0, 5);
-      setFileData({ file, columns, preview, sample, meta: wb.meta });
+      const body = rows.slice(1);
+      const MAX_SAMPLE = 50_000;
+      const stride = Math.max(1, Math.ceil(body.length / MAX_SAMPLE));
+      const sample = (stride === 1 ? body : body.filter((_, i) => i % stride === 0 || i === body.length - 1)).map(toObj);
+      const preview = body.slice(0, 5).map(toObj);
+      setFileData({ file, columns, preview, rowCount: body.length, sample, meta: wb.meta });
 
       // Pré-remplissage : tout reste modifiable, ce sont des valeurs par défaut.
       const sug = suggestMapping(columns, sample, wb.meta, file.name);
@@ -344,7 +354,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
                   <>
                     <span>du <span className="text-white">{fmtDate(tsPreview.first)}</span> au <span className="text-white">{fmtDate(tsPreview.last)}</span></span>
                     {tsPreview.stepSeconds != null && <span>pas <span className="text-white">{fmtStep(tsPreview.stepSeconds)}</span></span>}
-                    <span>{tsPreview.total - tsPreview.invalid} relevé(s){fileData && fileData.sample.length >= 2000 ? ' (aperçu)' : ''}</span>
+                    <span>{tsPreview.total - tsPreview.invalid} relevé(s){fileData && fileData.sample.length < fileData.rowCount ? ' (échantillon)' : ''}</span>
                     {tsPreview.invalid > 0 && <span className="text-amber-400">{tsPreview.invalid} illisible(s)</span>}
                   </>
                 ) : (
