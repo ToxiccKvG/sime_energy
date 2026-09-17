@@ -82,8 +82,29 @@ function coerceCell(raw: string): unknown {
   return v;
 }
 
+/**
+ * Métadonnées d'un préambule d'enregistreur (« >>Logging Name:Local Batterie »,
+ * « >>Sample Rate:1800 sec. », « Temperature Unit:Celsius »…) : paires clé/valeur
+ * lues sur les lignes qui précèdent le tableau. Plusieurs paires peuvent
+ * partager une ligne, séparées par ≥ 3 espaces.
+ */
+export type SpreadsheetMeta = Record<string, string>;
+
+function parsePreamble(rows: unknown[][]): SpreadsheetMeta {
+  const meta: SpreadsheetMeta = {};
+  for (const r of rows) {
+    const line = r.map(c => (c == null ? '' : String(c))).join(' ').replace(/^[>\s]+/, '').trim();
+    if (!line || /^-{5,}$/.test(line)) continue;
+    for (const part of line.split(/\s{3,}/)) {
+      const m = part.match(/^([^:]{1,40}?)\s*:\s*(.+)$/);
+      if (m) meta[m[1].trim()] = m[2].trim();
+    }
+  }
+  return meta;
+}
+
 /** Parseur CSV minimal (RFC 4180 : guillemets, guillemets doublés, retours à la ligne dans les cellules). */
-function parseCsv(text: string, delimiter: string): unknown[][] {
+function parseCsv(text: string, delimiter: string): { rows: unknown[][]; meta: SpreadsheetMeta } {
   const rows: unknown[][] = [];
   let row: string[] = [];
   let cell = '';
@@ -118,20 +139,23 @@ function parseCsv(text: string, delimiter: string): unknown[][] {
  * alors que le tableau en a N : on saute tout ce qui précède la première ligne
  * ayant le nombre de colonnes majoritaire.
  */
-function stripPreamble(rows: unknown[][]): unknown[][] {
-  if (rows.length < 3) return rows;
+function stripPreamble(rows: unknown[][]): { rows: unknown[][]; meta: SpreadsheetMeta } {
+  if (rows.length < 3) return { rows, meta: {} };
   const counts = new Map<number, number>();
   for (const r of rows) counts.set(r.length, (counts.get(r.length) ?? 0) + 1);
   const modal = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
-  if (modal < 2) return rows;
+  if (modal < 2) return { rows, meta: {} };
   const start = rows.findIndex(r => r.length >= modal);
-  return start > 0 ? rows.slice(start) : rows;
+  if (start <= 0) return { rows, meta: {} };
+  return { rows: rows.slice(start), meta: parsePreamble(rows.slice(0, start)) };
 }
 
 // READ: parse a spreadsheet ArrayBuffer (xlsx or CSV/TSV); returns sheet names + raw rows per sheet
 export async function parseExcelBuffer(buffer: ArrayBuffer): Promise<{
   sheetNames: string[];
   getRows(name: string): unknown[][];
+  /** Préambule d'un export texte (nom du point de mesure, cadence, unité…) ; vide pour un xlsx. */
+  meta: SpreadsheetMeta;
 }> {
   const format = sniffFormat(buffer);
 
@@ -148,9 +172,9 @@ export async function parseExcelBuffer(buffer: ArrayBuffer): Promise<{
         "Ce fichier est une page HTML déguisée en tableur (export d'appareil). Ouvrez-le dans Excel et enregistrez-le en .xlsx ou en CSV.",
       );
     }
-    const rows = parseCsv(text, detectDelimiter(text));
+    const { rows, meta } = parseCsv(text, detectDelimiter(text));
     if (rows.length === 0) throw new UnsupportedSpreadsheetError('Fichier texte vide ou illisible.');
-    return { sheetNames: ['CSV'], getRows: (name) => (name === 'CSV' ? rows : []) };
+    return { sheetNames: ['CSV'], getRows: (name) => (name === 'CSV' ? rows : []), meta };
   }
 
   const workbook = new ExcelJS.Workbook();
@@ -169,6 +193,7 @@ export async function parseExcelBuffer(buffer: ArrayBuffer): Promise<{
   return {
     sheetNames: workbook.worksheets.map(ws => ws.name),
     getRows: (name) => sheetData[name] ?? [],
+    meta: {},
   };
 }
 

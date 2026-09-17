@@ -3,8 +3,11 @@ import { parseExcelBuffer } from '@/lib/excel-utils';
 import {
   Upload, FileSpreadsheet, Trash2, CheckCircle, AlertCircle,
   ChevronLeft, ChevronRight, Hash, Calendar, Type, Database,
-  FileText, Zap,
+  FileText, Zap, FolderOpen,
 } from 'lucide-react';
+import { filesFromDataTransfer, filesFromInput, directoryInputProps } from '@/lib/folder-import';
+
+const ACCEPT_RE = /\.(csv|xlsx|xls|pdf)$/i;
 import { extraireTextePDF, parserFactureEnergie } from '@/lib/iot-pdf-engine';
 import type { FactureParsee } from '@/lib/iot-pdf-engine';
 import { Button } from '@/components/ui/button';
@@ -280,6 +283,7 @@ function TableauSheet({
 export function UploadTab() {
   const { state, addFile, setShellyRows } = useIOT();
   const inputRef = useRef<HTMLInputElement>(null);
+  const dirInputRef = useRef<HTMLInputElement>(null);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [pdfEntries, setPdfEntries] = useState<PDFEntry[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -372,7 +376,7 @@ export function UploadTab() {
     }
   }, []);
 
-  const handleFiles = useCallback(async (files: FileList) => {
+  const handleFiles = useCallback(async (files: FileList | File[]) => {
     const allFiles = Array.from(files);
     const pdfFiles  = allFiles.filter(f => f.name.toLowerCase().endsWith('.pdf'));
     const dataFiles = allFiles.filter(f => !f.name.toLowerCase().endsWith('.pdf'));
@@ -501,7 +505,8 @@ export function UploadTab() {
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files);
+    // Dossiers compris (parcours récursif) ; fichiers système et verrous Excel exclus
+    void filesFromDataTransfer(e.dataTransfer, ACCEPT_RE).then(files => { if (files.length > 0) handleFiles(files); });
   }, [handleFiles]);
 
   // ============================================================
@@ -523,12 +528,25 @@ export function UploadTab() {
           accept=".csv,.xlsx,.xls,.pdf"
           multiple
           className="hidden"
-          onChange={(e) => e.target.files && handleFiles(e.target.files)}
+          onChange={(e) => { const fs = filesFromInput(e.target.files, ACCEPT_RE); if (fs.length) handleFiles(fs); e.target.value = ''; }}
+        />
+        <input
+          ref={dirInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          {...directoryInputProps()}
+          onChange={(e) => { const fs = filesFromInput(e.target.files, ACCEPT_RE); if (fs.length) handleFiles(fs); e.target.value = ''; }}
         />
         <Upload className="mx-auto h-10 w-10 text-blue-400 mb-3" />
         <p className="text-white font-medium text-lg">Glisser-déposer ou cliquer pour importer</p>
-        <p className="text-slate-400 text-sm mt-1">CSV, XLSX, XLS — Shelly 3EM &nbsp;·&nbsp; PDF — Factures énergie</p>
-        <p className="text-slate-600 text-xs mt-1">Fichiers multi-feuilles supportés · En-têtes doubles Shelly détectés automatiquement</p>
+        <p className="text-slate-400 text-sm mt-1">CSV, XLSX, XLS — Shelly 3EM &nbsp;·&nbsp; PDF — Factures énergie &nbsp;·&nbsp; plusieurs fichiers ou un dossier entier</p>
+        <p className="text-slate-600 text-xs mt-1">Fichiers multi-feuilles supportés · En-têtes doubles Shelly détectés automatiquement · Sous-dossiers parcourus</p>
+        <Button type="button" size="sm" variant="outline"
+          className="mt-4 border-white/20 text-slate-200 hover:bg-white/10"
+          onClick={(e) => { e.stopPropagation(); dirInputRef.current?.click(); }}>
+          <FolderOpen className="h-4 w-4 mr-1.5" /> Importer un dossier
+        </Button>
       </div>
 
       {/* ---- Factures PDF ---- */}

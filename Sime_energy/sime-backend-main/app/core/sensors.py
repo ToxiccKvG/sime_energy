@@ -33,6 +33,7 @@ dans `SENSOR_REGISTRY`.
 
 import io
 import logging
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 import chardet
@@ -458,38 +459,121 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
 # Parser générique — capteurs personnalisés
 # ---------------------------------------------------------------------------
 
+_TEXT_DELIMITERS = ["\t", ";", ",", "|"]
+
+
+def _read_text_table(contents: bytes) -> pd.DataFrame:
+    """Lit un fichier texte tabulaire (CSV / TSV) en sautant un préambule éventuel.
+
+    Les enregistreurs (loggers H&T, analyseurs) écrivent souvent quelques lignes
+    libres avant le tableau — « >>Logging Name:… », « >>Sample Rate:1800 sec. »,
+    une ligne de tirets. Le vrai en-tête est la première ligne qui a le nombre
+    de séparateurs majoritaire du fichier. Le séparateur lui-même est celui qui
+    découpe le plus régulièrement les lignes (tab, ; , |).
+    """
+    encoding = chardet.detect(contents)["encoding"] or "utf-8"
+    try:
+        text = contents.decode(encoding)
+    except (UnicodeDecodeError, LookupError):
+        text = contents.decode("utf-8", errors="replace")
+    text = text.lstrip("\ufeff")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        raise ValueError("Fichier vide")
+
+    # Séparateur : celui dont le nombre d'occurrences par ligne est le plus
+    # souvent identique et non nul (un tableau régulier).
+    best_sep, best_score, best_count = ",", -1, 0
+    for sep in _TEXT_DELIMITERS:
+        counts = [ln.count(sep) for ln in lines]
+        nonzero = [c for c in counts if c > 0]
+        if not nonzero:
+            continue
+        modal = max(set(nonzero), key=nonzero.count)
+        score = nonzero.count(modal)
+        if score > best_score:
+            best_sep, best_score, best_count = sep, score, modal
+
+    # En-tête = première ligne au nombre de séparateurs majoritaire
+    header_idx = next((i for i, ln in enumerate(lines) if ln.count(best_sep) == best_count), 0)
+    body = "\n".join(lines[header_idx:])
+    raw = pd.read_csv(io.StringIO(body), sep=best_sep, engine="python",
+                      on_bad_lines="skip", skipinitialspace=True, dtype=str)
+    raw.columns = [str(c).strip() for c in raw.columns]
+    return raw
+
+
+def _infer_dayfirst(sample: pd.Series) -> Optional[bool]:
+    """Devine si les dates sont jour-mois (FR) ou mois-jour (US).
+
+    Règles, dans l'ordre :
+      1. une composante > 12 tranche immédiatement ;
+      2. sinon, la composante qui CHANGE le plus souvent d'une ligne à l'autre est
+         le jour (un logger change de jour tous les jours, de mois rarement) ;
+      3. sinon (fichier d'un seul jour, valeurs ≤ 12) : None → l'appelant choisit
+         le défaut ; le front affiche l'aperçu pour que l'utilisateur tranche.
+    Les dates ISO (année en tête) ne sont pas concernées.
+    """
+    pairs: List[tuple] = []
+    for v in sample.astype(str).head(400):
+        m = _DATE_TOKENS.match(v.strip())
+        if not m:
+            continue
+        a, b = int(m.group(1)), int(m.group(2))
+        if len(m.group(1)) == 4:      # ISO : rien à deviner
+            return None
+        pairs.append((a, b))
+    if not pairs:
+        return None
+    if any(a > 12 for a, _ in pairs):
+        return True
+    if any(b > 12 for _, b in pairs):
+        return False
+    changes_a = sum(1 for i in range(1, len(pairs)) if pairs[i][0] != pairs[i - 1][0])
+    changes_b = sum(1 for i in range(1, len(pairs)) if pairs[i][1] != pairs[i - 1][1])
+    if changes_a > changes_b:
+        return True
+    if changes_b > changes_a:
+        return False
+    return None
+
+
+_DATE_TOKENS = re.compile(r"^\s*(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})")
+
+
 def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
     """Parse un fichier CSV ou Excel selon un mapping de colonnes libre.
 
     `config` attendu (correspond à la table custom_sensors) :
-        timestamp_col    : nom de la colonne timestamp dans le fichier
+        timestamp_col    : nom de la colonne timestamp (ou date seule) dans le fichier
+        time_col         : colonne heure séparée, fusionnée avec timestamp_col (optionnel)
         timestamp_format : format strptime optionnel (ex. "%d/%m/%Y %H:%M")
         value_col        : colonne de la grandeur principale
         extra_cols       : liste de {label, col} pour les colonnes supplémentaires
     """
-    # Détection CSV vs Excel
+    # Détection Excel vs texte : openpyxl ne lit que le .xlsx (zip) ; tout le
+    # reste (CSV, TSV, export « .xls » qui est en fait du texte) passe en texte.
     try:
         bio = io.BytesIO(contents)
         xls = pd.ExcelFile(bio, engine="openpyxl")
         sheet = xls.sheet_names[0]
         raw = xls.parse(sheet)
+        raw.columns = [str(c).strip() for c in raw.columns]
     except Exception:
-        encoding = chardet.detect(contents)["encoding"] or "utf-8"
-        try:
-            text = contents.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            text = contents.decode("utf-8", errors="replace")
-        # Détection séparateur (; ou ,)
-        first_line = text.split("\n", 1)[0]
-        sep = ";" if first_line.count(";") >= first_line.count(",") else ","
-        raw = pd.read_csv(io.StringIO(text), sep=sep, engine="python", on_bad_lines="skip")
+        raw = _read_text_table(contents)
 
     ts_col = config["timestamp_col"]
+    time_col = config.get("time_col") or None
     val_col = config["value_col"]
 
     if ts_col not in raw.columns:
         raise ValueError(
             f"Colonne timestamp « {ts_col} » introuvable. "
+            f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
+        )
+    if time_col and time_col not in raw.columns:
+        raise ValueError(
+            f"Colonne heure « {time_col} » introuvable. "
             f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
         )
     if val_col not in raw.columns:
@@ -499,20 +583,29 @@ def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
         )
 
     df = pd.DataFrame()
+    ts_text = raw[ts_col].astype(str).str.strip()
+    if time_col:
+        ts_text = ts_text + " " + raw[time_col].astype(str).str.strip()
+
     fmt = config.get("timestamp_format")
     if fmt:
-        df["timestamp"] = pd.to_datetime(raw[ts_col].astype(str), format=fmt, errors="coerce")
+        df["timestamp"] = pd.to_datetime(ts_text, format=fmt, errors="coerce")
         if df["timestamp"].isna().all():
-            df["timestamp"] = pd.to_datetime(raw[ts_col], errors="coerce")
+            df["timestamp"] = pd.to_datetime(ts_text, errors="coerce")
     else:
-        df["timestamp"] = pd.to_datetime(raw[ts_col], errors="coerce")
+        dayfirst = _infer_dayfirst(ts_text)
+        # Fichier d'un seul jour sans indice : jour-mois par défaut (contexte
+        # francophone) ; le front a montré l'aperçu pour corriger si besoin.
+        df["timestamp"] = pd.to_datetime(
+            ts_text, errors="coerce", dayfirst=True if dayfirst is None else dayfirst
+        )
 
-    df[val_col] = pd.to_numeric(raw[val_col], errors="coerce")
+    df[val_col] = pd.to_numeric(raw[val_col].astype(str).str.replace(",", ".", regex=False), errors="coerce")
 
     for extra in config.get("extra_cols", []):
         col = extra.get("col") or extra.get("column")
         if col and col in raw.columns:
-            df[col] = pd.to_numeric(raw[col], errors="coerce")
+            df[col] = pd.to_numeric(raw[col].astype(str).str.replace(",", ".", regex=False), errors="coerce")
 
     return df
 

@@ -48,6 +48,15 @@ valeur par défaut aux fichiers non reconnus.
 
 ## 3. Backend
 
+> **Capteur personnalisé (`_parse_generic`, 17/09/2026)** : lecture Excel via openpyxl,
+> sinon texte via `_read_text_table` (séparateur tab/;/,/| = celui qui découpe le plus
+> régulièrement, en-tête = première ligne au nombre de séparateurs majoritaire, donc
+> préambule de logger sauté) ; `time_col` fusionné à `timestamp_col` ; sans
+> `timestamp_format`, l'ordre jour/mois est déduit par `_infer_dayfirst` (composante
+> > 12, sinon celle qui change le plus souvent est le jour, sinon jour-mois par défaut).
+> Table `custom_sensors` : colonnes `quantity_kind`, `time_col`, `columns_signature`
+> (migrations `20260917_custom_sensors_*`).
+
 ### 3.1 Registre et pipeline (`app/core/sensors.py`)
 
 ```
@@ -107,8 +116,8 @@ réels ne sont pas affectés.
 | Fichier | Rôle |
 |---|---|
 | `components/invoices/MeasurementWorkflow.tsx` | Onglets, relevés en session, alias, période partagée par relevé |
-| `components/invoices/MeasurementUploadStep.tsx` | Dépôt multi-fichiers, capteur par fichier, liste « Relevés chargés » (renommer / retirer), capteurs personnalisés |
-| `components/invoices/CustomSensorMapper.tsx`, `CustomSensorEditPanel.tsx` | Création / édition d'un capteur personnalisé (mapping de colonnes) |
+| `components/invoices/MeasurementUploadStep.tsx` | Dépôt multi-fichiers **et dossiers** (`lib/folder-import.ts`), capteur par fichier deviné par le nom ou par l'**empreinte des colonnes** (`findSensorBySignature`, lecture des seuls en-têtes en arrière-plan), liste « Relevés chargés », capteurs personnalisés |
+| `components/invoices/CustomSensorMapper.tsx`, `CustomSensorEditPanel.tsx` | Création / édition d'un capteur personnalisé : **pré-remplissage** (`suggestMapping`), colonne heure séparée (`time_col`), **aperçu des dates interprétées** (`previewTimestamps`, `inferDayFirst`) avec choix jour-mois / mois-jour qui écrit `timestamp_format`, colonnes supplémentaires proposées |
 | `components/invoices/MeasurementAnalysis.tsx` | KPIs, vue par jour, stats par colonne, table, export CSV, rapport PDF/Word |
 | `components/invoices/MeasurementCharts.tsx` | Courbe multi-axes, distribution, profil heure × jour, cumul par période, drill-down, export PNG |
 | `components/invoices/AnalysisModelsPanel.tsx` | Onglet Modèles (affichage seulement) |
@@ -121,7 +130,9 @@ réels ne sont pas affectés.
 | `services/analysisModels/*` | Modèles d'analyse (§ 5) |
 | `lib/model-comparison.ts` | Alignement et comparaison de deux relevés (§ 6) |
 | `lib/sensor-comparison.ts` | Familles d'unités (W/VA/var, Wh/VAh/varh), conversions, comparaison maître/esclaves |
-| `lib/custom-sensor-service.ts` | CRUD `custom_sensors`, `guessQuantityKind()` |
+| `lib/custom-sensor-service.ts` | CRUD `custom_sensors`, `guessQuantityKind()`, `columnsSignature()`, `suggestMapping()`, `inferDayFirst()`, `previewTimestamps()` |
+| `lib/folder-import.ts` | Import de dossiers (input `webkitdirectory` + `webkitGetAsEntry` récursif), filtre `isImportable` (extensions + exclusion `._*`, `~$*`, `.DS_Store`) — partagé avec IOT › Fichiers |
+| `lib/excel-utils.ts` | `parseExcelBuffer` : xlsx (ExcelJS), CSV/TSV (préambule sauté, `meta` = paires clé/valeur du préambule), refus explicite du `.xls` binaire |
 | `lib/chart-export.ts` | Filtre html2canvas (exclut infobulle, curseur, points actifs, `data-no-export`) |
 
 ### 4.2 Statistiques (`measurementStats.ts`)

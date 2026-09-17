@@ -32,6 +32,7 @@ export function CustomSensorEditPanel({ sensor, onSaved, onCancel }: CustomSenso
 
   const [name, setName] = useState(sensor.name);
   const [timestampCol, setTimestampCol] = useState(sensor.timestamp_col);
+  const [timeCol, setTimeCol] = useState(sensor.time_col ?? '');
   const [timestampFormat, setTimestampFormat] = useState(sensor.timestamp_format ?? '');
   const [valueCol, setValueCol] = useState(sensor.value_col);
   const [unit, setUnit] = useState(sensor.unit);
@@ -59,6 +60,7 @@ export function CustomSensorEditPanel({ sensor, onSaved, onCancel }: CustomSenso
       const saved = await updateCustomSensor(sensor.id, {
         name,
         timestamp_col: timestampCol,
+        time_col: timeCol || null,
         timestamp_format: timestampFormat || undefined,
         value_col: valueCol,
         unit,
@@ -91,8 +93,13 @@ export function CustomSensorEditPanel({ sensor, onSaved, onCancel }: CustomSenso
       </Field>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Field label="Colonne timestamp *">
+        <Field label="Colonne date ou horodatage *">
           <Input value={timestampCol} onChange={(e) => setTimestampCol(e.target.value)}
+            className="bg-white/5 border-white/20 text-white font-mono text-sm" />
+        </Field>
+
+        <Field label="Colonne heure" hint="Seulement si l'heure est dans une colonne à part (loggers DATE / TIME)">
+          <Input value={timeCol} onChange={(e) => setTimeCol(e.target.value)} placeholder="ex: TIME"
             className="bg-white/5 border-white/20 text-white font-mono text-sm" />
         </Field>
 

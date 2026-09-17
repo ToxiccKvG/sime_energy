@@ -17,8 +17,13 @@ Modèles → Comparaison**. Les onglets restent grisés tant qu'aucun fichier n'
 ## 1. Upload — charger ses fichiers
 
 1. Glisser-déposer un ou plusieurs fichiers (CSV, XLS, XLSX) dans la zone, ou cliquer dessus.
-2. Pour chaque fichier, le **type d'appareil est deviné d'après le nom du fichier**
-   (`trend`, `demand`, `solaredge`, `shelly`, `m100`…). Il apparaît en bleu quand il a
+   **Un dossier entier** peut aussi être déposé, ou choisi avec **Importer un dossier** :
+   les sous-dossiers sont parcourus, et les fichiers parasites (`._xxx` des clés USB,
+   verrous Excel `~$xxx`, `.DS_Store`) sont ignorés d'office.
+2. Pour chaque fichier, le **type d'appareil est deviné** d'après le nom du fichier
+   (`trend`, `demand`, `solaredge`, `shelly`, `m100`…) ou, pour un capteur personnalisé,
+   d'après ses **colonnes** : un fichier qui a les mêmes en-têtes que le fichier exemple
+   d'un capteur enregistré lui est rattaché tout seul. Il apparaît en bleu quand il a
    été deviné : vérifiez-le et corrigez-le dans le menu de la ligne si besoin. Le
    sélecteur au-dessus de la zone sert de valeur par défaut aux fichiers non reconnus.
 3. Cliquer **Traiter N fichier(s)**. Les fichiers valides passent en vert ; un fichier
@@ -42,12 +47,27 @@ Modèles → Comparaison**. Les onglets restent grisés tant qu'aucun fichier n'
 
 ### Capteurs personnalisés
 
-Pour un appareil absent de la liste, choisir **Capteur personnalisé** puis décrire le
-fichier une seule fois : colonne de date, colonne de valeur, unité, nom de la grandeur,
-colonnes supplémentaires à garder. Le capteur est enregistré pour votre organisation et
-réapparaît dans la liste aux prochains chargements. Le **type de grandeur** (puissance /
-énergie / autre) est proposé automatiquement d'après l'unité ; il détermine comment le
-cumul est calculé (voir encadré ci-dessous) — corrigez-le si l'unité est ambiguë.
+Pour un appareil absent de la liste, choisir **Créer un capteur personnalisé…** et
+déposer un fichier exemple. **Le formulaire se pré-remplit** d'après le fichier : nom
+(repris de l'en-tête de l'enregistreur, ex. « Logging Name »), colonne de date, colonne
+d'heure si elle est séparée (loggers DATE / TIME), grandeur principale (première colonne
+numérique hors compteur de lignes), unité (lue dans l'en-tête « Temperature(°C) » ou le
+préambule), libellé, et toutes les autres colonnes numériques proposées en colonnes
+supplémentaires — supprimez celles qui ne servent pas. Vérifiez, corrigez, puis
+**Analyser maintenant** ou **Sauvegarder le capteur**.
+
+L'encadré **Dates interprétées** montre le premier et le dernier relevé, le pas et le
+nombre de lignes tels qu'ils seront lus. C'est là qu'on repère une date lue à l'envers :
+`09-05-2026` peut être le 5 septembre (mois-jour, exports américains) ou le 9 mai
+(jour-mois). L'ordre est deviné quand le fichier le permet ; s'il est ambigu (un seul
+jour, valeurs ≤ 12), choisissez **Jour-mois** ou **Mois-jour** — le format est alors
+enregistré avec le capteur.
+
+Le capteur est enregistré pour votre organisation avec l'**empreinte des colonnes** de
+son fichier exemple : les prochains fichiers du même appareil sont reconnus au dépôt sans
+rien choisir. Le **type de grandeur** (puissance / énergie / autre) est proposé d'après
+l'unité ; il détermine comment le cumul est calculé (voir encadré ci-dessous) —
+corrigez-le si l'unité est ambiguë.
 
 > **Puissance, énergie ou autre ?**
 > - *Puissance* (W, kW, VA…) : le cumul est obtenu en intégrant dans le temps → Wh.

@@ -5,16 +5,19 @@
  * directement.
  */
 
-import { useCallback, useRef, useState } from 'react';
-import { parseExcelBuffer } from '@/lib/excel-utils';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { parseExcelBuffer, type SpreadsheetMeta } from '@/lib/excel-utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  FileSpreadsheet, Upload, Plus, Trash2, Save, Zap, AlertCircle, Loader2,
+  FileSpreadsheet, Upload, Plus, Trash2, Save, Zap, AlertCircle, Loader2, Sparkles, CalendarClock,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { saveCustomSensor, guessQuantityKind, type CustomSensor, type CustomSensorInput, type ExtraCol, type QuantityKind } from '@/lib/custom-sensor-service';
+import {
+  saveCustomSensor, guessQuantityKind, suggestMapping, previewTimestamps, columnsSignature,
+  type CustomSensor, type CustomSensorInput, type ExtraCol, type QuantityKind,
+} from '@/lib/custom-sensor-service';
 import { useOrganization } from '@/context/OrganizationContext';
 
 interface CustomSensorMapperProps {
@@ -25,10 +28,42 @@ interface CustomSensorMapperProps {
 interface FileColumns {
   file: File;
   columns: string[];
+  /** 5 premières lignes, pour le tableau d'aperçu. */
   preview: Record<string, unknown>[];
+  /** Jusqu'à 2 000 lignes, pour l'aperçu des dates (première, dernière, pas). */
+  sample: Record<string, unknown>[];
+  meta: SpreadsheetMeta;
 }
 
 const EMPTY_EXTRA: ExtraCol = { label: '', col: '' };
+const NO_TIME_COL = '__none__';
+
+type DateOrder = 'auto' | 'dmy' | 'mdy';
+
+/**
+ * Construit le format strptime correspondant au choix jour-mois / mois-jour,
+ * en reprenant le séparateur et la présence de l'heure/secondes du fichier :
+ * c'est ce format qui est enregistré, le backend n'a rien à deviner.
+ */
+function formatFromOrder(order: DateOrder, sampleText: string): string {
+  if (order === 'auto') return '';
+  const m = sampleText.match(/^\s*\d{1,4}([-/.])\d{1,2}[-/.]\d{1,4}(?:[ T]+\d{1,2}:\d{2}(:\d{2})?)?/);
+  if (!m) return '';
+  const sep = m[1];
+  const hasTime = /\d{1,2}:\d{2}/.test(sampleText);
+  const hasSec = !!m[2];
+  const date = order === 'dmy' ? `%d${sep}%m${sep}%Y` : `%m${sep}%d${sep}%Y`;
+  return hasTime ? `${date} %H:%M${hasSec ? ':%S' : ''}` : date;
+}
+
+function fmtStep(sec: number): string {
+  if (sec < 60) return `${sec} s`;
+  if (sec < 3600) return `${Math.round(sec / 60)} min`;
+  if (sec < 86400) return `${(sec / 3600).toFixed(sec % 3600 ? 1 : 0)} h`;
+  return `${(sec / 86400).toFixed(sec % 86400 ? 1 : 0)} j`;
+}
+
+const fmtDate = (d: Date) => d.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 const QUANTITY_KIND_OPTIONS: { value: QuantityKind; label: string; hint: string }[] = [
   { value: 'power', label: 'Puissance instantanée (W, kW…)', hint: 'Le cumul total sera calculé par intégration dans le temps (→ énergie)' },
@@ -48,7 +83,9 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
   // Form state
   const [name, setName] = useState('');
   const [timestampCol, setTimestampCol] = useState('');
+  const [timeCol, setTimeCol] = useState('');
   const [timestampFormat, setTimestampFormat] = useState('');
+  const [dateOrder, setDateOrder] = useState<DateOrder>('auto');
   const [valueCol, setValueCol] = useState('');
   const [unit, setUnit] = useState('');
   const [metricLabel, setMetricLabel] = useState('');
@@ -68,47 +105,59 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
   const readFile = useCallback(async (file: File) => {
     setLoading(true);
     try {
-      let columns: string[] = [];
-      let preview: Record<string, unknown>[] = [];
+      // Un seul lecteur pour tout (xlsx, csv, tsv, export « .xls » texte) : il
+      // saute le préambule des enregistreurs et en renvoie les métadonnées.
+      const buf = await file.arrayBuffer();
+      const wb = await parseExcelBuffer(buf);
+      const rows = wb.getRows(wb.sheetNames[0]) as unknown[][];
+      if (rows.length === 0) throw new Error('Aucune ligne lisible dans ce fichier.');
 
-      if (/\.(xlsx|xls)$/i.test(file.name)) {
-        const buf = await file.arrayBuffer();
-        const wb = await parseExcelBuffer(buf);
-        const sheetName = wb.sheetNames[0];
-        const rows = wb.getRows(sheetName) as unknown[][];
-        if (rows.length > 0) {
-          columns = (rows[0] as string[]).map((h, i) => (h ? String(h).trim() : `col_${i}`));
-          preview = rows.slice(1, 6).map((r) => {
-            const row: Record<string, unknown> = {};
-            columns.forEach((c, i) => { row[c] = (r as unknown[])[i] ?? null; });
-            return row;
-          });
-        }
-      } else {
-        // CSV
-        const text = await file.text();
-        const lines = text.split('\n').filter(Boolean);
-        const firstLine = lines[0] ?? '';
-        const sep = firstLine.split(';').length > firstLine.split(',').length ? ';' : ',';
-        columns = firstLine.split(sep).map((h) => h.trim().replace(/^"|"$/g, ''));
-        preview = lines.slice(1, 6).map((line) => {
-          const vals = line.split(sep).map((v) => v.trim().replace(/^"|"$/g, ''));
-          const row: Record<string, unknown> = {};
-          columns.forEach((c, i) => { row[c] = vals[i] ?? null; });
-          return row;
-        });
-      }
+      const columns = (rows[0] as unknown[]).map((h, i) => (h != null && String(h).trim() ? String(h).trim() : `col_${i}`));
+      const toObj = (r: unknown[]) => {
+        const row: Record<string, unknown> = {};
+        columns.forEach((c, i) => { row[c] = r[i] ?? null; });
+        return row;
+      };
+      const sample = rows.slice(1, 2001).map(toObj);
+      const preview = sample.slice(0, 5);
+      setFileData({ file, columns, preview, sample, meta: wb.meta });
 
-      setFileData({ file, columns, preview });
-      // Auto-fill: guess timestamp column
-      const tsGuess = columns.find((c) => /time|date|heure|ts|timestamp/i.test(c));
-      if (tsGuess) setTimestampCol(tsGuess);
+      // Pré-remplissage : tout reste modifiable, ce sont des valeurs par défaut.
+      const sug = suggestMapping(columns, sample, wb.meta, file.name);
+      setName(sug.name);
+      setTimestampCol(sug.timestampCol);
+      setTimeCol(sug.timeCol);
+      setValueCol(sug.valueCol);
+      setUnit(sug.unit);
+      setMetricLabel(sug.metricLabel);
+      setExtraCols(sug.extraCols);
+      setTimestampFormat('');
+      setDateOrder('auto');
+      if (!quantityKindTouched) setQuantityKind(guessQuantityKind(sug.unit));
     } catch (err) {
-      toast({ title: 'Erreur de lecture', description: String(err), variant: 'destructive' });
+      toast({ title: 'Erreur de lecture', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, quantityKindTouched]);
+
+  // Aperçu des dates telles que le backend les lira (ordre jour/mois déduit ou forcé)
+  const tsPreview = useMemo(() => {
+    if (!fileData || !timestampCol) return null;
+    const forced = dateOrder === 'dmy' ? true : dateOrder === 'mdy' ? false : null;
+    return previewTimestamps(fileData.sample, timestampCol, timeCol, forced);
+  }, [fileData, timestampCol, timeCol, dateOrder]);
+
+  const firstTsText = useMemo(() => {
+    if (!fileData || !timestampCol) return '';
+    const r = fileData.sample[0]; if (!r) return '';
+    return `${String(r[timestampCol] ?? '')} ${timeCol ? String(r[timeCol] ?? '') : ''}`.trim();
+  }, [fileData, timestampCol, timeCol]);
+
+  const handleDateOrder = (order: DateOrder) => {
+    setDateOrder(order);
+    setTimestampFormat(formatFromOrder(order, firstTsText));
+  };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -134,7 +183,9 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
       organization_id: organization.id,
       name,
       timestamp_col: timestampCol,
+      time_col: timeCol || null,
       timestamp_format: timestampFormat || undefined,
+      columns_signature: fileData ? columnsSignature(fileData.columns) : null,
       value_col: valueCol,
       unit,
       metric_label: metricLabel,
@@ -174,7 +225,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
       toast({ title: 'Capteur sauvegardé', description: `« ${saved.name} » ajouté à votre organisation` });
       onSaved(saved);
       // Reset
-      setFileData(null); setName(''); setTimestampCol(''); setTimestampFormat('');
+      setFileData(null); setName(''); setTimestampCol(''); setTimeCol(''); setTimestampFormat(''); setDateOrder('auto');
       setValueCol(''); setUnit(''); setMetricLabel(''); setExtraCols([]);
       setQuantityKind('other'); setQuantityKindTouched(false);
     } catch (err) {
@@ -254,8 +305,8 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
       {fileData && (
         <div className="space-y-4">
           <p className="text-slate-400 text-xs flex items-center gap-1.5">
-            <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
-            Les champs marqués * sont obligatoires
+            <Sparkles className="h-3.5 w-3.5 text-blue-400" />
+            Champs pré-remplis d'après le fichier — vérifiez, corrigez si besoin. Les champs marqués * sont obligatoires.
           </p>
 
           {/* Nom du capteur */}
@@ -265,14 +316,60 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
           </Field>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Colonne timestamp */}
-            <Field label="Colonne timestamp *">
+            {/* Colonne date / horodatage */}
+            <Field label="Colonne date ou horodatage *">
               <ColSelect cols={cols} value={timestampCol} onChange={setTimestampCol} placeholder="Sélectionnez…" />
             </Field>
 
-            {/* Format (optionnel) */}
-            <Field label="Format timestamp" hint="Laisser vide pour détection auto">
-              <Input value={timestampFormat} onChange={(e) => setTimestampFormat(e.target.value)}
+            {/* Colonne heure séparée (loggers DATE + TIME) */}
+            <Field label="Colonne heure" hint="Seulement si l'heure est dans une colonne à part (loggers DATE / TIME)">
+              <Select value={timeCol || NO_TIME_COL} onValueChange={(v) => setTimeCol(v === NO_TIME_COL ? '' : v)}>
+                <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent className="bg-[#1a1d2e] border-white/20 max-h-60">
+                  <SelectItem value={NO_TIME_COL} className="text-slate-400 focus:bg-white/10 text-sm">— aucune (l'heure est dans la colonne date) —</SelectItem>
+                  {cols.filter((c) => c !== timestampCol).map((c) => (
+                    <SelectItem key={c} value={c} className="text-slate-200 focus:bg-white/10 text-sm font-mono">{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+
+          {/* Aperçu des dates interprétées — lève l'ambiguïté 09-05 = 5 sept. (US) ou 9 mai (FR) */}
+          {tsPreview && (
+            <div className={`rounded-lg border px-3 py-2.5 text-xs space-y-2 ${tsPreview.invalid > 0 && tsPreview.first === null ? 'border-red-500/40 bg-red-500/10' : 'border-white/10 bg-white/5'}`}>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-300">
+                <span className="flex items-center gap-1.5 text-white font-medium"><CalendarClock className="h-3.5 w-3.5 text-blue-400" /> Dates interprétées</span>
+                {tsPreview.first && tsPreview.last ? (
+                  <>
+                    <span>du <span className="text-white">{fmtDate(tsPreview.first)}</span> au <span className="text-white">{fmtDate(tsPreview.last)}</span></span>
+                    {tsPreview.stepSeconds != null && <span>pas <span className="text-white">{fmtStep(tsPreview.stepSeconds)}</span></span>}
+                    <span>{tsPreview.total - tsPreview.invalid} relevé(s){fileData && fileData.sample.length >= 2000 ? ' (aperçu)' : ''}</span>
+                    {tsPreview.invalid > 0 && <span className="text-amber-400">{tsPreview.invalid} illisible(s)</span>}
+                  </>
+                ) : (
+                  <span className="text-red-300">Aucune date lisible dans « {timestampCol} »{timeCol ? ` + « ${timeCol} »` : ''} — vérifiez les colonnes ou indiquez le format.</span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-slate-500">Ordre des dates :</span>
+                {([['auto', tsPreview.dayFirst === null ? 'Auto (ambigu → jour-mois)' : tsPreview.dayFirst ? 'Auto : jour-mois' : 'Auto : mois-jour'], ['dmy', 'Jour-mois (FR)'], ['mdy', 'Mois-jour (US)']] as [DateOrder, string][]).map(([v, l]) => (
+                  <button key={v} type="button" onClick={() => handleDateOrder(v)}
+                    className={`px-2 py-0.5 rounded border text-xs transition-colors ${dateOrder === v ? 'bg-blue-600/30 border-blue-500/50 text-blue-200' : 'border-white/15 text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                    {l}
+                  </button>
+                ))}
+                {tsPreview.dayFirst === null && dateOrder === 'auto' && (
+                  <span className="text-amber-400 flex items-center gap-1"><AlertCircle className="h-3 w-3" /> Un seul jour, valeurs ≤ 12 : choisissez l'ordre si les dates ci-dessus sont fausses.</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Format (optionnel, rempli par le choix d'ordre) */}
+            <Field label="Format timestamp" hint="Laisser vide pour détection auto — rempli automatiquement par le choix d'ordre ci-dessus">
+              <Input value={timestampFormat} onChange={(e) => { setTimestampFormat(e.target.value); setDateOrder('auto'); }}
                 placeholder="ex: %d/%m/%Y %H:%M" className="bg-white/5 border-white/20 text-white font-mono text-sm" />
             </Field>
 
@@ -341,12 +438,15 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
             </p>
             {extraCols.map((ec, i) => (
               <div key={i} className="flex items-center gap-2">
-                <ColSelect
-                  cols={cols}
-                  value={ec.col}
-                  onChange={(v) => setExtraCols((p) => p.map((x, j) => j === i ? { ...x, col: v } : x))}
-                  placeholder="Colonne…"
-                />
+                {/* Largeur bornée : sans ça le sélecteur prend toute la ligne et le libellé disparaît */}
+                <div className="w-1/2 min-w-0 shrink-0">
+                  <ColSelect
+                    cols={cols}
+                    value={ec.col}
+                    onChange={(v) => setExtraCols((p) => p.map((x, j) => j === i ? { ...x, col: v } : x))}
+                    placeholder="Colonne…"
+                  />
+                </div>
                 <Input
                   value={ec.label}
                   onChange={(e) => setExtraCols((p) => p.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
@@ -359,8 +459,10 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
                 </button>
               </div>
             ))}
-            {extraCols.length === 0 && (
+            {extraCols.length === 0 ? (
               <p className="text-slate-600 text-xs">Aucune — les colonnes supplémentaires apparaissent dans les graphiques multi-séries.</p>
+            ) : (
+              <p className="text-slate-600 text-xs">Proposées d'après les colonnes numériques du fichier — supprimez celles qui ne vous servent pas.</p>
             )}
           </div>
 

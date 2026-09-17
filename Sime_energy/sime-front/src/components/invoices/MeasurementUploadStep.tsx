@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Upload, Loader2, CheckCircle2, AlertCircle, FileSpreadsheet, X, Settings2, Pencil, Trash2, Check, Sparkles, Database } from 'lucide-react';
+import { Upload, Loader2, CheckCircle2, AlertCircle, FileSpreadsheet, X, Settings2, Pencil, Trash2, Check, Sparkles, Database, FolderOpen } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { uploadMeasurementFile, MeasurementData, measurementLabel } from '@/services/measurementService';
 import { toDate } from '@/services/measurementStats';
-import { getCustomSensors, deleteCustomSensor, type CustomSensor, type CustomSensorInput } from '@/lib/custom-sensor-service';
+import { getCustomSensors, deleteCustomSensor, findSensorBySignature, type CustomSensor, type CustomSensorInput } from '@/lib/custom-sensor-service';
+import { parseExcelBuffer } from '@/lib/excel-utils';
+import { filesFromDataTransfer, filesFromInput, isImportable, directoryInputProps } from '@/lib/folder-import';
 import { CustomSensorMapper } from './CustomSensorMapper';
 import { CustomSensorEditPanel } from './CustomSensorEditPanel';
 import { useOrganization } from '@/context/OrganizationContext';
@@ -29,6 +31,7 @@ const BUILTIN_SENSORS: { value: string; label: string }[] = [
 ];
 
 const NEW_CUSTOM_KEY = '__new_custom__';
+const ACCEPT_RE = /\.(csv|xls|xlsx)$/i;
 
 /**
  * Devine le capteur d'après le nom du fichier (exports nommés par les
@@ -59,11 +62,14 @@ interface FileEntry {
   /** Capteur propre à ce fichier (deviné au dépôt, modifiable) ; sinon celui du sélecteur global. */
   sensorType?: string;
   guessed?: boolean;
+  /** D'où vient la devinette : nom du fichier, ou en-têtes identiques à un capteur enregistré. */
+  guessedBy?: 'name' | 'signature';
 }
 
 export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, loaded = [], onRename, onRemove }: MeasurementUploadStepProps) {
   const { organization } = useOrganization();
   const inputRef = useRef<HTMLInputElement>(null);
+  const dirInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -94,32 +100,52 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, load
     }
   };
 
+  // Un fichier non reconnu par son nom peut l'être par ses en-têtes : si un
+  // capteur enregistré a été créé sur un fichier aux mêmes colonnes, c'est le
+  // même appareil. Lecture des seuls en-têtes, en arrière-plan.
+  const recognizeBySignature = useCallback(async (file: File) => {
+    if (customSensors.length === 0) return;
+    try {
+      const wb = await parseExcelBuffer(await file.arrayBuffer());
+      const header = (wb.getRows(wb.sheetNames[0])[0] ?? []) as unknown[];
+      const columns = header.map((h, i) => (h != null && String(h).trim() ? String(h).trim() : `col_${i}`));
+      const match = findSensorBySignature(customSensors, columns);
+      if (!match) return;
+      setEntries((prev) => prev.map((e) =>
+        e.file === file && !e.sensorType ? { ...e, sensorType: match.id, guessed: true, guessedBy: 'signature' } : e));
+    } catch { /* fichier illisible : l'erreur sortira au traitement */ }
+  }, [customSensors]);
+
   const addFiles = useCallback((files: File[]) => {
-    const valid = files.filter((f) => /\.(csv|xls|xlsx)$/i.test(f.name));
+    const valid = files.filter((f) => isImportable(f, ACCEPT_RE));
     const rejected = files.length - valid.length;
     if (rejected > 0) {
-      toast({ title: 'Format non supporté', description: `${rejected} fichier(s) ignoré(s) — seuls CSV, XLS, XLSX sont acceptés`, variant: 'destructive' });
+      toast({ title: 'Fichiers ignorés', description: `${rejected} fichier(s) ignoré(s) — seuls CSV, XLS, XLSX sont acceptés (fichiers système et verrous Excel exclus)` });
     }
     if (valid.length === 0) return;
+    const toRecognize: File[] = [];
     setEntries((prev) => {
       const existing = new Set(prev.map((e) => e.file.name));
       const news = valid.filter((f) => !existing.has(f.name)).map((file) => {
         const guess = guessSensorType(file.name);
-        return { file, status: 'pending' as FileStatus, sensorType: guess, guessed: !!guess };
+        if (!guess) toRecognize.push(file);
+        return { file, status: 'pending' as FileStatus, sensorType: guess, guessed: !!guess, guessedBy: guess ? 'name' as const : undefined };
       });
       return [...prev, ...news];
     });
-  }, [toast]);
+    for (const f of toRecognize) void recognizeBySignature(f);
+  }, [toast, recognizeBySignature]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) addFiles(Array.from(e.target.files));
+    addFiles(filesFromInput(e.target.files, ACCEPT_RE));
     e.target.value = '';
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    addFiles(Array.from(e.dataTransfer.files));
+    // Dossiers compris : parcours récursif, parasites exclus
+    void filesFromDataTransfer(e.dataTransfer, ACCEPT_RE).then(addFiles);
   }, [addFiles]);
 
   const removeEntry = (name: string) => setEntries((prev) => prev.filter((e) => e.file.name !== name));
@@ -320,12 +346,19 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, load
           >
             <input ref={inputRef} type="file" accept=".csv,.xls,.xlsx" multiple className="hidden"
               onChange={handleInputChange} disabled={busy} />
+            <input ref={dirInputRef} type="file" multiple className="hidden" {...directoryInputProps()}
+              onChange={handleInputChange} disabled={busy} />
             <Upload className="mx-auto h-10 w-10 text-blue-400 mb-3" />
             <p className="text-white font-medium text-lg">Glisser-déposer ou cliquer pour importer</p>
-            <p className="text-slate-400 text-sm mt-1">CSV, XLS, XLSX — plusieurs fichiers, de modèles différents si besoin</p>
+            <p className="text-slate-400 text-sm mt-1">CSV, XLS, XLSX — plusieurs fichiers ou un dossier entier (sous-dossiers compris)</p>
             <p className="text-slate-500 text-xs mt-2 flex items-center justify-center gap-1">
-              <Sparkles className="h-3 w-3" /> Le capteur est deviné d'après le nom du fichier ; le sélecteur ci-dessus sert de valeur par défaut.
+              <Sparkles className="h-3 w-3" /> Le capteur est deviné d'après le nom du fichier ou ses colonnes ; le sélecteur ci-dessus sert de valeur par défaut.
             </p>
+            <Button type="button" size="sm" variant="outline" disabled={busy}
+              className="mt-4 border-white/20 text-slate-200 hover:bg-white/10"
+              onClick={(e) => { e.stopPropagation(); dirInputRef.current?.click(); }}>
+              <FolderOpen className="h-4 w-4 mr-1.5" /> Importer un dossier
+            </Button>
           </div>
 
           {/* Liste des fichiers */}
@@ -367,7 +400,7 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, load
                         value={entry.sensorType ?? ''}
                         onChange={(e) => patchStatus(entry.file.name, { sensorType: e.target.value || undefined, guessed: false })}
                         disabled={busy}
-                        title={entry.guessed ? 'Capteur deviné d\'après le nom du fichier' : 'Capteur pour ce fichier'}
+                        title={entry.guessedBy === 'signature' ? 'Capteur reconnu : mêmes colonnes qu\'un capteur enregistré' : entry.guessed ? 'Capteur deviné d\'après le nom du fichier' : 'Capteur pour ce fichier'}
                         className={`text-xs rounded-md px-2 py-1.5 bg-white/5 border max-w-[220px] ${entry.guessed ? 'border-blue-500/50 text-blue-300' : entrySensor(entry) ? 'border-white/20 text-slate-200' : 'border-amber-500/50 text-amber-300'}`}
                       >
                         <option value="" className="bg-[#1a1d2e]">{sensorType ? `(défaut) ${sensorLabel(sensorType, customSensors)}` : '— choisir un capteur —'}</option>
