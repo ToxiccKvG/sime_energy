@@ -134,6 +134,36 @@ function unitFromMeta(meta: Record<string, string>, header: string): string {
   return v ? meta[key!] : '';
 }
 
+const NUM_RE = /^-?\d{1,3}(?:[ \u00a0]\d{3})*(?:[.,]\d+)?$|^-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?$/;
+
+/**
+ * Une colonne est numérique si ≥ 80 % de ses valeurs non vides (sur l'échantillon)
+ * sont des nombres — tolère quelques « -- », « n/a » ou cellules texte d'un logger,
+ * sans prendre pour numérique une colonne de texte ou de booléens.
+ */
+export function isNumericColumn(sample: Record<string, unknown>[], col: string): boolean {
+  let n = 0, ok = 0;
+  for (const r of sample) {
+    const v = r[col];
+    if (v === null || v === undefined || String(v).trim() === '') continue;
+    n++;
+    if (typeof v === 'number' || (typeof v === 'string' && NUM_RE.test(v.trim()))) ok++;
+    if (n >= 200) break;
+  }
+  return n > 0 && ok / n >= 0.8;
+}
+
+/** Toutes les colonnes numériques d'un fichier, prêtes à servir de colonnes supplémentaires. */
+export function allNumericExtraCols(
+  columns: string[],
+  sample: Record<string, unknown>[],
+  exclude: string[],
+): ExtraCol[] {
+  return columns
+    .filter(c => !exclude.includes(c) && !INDEX_COL_RE.test(c.trim()) && isNumericColumn(sample, c))
+    .map(c => { const u = unitFromHeader(c); return { col: c, label: u ? `${labelFromHeader(c)} (${u})` : labelFromHeader(c) }; });
+}
+
 export interface MappingSuggestion {
   name: string;
   timestampCol: string;
@@ -165,11 +195,7 @@ export function suggestMapping(
   const timestampCol = tsWithTime ?? dateCols[0] ?? columns.find(c => /time|date|heure|horodat|timestamp/i.test(c)) ?? '';
   const timeCol = !tsWithTime && dateCols[0] ? (timeOnlyCols[0] ?? '') : '';
 
-  const numericCols = columns.filter(c => {
-    if (c === timestampCol || c === timeCol || INDEX_COL_RE.test(c.trim())) return false;
-    const v = first(c);
-    return typeof v === 'number' || (typeof v === 'string' && /^-?\d+([.,]\d+)?$/.test(v.trim()));
-  });
+  const numericCols = columns.filter(c => c !== timestampCol && c !== timeCol && !INDEX_COL_RE.test(c.trim()) && isNumericColumn(sample, c));
   const valueCol = numericCols[0] ?? '';
   const unit = valueCol ? (unitFromHeader(valueCol) || unitFromMeta(meta, valueCol)) : '';
   const metricLabel = valueCol ? labelFromHeader(valueCol) : '';

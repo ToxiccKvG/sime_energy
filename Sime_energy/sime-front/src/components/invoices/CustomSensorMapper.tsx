@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
-  saveCustomSensor, guessQuantityKind, suggestMapping, previewTimestamps, columnsSignature,
+  saveCustomSensor, guessQuantityKind, suggestMapping, previewTimestamps, columnsSignature, allNumericExtraCols,
   type CustomSensor, type CustomSensorInput, type ExtraCol, type QuantityKind,
 } from '@/lib/custom-sensor-service';
 import { useOrganization } from '@/context/OrganizationContext';
@@ -424,14 +424,30 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
 
           {/* Colonnes supplémentaires */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-slate-300">Colonnes supplémentaires</label>
-              <button
-                className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                onClick={() => setExtraCols((p) => [...p, { ...EMPTY_EXTRA }])}
-              >
-                <Plus className="h-3.5 w-3.5" /> Ajouter
-              </button>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <label className="text-sm font-medium text-slate-300">
+                Colonnes supplémentaires
+                {fileData && <span className="text-slate-500 font-normal ml-1.5">{extraCols.filter((e) => e.col).length} / {allNumericExtraCols(cols, fileData.sample, [timestampCol, timeCol, valueCol]).length} numériques</span>}
+              </label>
+              <div className="flex items-center gap-3">
+                {/* Tout prendre d'un coup : le cas courant est « je veux garder toutes les grandeurs du fichier » */}
+                <button type="button"
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  onClick={() => fileData && setExtraCols(allNumericExtraCols(cols, fileData.sample, [timestampCol, timeCol, valueCol]))}>
+                  Toutes les colonnes numériques
+                </button>
+                <button type="button"
+                  className="text-xs text-slate-400 hover:text-white transition-colors"
+                  onClick={() => setExtraCols([])}>
+                  Aucune
+                </button>
+                <button type="button"
+                  className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  onClick={() => setExtraCols((p) => [...p, { ...EMPTY_EXTRA }])}
+                >
+                  <Plus className="h-3.5 w-3.5" /> Ajouter
+                </button>
+              </div>
             </div>
             <p className="text-slate-600 text-xs">
               Mettez l'unité entre parenthèses si la grandeur en a une (ex. « Tension (V) ») — sinon elle sera traitée comme sans unité (ex. « Cos φ », un ratio).
