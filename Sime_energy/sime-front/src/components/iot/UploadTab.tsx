@@ -342,7 +342,7 @@ export function UploadTab() {
 
           resolve({ file, type, status: 'done', sheets, activeSheet, page: 0, detected: detectedType });
         } catch (err) {
-          resolve({ file, type, status: 'error', error: String(err), sheets: [], activeSheet: 0, page: 0 });
+          resolve({ file, type, status: 'error', error: err instanceof Error ? err.message : String(err), sheets: [], activeSheet: 0, page: 0 });
         }
       };
       reader.readAsArrayBuffer(file);

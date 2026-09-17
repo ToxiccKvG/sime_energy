@@ -27,11 +27,115 @@ function triggerDownload(buffer: ExcelJS.Buffer, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 100);
 }
 
-// READ: parse an xlsx ArrayBuffer; returns sheet names + raw rows per sheet
+// ---- Lecture : détection du format au CONTENU, pas à l'extension ----
+//
+// ExcelJS ne lit que le .xlsx (un zip). Depuis le remplacement de SheetJS
+// (a9cee302, CVE), tout autre fichier échouait avec « Can't find end of
+// central directory » — y compris les CSV et les exports de loggers nommés
+// « .xls » qui sont en réalité du texte. On regarde donc les premiers
+// octets :
+//   50 4B 03 04  → zip  → xlsx (ExcelJS)
+//   D0 CF 11 E0  → OLE2 → .xls binaire 97-2003 : non pris en charge, message clair
+//   sinon        → texte → CSV / TSV (séparateur détecté)
+
+export class UnsupportedSpreadsheetError extends Error {}
+
+function sniffFormat(buffer: ArrayBuffer): 'xlsx' | 'xls' | 'text' {
+  const b = new Uint8Array(buffer.slice(0, 4));
+  if (b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04) return 'xlsx';
+  if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) return 'xls';
+  return 'text';
+}
+
+function decodeText(buffer: ArrayBuffer): string {
+  // UTF-8 avec BOM éventuel ; repli latin-1 si le flux n'est pas de l'UTF-8 valide
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer).replace(/^\uFEFF/, '');
+  } catch {
+    return new TextDecoder('windows-1252').decode(buffer);
+  }
+}
+
+/** Séparateur le plus fréquent hors guillemets sur les 20 premières lignes. */
+function detectDelimiter(text: string): string {
+  const sample = text.split(/\r?\n/).slice(0, 20);
+  const counts: Record<string, number> = { ';': 0, ',': 0, '\t': 0, '|': 0 };
+  for (const line of sample) {
+    let inQuotes = false;
+    for (const ch of line) {
+      if (ch === '"') inQuotes = !inQuotes;
+      else if (!inQuotes && ch in counts) counts[ch]++;
+    }
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+}
+
+/** Convertit une cellule texte en nombre / date quand c'est sans ambiguïté, sinon la laisse en string. */
+function coerceCell(raw: string): unknown {
+  const v = raw.trim();
+  if (v === '') return null;
+  // nombre : « 1234.5 », « 1 234,5 », « -12 »
+  if (/^-?\d{1,3}(?:[ \u00a0]\d{3})*(?:[.,]\d+)?$/.test(v) || /^-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?$/.test(v)) {
+    const n = Number(v.replace(/[ \u00a0]/g, '').replace(',', '.'));
+    if (!isNaN(n)) return n;
+  }
+  return v;
+}
+
+/** Parseur CSV minimal (RFC 4180 : guillemets, guillemets doublés, retours à la ligne dans les cellules). */
+function parseCsv(text: string, delimiter: string): unknown[][] {
+  const rows: unknown[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; }
+        else inQuotes = false;
+      } else cell += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      row.push(cell); cell = '';
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = '';
+      if (row.some(c => c.trim() !== '')) rows.push(row.map(coerceCell));
+      row = [];
+    } else cell += ch;
+  }
+  row.push(cell);
+  if (row.some(c => c.trim() !== '')) rows.push(row.map(coerceCell));
+  return rows;
+}
+
+// READ: parse a spreadsheet ArrayBuffer (xlsx or CSV/TSV); returns sheet names + raw rows per sheet
 export async function parseExcelBuffer(buffer: ArrayBuffer): Promise<{
   sheetNames: string[];
   getRows(name: string): unknown[][];
 }> {
+  const format = sniffFormat(buffer);
+
+  if (format === 'xls') {
+    throw new UnsupportedSpreadsheetError(
+      "Fichier Excel 97-2003 (.xls binaire) : ce format n'est pas pris en charge. Ouvrez-le dans Excel et enregistrez-le en « Classeur Excel (.xlsx) », ou exportez-le en CSV.",
+    );
+  }
+
+  if (format === 'text') {
+    const text = decodeText(buffer);
+    if (/^\s*<(!doctype|html|table)/i.test(text)) {
+      throw new UnsupportedSpreadsheetError(
+        "Ce fichier est une page HTML déguisée en tableur (export d'appareil). Ouvrez-le dans Excel et enregistrez-le en .xlsx ou en CSV.",
+      );
+    }
+    const rows = parseCsv(text, detectDelimiter(text));
+    if (rows.length === 0) throw new UnsupportedSpreadsheetError('Fichier texte vide ou illisible.');
+    return { sheetNames: ['CSV'], getRows: (name) => (name === 'CSV' ? rows : []) };
+  }
+
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
 

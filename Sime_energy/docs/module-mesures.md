@@ -304,10 +304,16 @@ localStorage à 1 Ko ; Nettoyer → téléchargement du contenu, 240 lignes pars
 en place** au second enregistrement ; Analyse après rechargement → dates restaurées ;
 suppression → ligne et objet retirés.
 
-### Point ouvert
-L'import **CSV** échoue (« Can't find end of central directory ») : `processFile` passe tout
-par `parseExcelBuffer` (ExcelJS) alors que la zone accepte `.csv`. Préexistant, hors de ce
-chantier.
+### Formats lus par `parseExcelBuffer` (corrigé 17/09/2026)
+Régression du 17/06 (`a9cee302`, SheetJS → ExcelJS pour deux CVE) : seul le `.xlsx` (zip)
+était lu ; CSV et `.xls` échouaient avec « Can't find end of central directory ». Depuis le
+17/09, `lib/excel-utils.ts` reconnaît le format **au contenu** : `PK` → xlsx (ExcelJS) ;
+`D0 CF 11 E0` → `.xls` binaire 97-2003, refusé avec un message clair (« enregistrez en
+.xlsx ») — SheetJS n'est pas réintroduit ; sinon → texte CSV/TSV (BOM, UTF-8 ou
+windows-1252, séparateur `;` `,` tab `|` détecté, guillemets RFC 4180, nombres « 1 234,5 »
+convertis), rendu comme une feuille unique « CSV ». Un export de logger nommé `.xls` mais
+en texte (cas fréquent) passe donc directement ; une page HTML déguisée est refusée avec
+un message explicite. Bénéficie aussi à `AnalyseTab` et `CustomSensorMapper`.
 
 ## 10. Limites connues / hors périmètre du chantier 1
 
