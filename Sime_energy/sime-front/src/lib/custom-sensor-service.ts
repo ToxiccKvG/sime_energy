@@ -60,7 +60,10 @@ export async function saveCustomSensor(sensor: CustomSensorInput): Promise<Custo
     .insert(sensor)
     .select()
     .single();
-  if (error) throw error;
+  // PostgrestError n'est pas une Error : affiché tel quel par un toast il
+  // donne « [object Object] ». On remonte un message lisible (c'est ainsi
+  // qu'on a vu la colonne quantity_kind manquante, migration 20260917).
+  if (error) throw new Error(`${error.message}${error.hint ? ` — ${error.hint}` : ''}`);
   return data as CustomSensor;
 }
 
