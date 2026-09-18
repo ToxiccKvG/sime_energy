@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { parseExcelBuffer, type SpreadsheetMeta } from '@/lib/excel-utils';
+import { parseExcelBuffer, sniffFormat, type SpreadsheetMeta } from '@/lib/excel-utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,6 +16,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import {
   saveCustomSensor, guessQuantityKind, suggestMapping, previewTimestamps, columnsSignature, allExtraCols, triageExtraCols, isNumericColumn,
+  previewTableViaBackend,
   type CustomSensor, type CustomSensorInput, type ExtraCol, type QuantityKind,
 } from '@/lib/custom-sensor-service';
 import { useOrganization } from '@/context/OrganizationContext';
@@ -112,28 +113,40 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
   const readFile = useCallback(async (file: File) => {
     setLoading(true);
     try {
-      // Un seul lecteur pour tout (xlsx, csv, tsv, export « .xls » texte) : il
-      // saute le préambule des enregistreurs et en renvoie les métadonnées.
       const buf = await file.arrayBuffer();
-      const wb = await parseExcelBuffer(buf);
-      const rows = wb.getRows(wb.sheetNames[0]) as unknown[][];
-      if (rows.length === 0) throw new Error('Aucune ligne lisible dans ce fichier.');
+      let columns: string[]; let sample: Record<string, unknown>[]; let preview: Record<string, unknown>[];
+      let rowCount: number; let meta: SpreadsheetMeta;
 
-      const columns = (rows[0] as unknown[]).map((h, i) => (h != null && String(h).trim() ? String(h).trim() : `col_${i}`));
-      const toObj = (r: unknown[]) => {
-        const row: Record<string, unknown> = {};
-        columns.forEach((c, i) => { row[c] = r[i] ?? null; });
-        return row;
-      };
-      const body = rows.slice(1);
-      const MAX_SAMPLE = 50_000;
-      const stride = Math.max(1, Math.ceil(body.length / MAX_SAMPLE));
-      const sample = (stride === 1 ? body : body.filter((_, i) => i % stride === 0 || i === body.length - 1)).map(toObj);
-      const preview = body.slice(0, 5).map(toObj);
-      setFileData({ file, columns, preview, rowCount: body.length, sample, meta: wb.meta });
+      if (sniffFormat(buf) === 'xls') {
+        // .xls binaire (Excel 97-2003, ex. sonomètre) : le navigateur ne sait
+        // pas le lire, le backend oui (xlrd). Même sortie : colonnes, préambule,
+        // lignes (toutes si ≤ 5 000, sinon échantillon régulier).
+        const p = await previewTableViaBackend(file);
+        columns = p.columns; sample = p.rows; preview = p.rows.slice(0, 5); rowCount = p.rowCount; meta = p.meta;
+      } else {
+        // Lecteur local (xlsx, csv, tsv, export « .xls » texte) : saute le
+        // préambule des enregistreurs et en renvoie les métadonnées.
+        const wb = await parseExcelBuffer(buf);
+        const rows = wb.getRows(wb.sheetNames[0]) as unknown[][];
+        if (rows.length === 0) throw new Error('Aucune ligne lisible dans ce fichier.');
+        columns = (rows[0] as unknown[]).map((h, i) => (h != null && String(h).trim() ? String(h).trim() : `col_${i}`));
+        const cols = columns;
+        const toObj = (r: unknown[]) => {
+          const row: Record<string, unknown> = {};
+          cols.forEach((c, i) => { row[c] = r[i] ?? null; });
+          return row;
+        };
+        const body = rows.slice(1);
+        const MAX_SAMPLE = 50_000;
+        const stride = Math.max(1, Math.ceil(body.length / MAX_SAMPLE));
+        sample = (stride === 1 ? body : body.filter((_, i) => i % stride === 0 || i === body.length - 1)).map(toObj);
+        preview = body.slice(0, 5).map(toObj);
+        rowCount = body.length; meta = wb.meta;
+      }
+      setFileData({ file, columns, preview, rowCount, sample, meta });
 
       // Pré-remplissage : tout reste modifiable, ce sont des valeurs par défaut.
-      const sug = suggestMapping(columns, sample, wb.meta, file.name);
+      const sug = suggestMapping(columns, sample, meta, file.name);
       setName(sug.name);
       setTimestampCol(sug.timestampCol);
       setTimeCol(sug.timeCol);

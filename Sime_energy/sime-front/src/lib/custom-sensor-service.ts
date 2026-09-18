@@ -1,4 +1,34 @@
 import { supabase } from './supabase';
+import { metaFromPreambleLines, type SpreadsheetMeta } from './excel-utils';
+
+const API_URL = import.meta.env.VITE_API_URL;
+
+export interface TablePreview {
+  columns: string[];
+  meta: SpreadsheetMeta;
+  rowCount: number;
+  /** Toutes les lignes si ≤ 5 000, sinon un échantillon régulier (dernière ligne comprise). */
+  rows: Record<string, unknown>[];
+}
+
+/**
+ * Aperçu d'un fichier par le backend (pandas : xlsx, .xls binaire, csv/tsv).
+ * Le navigateur ne sait pas lire un .xls binaire (format Excel 97-2003) ;
+ * le backend, lui, a xlrd. Utilisé par le formulaire de capteur personnalisé
+ * et la reconnaissance des fichiers au dépôt.
+ */
+export async function previewTableViaBackend(file: File): Promise<TablePreview> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(`${API_URL}/processing/process-file/measures/preview`, { method: 'POST', body: formData });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try { const body = await response.json(); if (body?.detail) detail = body.detail; } catch { /* non-JSON */ }
+    throw new Error(detail);
+  }
+  const data = await response.json() as { columns: string[]; preamble: string[]; row_count: number; rows: Record<string, unknown>[] };
+  return { columns: data.columns, meta: metaFromPreambleLines(data.preamble ?? []), rowCount: data.row_count, rows: data.rows };
+}
 
 export interface ExtraCol {
   label: string;
@@ -127,6 +157,7 @@ export function labelFromHeader(header: string): string {
 
 /** Unité devinée d'après le NOM de la colonne quand l'en-tête n'en donne pas (exports de tables, loggers). */
 const UNIT_BY_NAME: [RegExp, string][] = [
+  [/sonor|sound|noise|bruit|\bdb\b|dba|leq|lp\b|spl/i, 'dB'],
   [/temp|t°|celsius|ressenti|feels|dew|ros[ée]e/i, '°C'],
   [/humid|hum\b|rh\b|moisture|battery_pct|batterie|pct|percent|taux/i, '%'],
   [/pression|pressure|hpa/i, 'hPa'],
@@ -270,15 +301,23 @@ export function suggestMapping(
 
   const numericCols = columns.filter(c => c !== timestampCol && c !== timeCol && !INDEX_COL_RE.test(c.trim()) && isNumericColumn(sample, c));
   const valueCol = numericCols[0] ?? '';
-  const unit = valueCol ? (unitFromHeader(valueCol) || unitFromMeta(meta, valueCol) || unitFromName(valueCol)) : '';
+  // Unité : en-tête « (°C) », sinon préambule « Temperature Unit:Celsius », sinon nom de
+  // colonne, sinon le titre du fichier (« MESURE SONORE … » → dB).
+  const unit = valueCol
+    ? (unitFromHeader(valueCol) || unitFromMeta(meta, valueCol) || unitFromName(valueCol) || unitFromName(meta._lines ?? ''))
+    : '';
   const metricLabel = valueCol ? labelFromHeader(valueCol) : '';
 
   // Toutes les autres colonnes, texte compris (choix de l'utilisateur, 17/09) :
   // le tableau et l'export les gardent, les graphiques ne tracent que le numérique.
   const extraCols: ExtraCol[] = allExtraCols(columns, sample, [timestampCol, timeCol, valueCol]);
 
-  const metaName = Object.entries(meta).find(([k]) => /logging name|name|nom|point|location|site/i.test(k))?.[1];
-  const name = (metaName ?? fileName.replace(/\.[^.]+$/, '')).trim();
+  // Nom : « Logging Name:… » d'un logger, sinon la ligne de titre du préambule
+  // (celle qui ressemble à un intitulé : plusieurs mots, pas un simple auteur),
+  // sinon le nom du fichier.
+  const metaName = Object.entries(meta).find(([k]) => k !== '_lines' && /logging name|name|nom|point|location|site/i.test(k))?.[1];
+  const titleLine = (meta._lines ?? '').split('\n').find(l => /[ _]/.test(l.trim()) && !/^[^:]{1,40}:/.test(l) && l.length >= 8);
+  const name = (metaName ?? titleLine ?? fileName.replace(/\.[^.]+$/, '')).trim();
 
   return { name, timestampCol, timeCol, valueCol, unit, metricLabel, extraCols };
 }

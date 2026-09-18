@@ -5,8 +5,8 @@ import { Upload, Loader2, CheckCircle2, AlertCircle, FileSpreadsheet, X, Setting
 import { useToast } from '@/hooks/use-toast';
 import { uploadMeasurementFile, MeasurementData, measurementLabel } from '@/services/measurementService';
 import { toDate } from '@/services/measurementStats';
-import { getCustomSensors, deleteCustomSensor, findSensorBySignature, type CustomSensor, type CustomSensorInput } from '@/lib/custom-sensor-service';
-import { parseExcelBuffer } from '@/lib/excel-utils';
+import { getCustomSensors, deleteCustomSensor, findSensorBySignature, previewTableViaBackend, type CustomSensor, type CustomSensorInput } from '@/lib/custom-sensor-service';
+import { parseExcelBuffer, sniffFormat } from '@/lib/excel-utils';
 import { filesFromDataTransfer, filesFromInput, isImportable, directoryInputProps } from '@/lib/folder-import';
 import { CustomSensorMapper } from './CustomSensorMapper';
 import { CustomSensorEditPanel } from './CustomSensorEditPanel';
@@ -106,9 +106,16 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, load
   const recognizeBySignature = useCallback(async (file: File) => {
     if (customSensors.length === 0) return;
     try {
-      const wb = await parseExcelBuffer(await file.arrayBuffer());
-      const header = (wb.getRows(wb.sheetNames[0])[0] ?? []) as unknown[];
-      const columns = header.map((h, i) => (h != null && String(h).trim() ? String(h).trim() : `col_${i}`));
+      const buf = await file.arrayBuffer();
+      let columns: string[];
+      if (sniffFormat(buf) === 'xls') {
+        // .xls binaire : en-têtes lus par le backend (xlrd)
+        columns = (await previewTableViaBackend(file)).columns;
+      } else {
+        const wb = await parseExcelBuffer(buf);
+        const header = (wb.getRows(wb.sheetNames[0])[0] ?? []) as unknown[];
+        columns = header.map((h, i) => (h != null && String(h).trim() ? String(h).trim() : `col_${i}`));
+      }
       const match = findSensorBySignature(customSensors, columns);
       if (!match) return;
       setEntries((prev) => prev.map((e) =>

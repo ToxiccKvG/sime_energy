@@ -7,7 +7,7 @@ import logging
 import base64
 from app.core.llm import _textract_analyze_bytes, _parse_trp, _normalize_with_llm, _analyze_energy_label_with_mistral
 from app.core.utils import _strip_coordinates_for_mistral, _pil_image_to_bytes, extract_invoice_fields
-from app.core.sensors import process_measurement_file
+from app.core.sensors import process_measurement_file, preview_table
 from app.core.unified_invoice_processor import UnifiedInvoiceProcessor
 from pydantic import BaseModel
 import pandas as pd
@@ -416,6 +416,20 @@ async def process_measures(
     except Exception as e:
         logger.exception("Erreur lors du traitement du fichier de mesures")
         raise HTTPException(status_code=500, detail=f"Erreur lors du traitement: {str(e)}")
+
+
+@router.post('/measures/preview')
+async def preview_measures_file(file: UploadFile = File(...)):
+    """Colonnes, préambule et échantillon de lignes d'un fichier tabulaire
+    (xlsx, xls binaire, csv/tsv) — pour le formulaire de capteur personnalisé."""
+    try:
+        contents = await file.read()
+        return preview_table(contents)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Erreur lors de l'aperçu du fichier de mesures")
+        raise HTTPException(status_code=400, detail=f"Fichier illisible : {str(e)}")
 
 
 @router.post("/invoice-tables-to-excel")

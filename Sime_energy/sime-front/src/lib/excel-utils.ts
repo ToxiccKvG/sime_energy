@@ -40,7 +40,7 @@ function triggerDownload(buffer: ExcelJS.Buffer, filename: string) {
 
 export class UnsupportedSpreadsheetError extends Error {}
 
-function sniffFormat(buffer: ArrayBuffer): 'xlsx' | 'xls' | 'text' {
+export function sniffFormat(buffer: ArrayBuffer): 'xlsx' | 'xls' | 'text' {
   const b = new Uint8Array(buffer.slice(0, 4));
   if (b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04) return 'xlsx';
   if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) return 'xls';
@@ -91,15 +91,27 @@ function coerceCell(raw: string): unknown {
 export type SpreadsheetMeta = Record<string, string>;
 
 function parsePreamble(rows: unknown[][]): SpreadsheetMeta {
+  return metaFromPreambleLines(rows.map(r => r.map(c => (c == null ? '' : String(c))).join(' ')));
+}
+
+/**
+ * Lignes de préambule → métadonnées : paires « clé:valeur » (plusieurs par
+ * ligne, séparées par ≥ 3 espaces) + les lignes brutes sous `_lines`
+ * (titre, auteur… utiles pour nommer le capteur ou deviner l'unité).
+ */
+export function metaFromPreambleLines(lines: string[]): SpreadsheetMeta {
   const meta: SpreadsheetMeta = {};
-  for (const r of rows) {
-    const line = r.map(c => (c == null ? '' : String(c))).join(' ').replace(/^[>\s]+/, '').trim();
+  const kept: string[] = [];
+  for (const raw of lines) {
+    const line = raw.replace(/^[>\s]+/, '').trim();
     if (!line || /^-{5,}$/.test(line)) continue;
+    kept.push(line);
     for (const part of line.split(/\s{3,}/)) {
       const m = part.match(/^([^:]{1,40}?)\s*:\s*(.+)$/);
       if (m) meta[m[1].trim()] = m[2].trim();
     }
   }
+  if (kept.length) meta._lines = kept.join('\n');
   return meta;
 }
 

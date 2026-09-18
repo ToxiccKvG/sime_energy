@@ -468,7 +468,54 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
 _TEXT_DELIMITERS = ["\t", ";", ",", "|"]
 
 
-def _read_text_table(contents: bytes) -> pd.DataFrame:
+def _find_header_row(frame: pd.DataFrame) -> int:
+    """Index de la première ligne au nombre de cellules renseignées majoritaire.
+
+    Les feuilles Excel d'appareils (sonomètre, logger) commencent souvent par
+    un titre, un auteur, une ligne vide… avant l'en-tête. Le tableau, lui,
+    est régulier : sa largeur est la valeur la plus fréquente.
+    """
+    counts = frame.notna().sum(axis=1)
+    nonzero = counts[counts > 0]
+    if nonzero.empty:
+        return 0
+    modal = int(nonzero.mode().iloc[0])
+    if modal < 2:
+        return 0
+    hits = counts[counts >= modal].index
+    return int(hits[0]) if len(hits) else 0
+
+
+def _read_excel_table(contents: bytes) -> tuple:
+    """Lit un classeur Excel (.xlsx via openpyxl, .xls binaire via xlrd) en
+    sautant le préambule ; renvoie (DataFrame, lignes de préambule)."""
+    bio = io.BytesIO(contents)
+    engine = "xlrd" if contents[:4] == b"\xd0\xcf\x11\xe0" else "openpyxl"
+    xls = pd.ExcelFile(bio, engine=engine)
+    raw = xls.parse(xls.sheet_names[0], header=None)
+    h = _find_header_row(raw)
+    preamble = [
+        " ".join(str(v) for v in row if pd.notna(v)).strip()
+        for _, row in raw.iloc[:h].iterrows()
+    ]
+    preamble = [p for p in preamble if p]
+    header = [str(c).strip() if pd.notna(c) else f"col_{i}" for i, c in enumerate(raw.iloc[h])]
+    df = raw.iloc[h + 1:].copy()
+    df.columns = header
+    df = df.dropna(how="all").reset_index(drop=True)
+    return df, preamble
+
+
+def read_any_table(contents: bytes) -> tuple:
+    """Point d'entrée unique : Excel (xlsx / xls) sinon texte (CSV / TSV).
+    Renvoie (DataFrame, lignes de préambule)."""
+    try:
+        return _read_excel_table(contents)
+    except Exception:
+        return _read_text_table(contents)
+
+
+def _read_text_table(contents: bytes) -> tuple:
     """Lit un fichier texte tabulaire (CSV / TSV) en sautant un préambule éventuel.
 
     Les enregistreurs (loggers H&T, analyseurs) écrivent souvent quelques lignes
@@ -506,7 +553,8 @@ def _read_text_table(contents: bytes) -> pd.DataFrame:
     raw = pd.read_csv(io.StringIO(body), sep=best_sep, engine="python",
                       on_bad_lines="skip", skipinitialspace=True, dtype=str)
     raw.columns = [str(c).strip() for c in raw.columns]
-    return raw
+    preamble = [ln.strip() for ln in lines[:header_idx] if ln.strip() and not re.fullmatch(r"-{5,}", ln.strip())]
+    return raw, preamble
 
 
 def _infer_dayfirst(sample: pd.Series) -> Optional[bool]:
@@ -547,6 +595,57 @@ def _infer_dayfirst(sample: pd.Series) -> Optional[bool]:
 _DATE_TOKENS = re.compile(r"^\s*(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})")
 
 
+def _looks_iso(sample: pd.Series) -> bool:
+    """Vrai si les dates sont ISO 8601 (année en tête : 2026-09-05T00:00:17+00:00)."""
+    for v in sample.astype(str).head(400):
+        m = _DATE_TOKENS.match(v.strip())
+        if m:
+            return len(m.group(1)) == 4
+    return False
+
+
+def _parse_timestamps(ts_text: pd.Series, fmt: Optional[str]) -> pd.Series:
+    """Parse la colonne temporelle sans perdre de lignes.
+
+    pandas ≥ 2 déduit le format de la première ligne puis l'applique strictement :
+    une ligne qui s'en écarte (fraction de seconde absente ou plus courte, secondes
+    omises…) devient NaT en silence. Sur un export Shelly, cela faisait perdre
+    des dizaines de milliers de mesures — et `dayfirst=True` appliqué à de l'ISO
+    inversait jour et mois des lignes restantes.
+    """
+    dayfirst: Optional[bool] = None
+    if fmt:
+        parsed = pd.to_datetime(ts_text, format=fmt, errors="coerce")
+        if parsed.isna().all():
+            parsed = pd.to_datetime(ts_text, errors="coerce")
+    elif _looks_iso(ts_text):
+        # Seul le mode ISO8601 accepte des fractions de seconde de longueur variable.
+        try:
+            parsed = pd.to_datetime(ts_text, format="ISO8601", errors="coerce")
+        except ValueError:
+            # Fuseaux mélangés dans le fichier : tout ramener en UTC.
+            parsed = pd.to_datetime(ts_text, format="ISO8601", errors="coerce", utc=True)
+    else:
+        dayfirst = _infer_dayfirst(ts_text)
+        # Fichier d'un seul jour sans indice : jour-mois par défaut (contexte
+        # francophone) ; le front a montré l'aperçu pour corriger si besoin.
+        dayfirst = True if dayfirst is None else dayfirst
+        parsed = pd.to_datetime(ts_text, errors="coerce", dayfirst=dayfirst)
+
+    # Filet : les lignes rejetées par le format strict sont reparsées une à une.
+    missing = parsed.isna() & ~ts_text.str.lower().isin(_EMPTY_TOKENS)
+    if missing.any():
+        try:
+            retry = pd.to_datetime(
+                ts_text[missing], errors="coerce", format="mixed",
+                dayfirst=bool(dayfirst) if dayfirst is not None else False,
+            )
+            parsed = parsed.where(~missing, retry)
+        except (ValueError, TypeError):
+            pass  # fuseaux incompatibles : on garde ce qui a été parsé
+    return parsed
+
+
 def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
     """Parse un fichier CSV ou Excel selon un mapping de colonnes libre.
 
@@ -557,16 +656,7 @@ def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
         value_col        : colonne de la grandeur principale
         extra_cols       : liste de {label, col} pour les colonnes supplémentaires
     """
-    # Détection Excel vs texte : openpyxl ne lit que le .xlsx (zip) ; tout le
-    # reste (CSV, TSV, export « .xls » qui est en fait du texte) passe en texte.
-    try:
-        bio = io.BytesIO(contents)
-        xls = pd.ExcelFile(bio, engine="openpyxl")
-        sheet = xls.sheet_names[0]
-        raw = xls.parse(sheet)
-        raw.columns = [str(c).strip() for c in raw.columns]
-    except Exception:
-        raw = _read_text_table(contents)
+    raw, _ = read_any_table(contents)
 
     ts_col = config["timestamp_col"]
     time_col = config.get("time_col") or None
@@ -593,18 +683,7 @@ def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
     if time_col:
         ts_text = ts_text + " " + raw[time_col].astype(str).str.strip()
 
-    fmt = config.get("timestamp_format")
-    if fmt:
-        df["timestamp"] = pd.to_datetime(ts_text, format=fmt, errors="coerce")
-        if df["timestamp"].isna().all():
-            df["timestamp"] = pd.to_datetime(ts_text, errors="coerce")
-    else:
-        dayfirst = _infer_dayfirst(ts_text)
-        # Fichier d'un seul jour sans indice : jour-mois par défaut (contexte
-        # francophone) ; le front a montré l'aperçu pour corriger si besoin.
-        df["timestamp"] = pd.to_datetime(
-            ts_text, errors="coerce", dayfirst=True if dayfirst is None else dayfirst
-        )
+    df["timestamp"] = _parse_timestamps(ts_text, config.get("timestamp_format"))
 
     df[val_col] = pd.to_numeric(raw[val_col].astype(str).str.replace(",", ".", regex=False), errors="coerce")
 
@@ -633,6 +712,36 @@ def _numeric_or_text(series: pd.Series) -> pd.Series:
 
 
 _EMPTY_TOKENS = {"", "nan", "none", "null", "-", "--", "---", "n/a", "na", "n.a."}
+
+
+def preview_table(contents: bytes, max_rows: int = 5000) -> Dict[str, Any]:
+    """Aperçu d'un fichier tabulaire pour le formulaire de capteur personnalisé :
+    colonnes, préambule, nombre de lignes, et un échantillon régulier de lignes
+    (toutes si ≤ max_rows) pour trier les colonnes vides / constantes et
+    prévisualiser les dates. Sert surtout aux .xls binaires, que le navigateur
+    ne sait pas lire."""
+    df, preamble = read_any_table(contents)
+    n = len(df)
+    if n > max_rows:
+        step = -(-n // max_rows)
+        idx = list(range(0, n, step))
+        if idx[-1] != n - 1:
+            idx.append(n - 1)
+        sample = df.iloc[idx]
+    else:
+        sample = df
+
+    def cell(v: Any) -> Any:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        if hasattr(v, "isoformat"):
+            return v.isoformat()
+        if isinstance(v, (int, float, str, bool)):
+            return v
+        return str(v)
+
+    rows = [{c: cell(v) for c, v in zip(df.columns, r)} for r in sample.itertuples(index=False, name=None)]
+    return {"columns": [str(c) for c in df.columns], "preamble": preamble, "row_count": n, "rows": rows}
 
 
 # ---------------------------------------------------------------------------
