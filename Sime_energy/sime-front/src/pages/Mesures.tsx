@@ -1,4 +1,4 @@
-import { MeasurementWorkflow } from '@/components/invoices/MeasurementWorkflow';
+import { MeasurementWorkflow } from '@/components/mesures/MeasurementWorkflow';
 
 const Mesures = () => {
   return (

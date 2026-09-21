@@ -21,7 +21,7 @@ Répartition des responsabilités :
 | **Supabase** | Table `custom_sensors` (définitions de capteurs personnalisés, par organisation, RLS) | Les mesures elles-mêmes ne sont pas persistées (chantier ultérieur) |
 
 Onglets : **Upload → Analyse → Visualisation → Modèles → Comparaison**
-(`components/invoices/MeasurementWorkflow.tsx`). La **période** choisie est un état du
+(`components/mesures/MeasurementWorkflow.tsx`). La **période** choisie est un état du
 workflow, par relevé, partagé entre Analyse, Visualisation et Modèles.
 
 ## 2. Capteurs supportés
@@ -115,15 +115,15 @@ réels ne sont pas affectés.
 
 | Fichier | Rôle |
 |---|---|
-| `components/invoices/MeasurementWorkflow.tsx` | Onglets, alias, période partagée par relevé — état lu/écrit dans `services/measurementSession.ts` (survit à un passage par IOT ou un audit) |
-| `components/invoices/MeasurementUploadStep.tsx` | Dépôt multi-fichiers **et dossiers** (`lib/folder-import.ts`), capteur par fichier deviné par le nom ou par l'**empreinte des colonnes** (`findSensorBySignature`, lecture des seuls en-têtes en arrière-plan), liste « Relevés chargés », capteurs personnalisés |
-| `components/invoices/CustomSensorMapper.tsx`, `CustomSensorEditPanel.tsx` | Création / édition d'un capteur personnalisé : **pré-remplissage** (`suggestMapping`), colonne heure séparée (`time_col`), **aperçu des dates interprétées** (`previewTimestamps`, `inferDayFirst`) avec choix jour-mois / mois-jour qui écrit `timestamp_format`, colonnes supplémentaires proposées |
-| `components/invoices/MeasurementAnalysis.tsx` | KPIs, vue par jour, stats par colonne, table, export CSV, rapport PDF/Word |
-| `components/invoices/MeasurementCharts.tsx` | Courbe multi-axes, distribution, profil heure × jour, cumul par période, drill-down, export PNG |
-| `components/invoices/AnalysisModelsPanel.tsx` | Onglet Modèles (affichage seulement) |
-| `components/invoices/ModelComparisonPanel.tsx` | Deux relevés côte à côte |
-| `components/invoices/SensorComparisonPanel.tsx` | Compteur général / somme de sous-compteurs |
-| `components/invoices/MeasurementPeriodFilter.tsx` | Filtre de période (`DateRange`, `filterByRange`, navigation jour) |
+| `components/mesures/MeasurementWorkflow.tsx` | Onglets, alias, période partagée par relevé — état lu/écrit dans `services/measurementSession.ts` (survit à un passage par IOT ou un audit) |
+| `components/mesures/MeasurementUploadStep.tsx` | Dépôt multi-fichiers **et dossiers** (`lib/folder-import.ts`), capteur par fichier deviné par le nom ou par l'**empreinte des colonnes** (`findSensorBySignature`, lecture des seuls en-têtes en arrière-plan), liste « Relevés chargés », capteurs personnalisés |
+| `components/mesures/CustomSensorMapper.tsx`, `CustomSensorEditPanel.tsx` | Création / édition d'un capteur personnalisé : **pré-remplissage** (`suggestMapping`), colonne heure séparée (`time_col`), **aperçu des dates interprétées** (`previewTimestamps`, `inferDayFirst`) avec choix jour-mois / mois-jour qui écrit `timestamp_format`, colonnes supplémentaires proposées |
+| `components/mesures/MeasurementAnalysis.tsx` | KPIs, vue par jour, stats par colonne, table, export CSV, rapport PDF/Word |
+| `components/mesures/MeasurementCharts.tsx` | Courbe multi-axes, distribution, profil heure × jour, cumul par période, drill-down, export PNG |
+| `components/mesures/AnalysisModelsPanel.tsx` | Onglet Modèles (affichage seulement) |
+| `components/mesures/ModelComparisonPanel.tsx` | Deux relevés côte à côte |
+| `components/mesures/SensorComparisonPanel.tsx` | Compteur général / somme de sous-compteurs |
+| `components/mesures/MeasurementPeriodFilter.tsx` | Filtre de période (`DateRange`, `filterByRange`, navigation jour) |
 | `services/measurementService.ts` | Appel API, type `MeasurementData`, `measurementLabel()` (alias > nom de fichier > capteur) |
 | `services/measurementStats.ts` | KPIs, `integrateEnergy()`, `groupMeasurementsByDay()`, interprétation |
 | `services/measurementReportExport.ts` | Rapport PDF (jsPDF) et Word (docx) depuis un modèle unique |

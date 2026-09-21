@@ -17,7 +17,7 @@
 
 import { useSyncExternalStore } from 'react';
 import type { MeasurementData } from './measurementService';
-import type { DateRange } from '@/components/invoices/MeasurementPeriodFilter';
+import type { DateRange } from '@/components/mesures/MeasurementPeriodFilter';
 import { toast } from '@/hooks/use-toast';
 import {
   loadMeasurementLibrary, createMeasurementFile, renameMeasurementFile, deleteMeasurementFile,
