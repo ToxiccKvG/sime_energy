@@ -107,12 +107,17 @@ export interface ComparisonBucket {
 }
 
 export interface ComparisonResult {
+  /** Tranches où le compteur général ET au moins un sous-compteur ont une valeur. */
   buckets: ComparisonBucket[];
   masterTotal: number;
   slavesTotal: number;
   deltaAbs: number;
   deltaPct: number | null;
   correlation: number | null;
+  /** Tranches du compteur général sans aucun sous-compteur (écartées du calcul). */
+  masterOnlyBuckets: number;
+  /** Tranches où des sous-compteurs mesurent mais pas le compteur général (écartées). */
+  slavesOnlyBuckets: number;
 }
 
 function parseTs(ts: string): Date {
@@ -190,9 +195,13 @@ export function computeComparison(
   const masterBuckets = bucketEnergy(master, granularity);
   const slaveBuckets = slaves.map((s) => ({ id: s.id, buckets: bucketEnergy(s, granularity) }));
 
-  const allKeys = new Set<string>(masterBuckets.keys());
-  slaveBuckets.forEach((s) => s.buckets.forEach((_, k) => allKeys.add(k)));
-  const sortedKeys = Array.from(allKeys).sort();
+  // On ne compare que la période commune : une tranche où un côté n'a pas
+  // mesuré ne dit rien sur la couverture, elle ne doit pas compter pour 0.
+  const slaveKeys = new Set<string>();
+  slaveBuckets.forEach((s) => s.buckets.forEach((_, k) => slaveKeys.add(k)));
+  const sortedKeys = Array.from(masterBuckets.keys()).filter((k) => slaveKeys.has(k)).sort();
+  const masterOnlyBuckets = masterBuckets.size - sortedKeys.length;
+  const slavesOnlyBuckets = slaveKeys.size - sortedKeys.length;
 
   const buckets: ComparisonBucket[] = sortedKeys.map((key) => {
     const masterValue = masterBuckets.get(key) ?? 0;
@@ -214,5 +223,5 @@ export function computeComparison(
   const deltaPct = masterTotal !== 0 ? (deltaAbs / masterTotal) * 100 : null;
   const correlation = pearson(buckets.map((b) => b.masterValue), buckets.map((b) => b.slavesSum));
 
-  return { buckets, masterTotal, slavesTotal, deltaAbs, deltaPct, correlation };
+  return { buckets, masterTotal, slavesTotal, deltaAbs, deltaPct, correlation, masterOnlyBuckets, slavesOnlyBuckets };
 }
