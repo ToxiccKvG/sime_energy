@@ -103,6 +103,16 @@ function getFamilyDynamic(type: string, exact: Record<string, DeviceFamily>, pre
   return getFamilyStatic(type); // filet de sécurité phase A — supprimé en phase B
 }
 
+/** Vrai pour une entrée all_status qui n'est pas un appareil (thermostat virtuel, scène…). */
+function isVirtualCloudObject(s: Record<string,unknown>): boolean {
+  const fam = String(s.family ?? "").toLowerCase();
+  if (fam === "thermostat" || fam === "scene" || fam === "group") return true;
+  // Un vrai appareil a toujours un type matériel (SHEM-3, SNSW-…) ; un id purement
+  // numérique de 13 chiffres est un timestamp de création d'objet virtuel.
+  const type = String(s.type ?? "");
+  return /^THERMOSTAT$|^SCENE$|^GROUP$/i.test(type);
+}
+
 const ID_FALLBACK: Record<string, { type: string; name: string; family: DeviceFamily; site: string }> = {
   // Compte 1 — Ma Maison
   "XB137192911224369":{type:"SBHT-003C",name:"BLU H&T_Chambre",family:"CAPTEUR_ENV",site:"Ma Maison"},
@@ -167,7 +177,6 @@ const ID_FALLBACK: Record<string, { type: string; name: string; family: DeviceFa
   "543204ba4b18":{type:"SNPM-001PCEU16",name:"Ventilo à partir du 04/12/2025",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34b7da8a47a0":{type:"S3PM-001PCEU16",name:"Éclairage Disjoncteur 1",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34b7da8a4aa0":{type:"S3PM-001PCEU16",name:"Éclairage Disjoncteur 2",family:"ENERGIE_1PH",site:"Académie CER2E"},
-  "1720017229409":{type:"INCONNU",name:"Appareil inconnu (fantôme)",family:"ETAT",site:"Académie CER2E"},
   // Compte 3 — Donsin (PV), devices déplacés depuis Académie CER2E le 2026-07-09
   "XB61819871591478":{type:"SBDW-002C",name:"Capteur d'ouverture de portes",family:"ETAT",site:"Donsin"},
   "XB211299189491624":{type:"SBWS-90CM",name:"Station météo_Donsin",family:"CAPTEUR_ENV",site:"Donsin"},
@@ -577,6 +586,11 @@ async function pollAccount(
 
   for (const [deviceId,status] of Object.entries(allStatus)) {
     if (typeof status!=="object"||!status) continue;
+    // Objets VIRTUELS du cloud (thermostat, scène, groupe…) : présents dans
+    // all_status mais absents de device/list, sans état physique. Exemple :
+    // 1720017229409 = thermostat désactivé de Ma Maison, 5 mois de lignes
+    // vides (« Appareil inconnu (fantôme) »). On les ignore.
+    if (isVirtualCloudObject(status as Record<string,unknown>)) { console.log(`[virtuel ignoré] ${deviceId} family=${(status as any).family}`); continue; }
     const meta=resolveMeta(deviceId,apiData,dbCache,channels,exact,prefix);
     rows.push(extractReading(deviceId,account.site,meta,status as any,lastCounters[deviceId]));
     processed.add(deviceId);
