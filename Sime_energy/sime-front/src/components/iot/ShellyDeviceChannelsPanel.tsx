@@ -1,8 +1,10 @@
 // ============================================================
-// IOT MODULE — Paramètres > Canaux multi-relais
-// Shelly Cloud ne renvoie qu'un seul device_id pour un appareil
-// à plusieurs relais (ex. prise 4 sorties). Cet écran permet de
-// définir les canaux virtuels (nom par sortie) sans redéploiement.
+// IOT MODULE — Paramètres › Réglages avancés › Appareils multi-prises
+// Shelly Cloud ne renvoie qu'un seul device_id pour un appareil à
+// plusieurs sorties (Plus 2PM, Pro 4PM, Plug S 4 prises…). Cet écran
+// déclare chaque sortie comme un appareil à part entière (nom par
+// sortie). L'appareil se CHOISIT dans la liste du catalogue : un
+// non-technicien n'a jamais à taper un identifiant.
 // ============================================================
 
 import { useEffect, useState } from 'react';
@@ -20,6 +22,7 @@ import {
   type ShellyDeviceChannel,
 } from '@/lib/shelly-device-config-service';
 import { fetchAccounts } from '@/lib/shelly-account-service';
+import { fetchDisponibles } from '@/lib/iot-supabase-service';
 
 interface FormState {
   parent_device_id: string;
@@ -33,6 +36,8 @@ const EMPTY_FORM: FormState = { parent_device_id: '', channel_number: '', channe
 export function ShellyDeviceChannelsPanel() {
   const [channels, setChannels] = useState<ShellyDeviceChannel[]>([]);
   const [sites, setSites]       = useState<string[]>([]);
+  // Appareils physiques (sans suffixe _n) : candidats à la division en sorties
+  const [devices, setDevices]   = useState<{ device_id: string; name: string; site: string }[]>([]);
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState<string | null>(null);
@@ -43,9 +48,10 @@ export function ShellyDeviceChannelsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [c, accounts] = await Promise.all([fetchChannels(), fetchAccounts()]);
+      const [c, accounts, dispo] = await Promise.all([fetchChannels(), fetchAccounts(), fetchDisponibles()]);
       setChannels(c);
       setSites(accounts.map(a => a.site));
+      setDevices(dispo.devices.filter(d => !/_\d+$/.test(d.device_id)).map(d => ({ device_id: d.device_id, name: d.name, site: d.site })));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -94,9 +100,10 @@ export function ShellyDeviceChannelsPanel() {
             <Split className="h-4 w-4 text-slate-300" />
           </div>
           <div>
-            <h2 className="text-white font-semibold">Canaux multi-relais</h2>
+            <h2 className="text-white font-semibold">Appareils multi-prises</h2>
             <p className="text-slate-400 text-xs mt-0.5">
-              Divisez un dispositif à plusieurs sorties (ex. prise 4 relais) en canaux nommés.
+              Un appareil à plusieurs sorties (Plus 2PM, Pro 4PM, multiprise) n'envoie qu'une mesure par sortie :
+              déclarez ici chaque sortie avec son nom pour la voir comme un appareil à part.
             </p>
           </div>
         </div>
@@ -121,28 +128,48 @@ export function ShellyDeviceChannelsPanel() {
 
       {/* Formulaire ajout */}
       <div className="border border-white/10 rounded-xl p-4 space-y-3">
-        <p className="text-slate-300 text-sm font-medium">Diviser un dispositif en plusieurs canaux</p>
+        <p className="text-slate-300 text-sm font-medium">Déclarer une sortie</p>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <Input placeholder="device_id parent (ex: 34987a68c520)" value={form.parent_device_id}
-            onChange={e => setForm(f => ({ ...f, parent_device_id: e.target.value }))}
-            className="bg-slate-800 border-white/10 text-slate-200 text-sm" />
-          <Input placeholder="N° canal (0, 1, 2…)" type="number" value={form.channel_number}
-            onChange={e => setForm(f => ({ ...f, channel_number: e.target.value }))}
-            className="bg-slate-800 border-white/10 text-slate-200 text-sm" />
-          <Input placeholder="Nom du canal (ex: Prise 2)" value={form.channel_name}
-            onChange={e => setForm(f => ({ ...f, channel_name: e.target.value }))}
-            className="bg-slate-800 border-white/10 text-slate-200 text-sm" />
-          <Input placeholder="Site (ex: Ma Maison)" value={form.site} list="shelly-sites"
-            onChange={e => setForm(f => ({ ...f, site: e.target.value }))}
-            className="bg-slate-800 border-white/10 text-slate-200 text-sm" />
-          <datalist id="shelly-sites">
-            {sites.map(s => <option key={s} value={s} />)}
-          </datalist>
+          <div className="md:col-span-2 space-y-1">
+            <label className="text-xs text-slate-500">Appareil</label>
+            <select
+              value={form.parent_device_id}
+              onChange={e => {
+                const d = devices.find(x => x.device_id === e.target.value);
+                setForm(f => ({ ...f, parent_device_id: e.target.value, site: d?.site ?? f.site }));
+              }}
+              className="w-full h-9 rounded-md bg-slate-800 border border-white/10 text-slate-200 text-sm px-2"
+            >
+              <option value="" className="bg-slate-800">— choisir un appareil —</option>
+              {sites.map(site => (
+                <optgroup key={site} label={site} className="bg-slate-800">
+                  {devices.filter(d => d.site === site).sort((a, b) => a.name.localeCompare(b.name)).map(d => (
+                    <option key={d.device_id} value={d.device_id} className="bg-slate-800">{d.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-500">Sortie n° (la 1ʳᵉ est 0)</label>
+            <Input placeholder="1" type="number" min={0} value={form.channel_number}
+              onChange={e => setForm(f => ({ ...f, channel_number: e.target.value }))}
+              className="bg-slate-800 border-white/10 text-slate-200 text-sm" />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-500">Nom de cette sortie</label>
+            <Input placeholder="ex : Prise 2 — imprimante" value={form.channel_name}
+              onChange={e => setForm(f => ({ ...f, channel_name: e.target.value }))}
+              className="bg-slate-800 border-white/10 text-slate-200 text-sm" />
+          </div>
         </div>
-        <Button size="sm" onClick={handleAdd} disabled={saving}
+        <p className="text-xs text-slate-500">
+          La sortie 0 reste l'appareil lui-même ; déclarez les suivantes (1, 2, 3…). Le site est repris de l'appareil choisi.
+        </p>
+        <Button size="sm" onClick={handleAdd} disabled={saving || !form.parent_device_id || !form.channel_name.trim() || form.channel_number === ''}
           className="bg-blue-600 hover:bg-blue-700 text-white">
           <Plus className="h-3.5 w-3.5 mr-1.5" />
-          Ajouter le canal
+          Déclarer la sortie
         </Button>
       </div>
 
@@ -154,16 +181,16 @@ export function ShellyDeviceChannelsPanel() {
       ) : channels.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-32 gap-2 border border-dashed border-white/10 rounded-xl">
           <Split className="h-6 w-6 text-slate-600" />
-          <p className="text-slate-400 text-sm">Aucun canal configuré</p>
+          <p className="text-slate-400 text-sm">Aucune sortie déclarée — tous vos appareils n'ont qu'une mesure</p>
         </div>
       ) : (
         <div className="border border-white/10 rounded-xl overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="border-white/10 hover:bg-transparent">
-                <TableHead className="text-slate-400">Device parent</TableHead>
-                <TableHead className="text-slate-400">Canal</TableHead>
-                <TableHead className="text-slate-400">Nom</TableHead>
+                <TableHead className="text-slate-400">Appareil</TableHead>
+                <TableHead className="text-slate-400">Sortie</TableHead>
+                <TableHead className="text-slate-400">Nom de la sortie</TableHead>
                 <TableHead className="text-slate-400">Site</TableHead>
                 <TableHead className="text-slate-400 text-right">Actions</TableHead>
               </TableRow>
@@ -171,7 +198,10 @@ export function ShellyDeviceChannelsPanel() {
             <TableBody>
               {channels.map(c => (
                 <TableRow key={c.id} className="border-white/10">
-                  <TableCell className="text-white font-mono text-xs">{c.parent_device_id}</TableCell>
+                  <TableCell className="text-white text-sm">
+                    {devices.find(d => d.device_id === c.parent_device_id)?.name ?? c.parent_device_id}
+                    <span className="block text-slate-600 font-mono text-[10px]">{c.parent_device_id}</span>
+                  </TableCell>
                   <TableCell className="text-slate-300 text-sm">{c.channel_number}</TableCell>
                   <TableCell className="text-slate-300 text-sm">{c.channel_name}</TableCell>
                   <TableCell className="text-slate-400 text-xs">{c.site}</TableCell>

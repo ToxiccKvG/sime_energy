@@ -1,9 +1,10 @@
 // ============================================================
-// IOT MODULE — Paramètres > Types de dispositifs
-// Classification des types de matériel Shelly (device_type → family).
-// Remplace la nécessité de coder en dur un nouveau type Shelly :
-// dès qu'un type inconnu apparaît dans la collecte, il se retrouve
-// ici pour classification en un clic.
+// IOT MODULE — Paramètres › Réglages avancés › Types de matériel
+// Dit à la plateforme ce que mesure un modèle d'appareil Shelly
+// (device_type → famille). Sans cette correspondance, un modèle
+// jamais vu arrive « non reconnu » et ses mesures sont ignorées.
+// Écran technique : en temps normal, un appareil ajouté dans l'app
+// Shelly est reconnu tout seul.
 // ============================================================
 
 import { useEffect, useState } from 'react';
@@ -108,9 +109,10 @@ export function ShellyDeviceTypesPanel() {
             <Tag className="h-4 w-4 text-slate-300" />
           </div>
           <div>
-            <h2 className="text-white font-semibold">Types de dispositifs</h2>
+            <h2 className="text-white font-semibold">Types de matériel</h2>
             <p className="text-slate-400 text-xs mt-0.5">
-              Classifiez un nouveau type de matériel Shelly sans redéploiement.
+              Indiquez ce que mesure un modèle d'appareil Shelly. Utile uniquement quand un appareil
+              apparaît comme « non reconnu ».
             </p>
           </div>
         </div>
@@ -138,7 +140,7 @@ export function ShellyDeviceTypesPanel() {
         <div className="flex items-center gap-2 mb-3">
           <AlertTriangle className="h-4 w-4 text-amber-400" />
           <h3 className="text-slate-200 font-medium text-sm">
-            Types non classifiés {unclassified.length > 0 && <span className="text-amber-400">({unclassified.length})</span>}
+            Modèles non reconnus {unclassified.length > 0 && <span className="text-amber-400">({unclassified.length})</span>}
           </h3>
         </div>
 
@@ -149,17 +151,17 @@ export function ShellyDeviceTypesPanel() {
         ) : unclassified.length === 0 ? (
           <div className="flex items-center gap-2 text-slate-500 text-sm border border-dashed border-white/10 rounded-xl p-4">
             <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            Aucun type non classifié détecté.
+            Tous les modèles présents sur vos sites sont reconnus.
           </div>
         ) : (
           <div className="border border-amber-500/20 rounded-xl overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow className="border-white/10 hover:bg-transparent">
-                  <TableHead className="text-slate-400">Type Shelly</TableHead>
-                  <TableHead className="text-slate-400">Exemple</TableHead>
+                  <TableHead className="text-slate-400">Modèle Shelly</TableHead>
+                  <TableHead className="text-slate-400">Appareil concerné</TableHead>
                   <TableHead className="text-slate-400">Sites</TableHead>
-                  <TableHead className="text-slate-400">Famille à assigner</TableHead>
+                  <TableHead className="text-slate-400">Ce qu'il mesure</TableHead>
                   <TableHead className="text-slate-400 text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
@@ -175,7 +177,7 @@ export function ShellyDeviceTypesPanel() {
                         onValueChange={(v) => setPendingFamily(prev => ({ ...prev, [u.device_type]: v as DeviceFamily }))}
                       >
                         <SelectTrigger className="h-8 w-48 bg-slate-800 border-white/10 text-slate-200 text-xs">
-                          <SelectValue placeholder="Choisir une famille" />
+                          <SelectValue placeholder="Choisir…" />
                         </SelectTrigger>
                         <SelectContent>
                           {DEVICE_FAMILIES.map(f => (
@@ -188,7 +190,7 @@ export function ShellyDeviceTypesPanel() {
                       <Button size="sm" disabled={!pendingFamily[u.device_type] || saving === u.device_type}
                         onClick={() => handleClassify(u.device_type)}
                         className="bg-blue-600 hover:bg-blue-700 text-white h-8">
-                        {saving === u.device_type ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : 'Assigner'}
+                        {saving === u.device_type ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : 'Enregistrer'}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -201,14 +203,14 @@ export function ShellyDeviceTypesPanel() {
 
       {/* Types déjà classifiés */}
       <div>
-        <h3 className="text-slate-200 font-medium text-sm mb-3">Types classifiés ({types.length})</h3>
+        <h3 className="text-slate-200 font-medium text-sm mb-3">Modèles reconnus ({types.length})</h3>
         <div className="border border-white/10 rounded-xl overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="border-white/10 hover:bg-transparent">
-                <TableHead className="text-slate-400">Type Shelly</TableHead>
-                <TableHead className="text-slate-400">Famille</TableHead>
-                <TableHead className="text-slate-400">Correspondance préfixe</TableHead>
+                <TableHead className="text-slate-400">Modèle Shelly</TableHead>
+                <TableHead className="text-slate-400">Ce qu'il mesure</TableHead>
+                <TableHead className="text-slate-400">Portée</TableHead>
                 <TableHead className="text-slate-400 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -233,7 +235,7 @@ export function ShellyDeviceTypesPanel() {
                       className={`cursor-pointer ${t.match_prefix ? 'bg-blue-600/20 text-blue-300 border-blue-500/30' : 'bg-slate-700/50 text-slate-400 border-slate-600/50'}`}
                       onClick={() => handleTogglePrefix(t)}
                     >
-                      {t.match_prefix ? 'Préfixe activé' : 'Correspondance exacte'}
+                      {t.match_prefix ? 'Tous les modèles qui commencent ainsi' : 'Ce modèle exactement'}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
@@ -255,11 +257,11 @@ export function ShellyDeviceTypesPanel() {
           <DialogHeader>
             <DialogTitle className="text-white flex items-center gap-2">
               <Trash2 className="h-4 w-4 text-red-400" />
-              Supprimer la classification
+              Oublier ce modèle
             </DialogTitle>
           </DialogHeader>
           <p className="text-slate-400 text-sm py-2">
-            Ce type de dispositif redeviendra "non classifié" au prochain poll qui le détecte. Cette action est irréversible.
+            Les appareils de ce modèle redeviendront « non reconnus » au prochain relevé et leurs mesures ne seront plus enregistrées, jusqu'à ce que vous les renseigniez à nouveau.
           </p>
           <DialogFooter className="gap-2">
             <Button variant="ghost" onClick={() => setDeleteId(null)}
@@ -270,7 +272,7 @@ export function ShellyDeviceTypesPanel() {
               onClick={() => deleteId && handleDelete(deleteId)}
               className="bg-red-600 hover:bg-red-700 text-white"
             >
-              Supprimer définitivement
+              Oublier ce modèle
             </Button>
           </DialogFooter>
         </DialogContent>

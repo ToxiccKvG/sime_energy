@@ -1,14 +1,21 @@
 // ============================================================
 // IOT MODULE — Onglet Paramètres
-// Gestion des comptes Shelly Cloud : ajout, modification,
-// suppression, test de connexion. Zéro intervention développeur.
+//
+// Deux niveaux (chantier 3, 22/09/2026) :
+//   · « Mes sites » — ce qu'un non-technicien fait seul : connecter un
+//     compte Shelly, donner un rôle aux appareils ;
+//   · « Réglages avancés » — repliés derrière un bouton : types de
+//     matériel et canaux multi-prises, réglages techniques qu'on ne
+//     touche que si un appareil n'est pas reconnu.
+// La plateforme ne fait que LIRE Shelly Cloud : les appareils et les
+// comptes se créent dans l'app Shelly, ici on les organise.
 // ============================================================
 
 import { useEffect, useState } from 'react';
 import {
   Settings, Plus, Pencil, Trash2, Wifi, WifiOff, RefreshCw,
   CheckCircle2, XCircle, Eye, EyeOff, Server, KeyRound, Tag,
-  AlertTriangle, Clock, Zap, Split, PlugZap,
+  AlertTriangle, Clock, Zap, Split, PlugZap, Wrench, ChevronDown, ChevronUp, Info, ExternalLink,
 } from 'lucide-react';
 import { Button }   from '@/components/ui/button';
 import { Input }    from '@/components/ui/input';
@@ -26,14 +33,41 @@ import { ShellyDeviceTypesPanel } from './ShellyDeviceTypesPanel';
 import { ShellyDeviceRolesPanel } from './ShellyDeviceRolesPanel';
 import { ShellyDeviceChannelsPanel } from './ShellyDeviceChannelsPanel';
 
-type SubTab = 'comptes' | 'types' | 'canaux' | 'roles';
+type SubTab = 'comptes' | 'roles' | 'types' | 'canaux';
 
-const SUB_TABS: { id: SubTab; label: string; icon: typeof Settings }[] = [
-  { id: 'comptes', label: 'Comptes Shelly Cloud',  icon: Settings },
-  { id: 'types',   label: 'Types de dispositifs',  icon: Tag },
-  { id: 'canaux',  label: 'Canaux multi-relais',   icon: Split },
-  { id: 'roles',   label: 'Rôles des appareils',   icon: PlugZap },
+/** Réglages courants — visibles d'emblée. */
+const MAIN_TABS: { id: SubTab; label: string; icon: typeof Settings }[] = [
+  { id: 'comptes', label: 'Connexions Shelly',    icon: Settings },
+  { id: 'roles',   label: 'Rôle des appareils',   icon: PlugZap },
 ];
+
+/** Réglages avancés — repliés, réservés aux cas où un appareil n'est pas reconnu. */
+const ADVANCED_TABS: { id: SubTab; label: string; icon: typeof Settings }[] = [
+  { id: 'types',   label: 'Types de matériel',    icon: Tag },
+  { id: 'canaux',  label: 'Appareils multi-prises', icon: Split },
+];
+
+/**
+ * Serveur Shelly Cloud : chaque compte est hébergé sur un serveur numéroté
+ * (shelly-88-eu, shelly-97-eu, shelly-271-eu…) affiché dans l'app à côté de
+ * la clé. Le numéro est imprévisible : au lieu d'une liste figée, on propose
+ * les serveurs des sites déjà connectés et on laisse saisir les autres, avec
+ * un exemple et la règle de construction de l'adresse.
+ */
+const OTHER_SERVER = '__autre__';
+
+/** « https://shelly-88-eu.shelly.cloud » → « shelly-88-eu ». */
+function serverShortName(url: string): string {
+  return url.replace(/^https?:\/\//, '').replace(/\.shelly\.cloud\/?$/, '');
+}
+
+/** Accepte « shelly-88-eu », « shelly-88-eu.shelly.cloud » ou l'URL complète. */
+function normalizeServer(input: string): string {
+  const v = input.trim().replace(/\/$/, '');
+  if (!v) return '';
+  if (/^https?:\/\//i.test(v)) return v;
+  return `https://${v.replace(/\.shelly\.cloud$/i, '')}.shelly.cloud`;
+}
 
 // ── Types locaux ──────────────────────────────────────────────
 
@@ -46,7 +80,7 @@ interface FormState {
 }
 
 const EMPTY_FORM: FormState = {
-  site: '', label: '', auth_key: '', server_url: 'https://shelly-xx-eu.shelly.cloud', actif: true,
+  site: '', label: '', auth_key: '', server_url: '', actif: true,
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -55,6 +89,9 @@ const EMPTY_FORM: FormState = {
 
 export function ParametresTab() {
   const [subTab, setSubTab]             = useState<SubTab>('comptes');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [showKeyHelp, setShowKeyHelp]   = useState(false);
+  const [serverManual, setServerManual] = useState(false);
   const [accounts, setAccounts]         = useState<ShellyAccount[]>([]);
   const [loading, setLoading]           = useState(true);
   const [saving, setSaving]             = useState(false);
@@ -76,7 +113,7 @@ export function ParametresTab() {
     setRefreshMsg(null);
     try {
       const result = await forceMetadataRefresh();
-      setRefreshMsg(result.ok ? 'Refresh déclenché avec succès.' : `Échec : ${result.error}`);
+      setRefreshMsg(result.ok ? 'Recherche lancée — les nouveaux appareils apparaîtront dans la minute.' : `Échec : ${result.error}`);
       setRefreshCooldown(30); // évite de déclencher le rate limit Shelly Cloud
     } finally {
       setRefreshing(false);
@@ -115,6 +152,7 @@ export function ParametresTab() {
     setEditingId(null);
     setForm(EMPTY_FORM);
     setShowKey(false);
+    setServerManual(false);
     setModalOpen(true);
   }
 
@@ -131,6 +169,7 @@ export function ParametresTab() {
       actif:      acc.actif,
     });
     setShowKey(false);
+    setServerManual(!!acc.server_url);
     setModalOpen(true);
   }
 
@@ -143,7 +182,7 @@ export function ParametresTab() {
       const payload: ShellyAccountInput = {
         site:       form.site.trim(),
         label:      form.label.trim() || null,
-        server_url: form.server_url.trim().replace(/\/$/, ''),
+        server_url: normalizeServer(form.server_url),
         actif:      form.actif,
       };
       if (form.auth_key.trim()) payload.auth_key = form.auth_key.trim();
@@ -210,13 +249,17 @@ export function ParametresTab() {
     setFormTesting(false);
   }
 
+  // Serveurs déjà utilisés par les sites connectés : le cas le plus fréquent
+  // est d'ajouter un second compte sur le même serveur.
+  const knownServers = Array.from(new Set(accounts.map(a => a.server_url).filter(Boolean))).sort();
+
   // ── Rendu ───────────────────────────────────────────────────
   return (
     <div className="space-y-6">
 
-      {/* Sous-navigation Paramètres */}
-      <div className="flex items-center gap-1 border-b border-white/10 pb-px">
-        {SUB_TABS.map(t => {
+      {/* Sous-navigation : réglages courants, puis « Réglages avancés » repliés */}
+      <div className="flex flex-wrap items-center gap-1 border-b border-white/10 pb-px">
+        {MAIN_TABS.map(t => {
           const Icon = t.icon;
           const active = subTab === t.id;
           return (
@@ -224,9 +267,34 @@ export function ParametresTab() {
               key={t.id}
               onClick={() => setSubTab(t.id)}
               className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                active
-                  ? 'border-blue-500 text-white'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                active ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {t.label}
+            </button>
+          );
+        })}
+        <button
+          onClick={() => setAdvancedOpen(o => !o)}
+          className={`ml-auto flex items-center gap-1.5 px-3 py-2 text-xs border-b-2 border-transparent transition-colors ${
+            advancedOpen || ADVANCED_TABS.some(t => t.id === subTab) ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
+          }`}
+          title="Types de matériel et appareils multi-prises — à n'ouvrir que si un appareil n'est pas reconnu"
+        >
+          <Wrench className="h-3.5 w-3.5" />
+          Réglages avancés
+          {advancedOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        </button>
+        {advancedOpen && ADVANCED_TABS.map(t => {
+          const Icon = t.icon;
+          const active = subTab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setSubTab(t.id)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+                active ? 'border-amber-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -235,6 +303,16 @@ export function ParametresTab() {
           );
         })}
       </div>
+
+      {ADVANCED_TABS.some(t => t.id === subTab) && (
+        <div className="flex items-start gap-2 text-xs text-amber-200/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-400" />
+          <span>
+            Réglage technique. En temps normal, un appareil ajouté dans l'app Shelly est reconnu tout seul. N'intervenez ici
+            que si un appareil apparaît comme « non reconnu » ou si un appareil à plusieurs prises n'affiche qu'une seule mesure.
+          </span>
+        </div>
+      )}
 
       {subTab === 'types' && <ShellyDeviceTypesPanel />}
       {subTab === 'canaux' && <ShellyDeviceChannelsPanel />}
@@ -248,19 +326,19 @@ export function ParametresTab() {
             <Settings className="h-4 w-4 text-slate-300" />
           </div>
           <div>
-            <h2 className="text-white font-semibold">Comptes Shelly Cloud</h2>
+            <h2 className="text-white font-semibold">Connexions Shelly</h2>
             <p className="text-slate-400 text-xs mt-0.5">
-              Gérez vos credentials ici — la collecte s'adapte en moins d'une minute.
-              Les nouvelles pièces/dispositifs Shelly Cloud sont détectés automatiquement.
+              Un site = un compte Shelly Cloud connecté. Les appareils s'ajoutent dans l'app Shelly ;
+              ils apparaissent ici d'eux-mêmes dans les 10 minutes.
             </p>
           </div>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={handleForceRefresh} disabled={refreshing || refreshCooldown > 0}
-            title="Forcer la détection immédiate des nouvelles pièces/dispositifs sans attendre le cycle de 10 min"
+            title="Chercher tout de suite les appareils ajoutés dans l'app Shelly, sans attendre les 10 minutes"
             className="border-white/10 text-slate-400 hover:text-white hover:bg-white/5">
             <Zap className={`h-3.5 w-3.5 mr-1.5 ${refreshing ? 'animate-pulse' : ''}`} />
-            {refreshCooldown > 0 ? `Refresh (${refreshCooldown}s)` : 'Forcer un refresh'}
+            {refreshCooldown > 0 ? `Nouveaux appareils (${refreshCooldown}s)` : 'Chercher les nouveaux appareils'}
           </Button>
           <Button variant="outline" size="sm" onClick={load} disabled={loading}
             className="border-white/10 text-slate-400 hover:text-white hover:bg-white/5">
@@ -270,7 +348,7 @@ export function ParametresTab() {
           <Button size="sm" onClick={openAdd}
             className="bg-blue-600 hover:bg-blue-700 text-white">
             <Plus className="h-3.5 w-3.5 mr-1.5" />
-            Ajouter un compte
+            Connecter un site
           </Button>
         </div>
       </div>
@@ -301,14 +379,14 @@ export function ParametresTab() {
       {loading ? (
         <div className="flex items-center justify-center h-48 text-slate-500">
           <RefreshCw className="h-5 w-5 animate-spin mr-2" />
-          Chargement des comptes…
+          Chargement des sites…
         </div>
       ) : accounts.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48 gap-3 border border-dashed border-white/10 rounded-xl">
           <Server className="h-8 w-8 text-slate-600" />
-          <p className="text-slate-400 text-sm">Aucun compte configuré</p>
+          <p className="text-slate-400 text-sm">Aucun site connecté</p>
           <Button size="sm" onClick={openAdd} className="bg-blue-600 hover:bg-blue-700 text-white">
-            <Plus className="h-3.5 w-3.5 mr-1.5" /> Ajouter le premier compte
+            <Plus className="h-3.5 w-3.5 mr-1.5" /> Connecter le premier site
           </Button>
         </div>
       ) : (
@@ -336,11 +414,20 @@ export function ParametresTab() {
           <DialogHeader>
             <DialogTitle className="text-white flex items-center gap-2">
               <Settings className="h-4 w-4 text-blue-400" />
-              {editingId ? 'Modifier le compte' : 'Ajouter un compte'}
+              {editingId ? 'Modifier la connexion' : 'Connecter un site'}
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
+            {!editingId && (
+              <div className="flex items-start gap-2 text-xs text-slate-300 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2">
+                <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-400" />
+                <span>
+                  Chaque site correspond à un compte Shelly Cloud. Les appareils se créent dans l'app Shelly ;
+                  ici vous donnez seulement à la plateforme le droit de les lire.
+                </span>
+              </div>
+            )}
             {/* Site */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
@@ -354,47 +441,47 @@ export function ParametresTab() {
                 disabled={!!editingId}
               />
               {!!editingId && (
-                <p className="text-xs text-slate-500">Le nom du site est la clé unique — non modifiable.</p>
+                <p className="text-xs text-slate-500">Le nom du site identifie toutes ses données — il ne se change pas.</p>
               )}
             </div>
 
             {/* Label */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-                <Tag className="h-3 w-3" /> Label affiché (optionnel)
+                <Tag className="h-3 w-3" /> Nom affiché (optionnel)
               </label>
               <Input
-                placeholder="ex : Compte 2 — Académie CER2E"
+                placeholder="ex : Académie — bâtiment principal"
                 value={form.label}
                 onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
                 className="bg-white/5 border-white/10 text-slate-100 placeholder:text-slate-600"
               />
             </div>
 
-            {/* Server URL */}
+            {/* Clé de connexion */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-                <Server className="h-3 w-3" /> URL du serveur Shelly Cloud
+              <label className="text-xs font-medium text-slate-400 flex items-center justify-between gap-1.5">
+                <span className="flex items-center gap-1.5"><KeyRound className="h-3 w-3" /> Clé de connexion Shelly</span>
+                <button type="button" onClick={() => setShowKeyHelp(v => !v)} className="text-blue-400 hover:text-blue-300 font-normal">
+                  Où la trouver ?
+                </button>
               </label>
-              <Input
-                placeholder="https://shelly-xx-eu.shelly.cloud"
-                value={form.server_url}
-                onChange={e => setForm(f => ({ ...f, server_url: e.target.value }))}
-                className="bg-white/5 border-white/10 text-slate-100 placeholder:text-slate-600"
-              />
-            </div>
-
-            {/* Auth Key */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-                <KeyRound className="h-3 w-3" /> Auth Key
-              </label>
+              {showKeyHelp && (
+                <ol className="text-xs text-slate-300 bg-white/5 border border-white/10 rounded-lg px-3 py-2 space-y-1 list-decimal list-inside">
+                  <li>Ouvrir l'app <strong>Shelly Smart Control</strong> ou <a href="https://control.shelly.cloud" target="_blank" rel="noreferrer" className="text-blue-400 inline-flex items-center gap-0.5">control.shelly.cloud <ExternalLink className="h-3 w-3" /></a>.</li>
+                  <li>Menu <strong>Paramètres utilisateur</strong> → <strong>Clé d'autorisation cloud</strong> (« Authorization cloud key »).</li>
+                  <li>Cliquer <strong>Obtenir la clé</strong>, puis la copier. Le nom du serveur (ex. <span className="font-mono">shelly-88-eu</span>) est affiché juste à côté.</li>
+                </ol>
+              )}
               <div className="relative">
                 <Input
                   type={showKey ? 'text' : 'password'}
-                  placeholder={editingId ? 'Laisser vide pour conserver la clé actuelle' : "Coller l'auth key depuis Shelly Cloud"}
+                  placeholder={editingId ? 'Laisser vide pour conserver la clé actuelle' : 'Coller la clé copiée dans l’app Shelly'}
                   value={form.auth_key}
-                  onChange={e => { setForm(f => ({ ...f, auth_key: e.target.value })); setFormTestResult(null); }}
+                  onChange={e => {
+                    setForm(f => ({ ...f, auth_key: e.target.value }));
+                    setFormTestResult(null);
+                  }}
                   className="bg-white/5 border-white/10 text-slate-100 placeholder:text-slate-600 pr-10"
                 />
                 <button
@@ -407,9 +494,44 @@ export function ParametresTab() {
               </div>
               {editingId && (
                 <p className="text-xs text-slate-500">
-                  La clé actuelle n'est jamais réaffichée pour des raisons de sécurité — laisser vide pour la conserver.
+                  La clé actuelle n'est jamais réaffichée — laisser vide pour la conserver.
                 </p>
               )}
+            </div>
+
+            {/* Serveur : liste plutôt qu'URL à taper */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                <Server className="h-3 w-3" /> Serveur Shelly (affiché à côté de la clé dans l'app)
+              </label>
+              {knownServers.length > 0 && (
+                <select
+                  value={knownServers.includes(form.server_url) ? form.server_url : (form.server_url || serverManual ? OTHER_SERVER : '')}
+                  onChange={e => {
+                    if (e.target.value === OTHER_SERVER) { setServerManual(true); setForm(f => ({ ...f, server_url: '' })); }
+                    else { setServerManual(false); setForm(f => ({ ...f, server_url: e.target.value })); }
+                  }}
+                  className="w-full h-10 rounded-md bg-white/5 border border-white/10 text-slate-100 text-sm px-3"
+                >
+                  <option value="" className="bg-[#0f111a]">— choisir —</option>
+                  {knownServers.map(v => (
+                    <option key={v} value={v} className="bg-[#0f111a]">{serverShortName(v)} (déjà utilisé)</option>
+                  ))}
+                  <option value={OTHER_SERVER} className="bg-[#0f111a]">Un autre serveur…</option>
+                </select>
+              )}
+              {(serverManual || knownServers.length === 0) && (
+                <Input
+                  placeholder="ex : shelly-88-eu"
+                  value={form.server_url}
+                  onChange={e => setForm(f => ({ ...f, server_url: e.target.value }))}
+                  onBlur={e => setForm(f => ({ ...f, server_url: normalizeServer(e.target.value) }))}
+                  className="bg-white/5 border-white/10 text-slate-100 placeholder:text-slate-600 font-mono text-sm"
+                />
+              )}
+              <p className="text-xs text-slate-500">
+                Le numéro varie d'un compte à l'autre — recopiez celui affiché dans l'app (ex. <span className="font-mono">shelly-88-eu</span>).
+              </p>
             </div>
 
             {/* Bouton Tester depuis le formulaire */}
@@ -451,7 +573,7 @@ export function ParametresTab() {
               disabled={saving || !form.site.trim() || !form.server_url.trim() || (!editingId && !form.auth_key.trim())}
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
-              {saving ? <><RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />Sauvegarde…</> : 'Sauvegarder'}
+              {saving ? <><RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />Enregistrement…</> : (editingId ? 'Enregistrer' : 'Connecter')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -463,12 +585,12 @@ export function ParametresTab() {
           <DialogHeader>
             <DialogTitle className="text-white flex items-center gap-2">
               <Trash2 className="h-4 w-4 text-red-400" />
-              Supprimer le compte
+              Déconnecter le site
             </DialogTitle>
           </DialogHeader>
           <p className="text-slate-400 text-sm py-2">
-            La collecte de données s'arrêtera pour ce site au prochain poll.
-            Cette action est irréversible.
+            La plateforme cessera de relever les appareils de ce site dans la minute. Les données déjà
+            collectées restent consultables. Les appareils ne sont pas touchés dans l'app Shelly.
           </p>
           <DialogFooter className="gap-2">
             <Button variant="ghost" onClick={() => setDeleteId(null)}
@@ -479,7 +601,7 @@ export function ParametresTab() {
               onClick={() => deleteId && handleDelete(deleteId)}
               className="bg-red-600 hover:bg-red-700 text-white"
             >
-              Supprimer définitivement
+              Déconnecter
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -524,7 +646,7 @@ function AccountCard({ account, testResult, onEdit, onDelete, onToggle, onTest }
         <Badge className={`shrink-0 text-xs border-0 ${
           account.actif ? 'bg-green-500/15 text-green-400' : 'bg-slate-500/15 text-slate-400'
         }`}>
-          {account.actif ? 'Actif' : 'Inactif'}
+          {account.actif ? 'Relevé en cours' : 'En pause'}
         </Badge>
       </div>
 
@@ -578,7 +700,7 @@ function AccountCard({ account, testResult, onEdit, onDelete, onToggle, onTest }
           variant="ghost" size="sm"
           onClick={onToggle}
           className="text-xs text-slate-400 hover:text-white hover:bg-white/5 h-7 px-2"
-          title={account.actif ? 'Désactiver' : 'Activer'}
+          title={account.actif ? 'Mettre les relevés en pause' : 'Reprendre les relevés'}
         >
           {account.actif ? <WifiOff className="h-3.5 w-3.5" /> : <Wifi className="h-3.5 w-3.5 text-green-400" />}
         </Button>
@@ -594,7 +716,7 @@ function AccountCard({ account, testResult, onEdit, onDelete, onToggle, onTest }
           variant="ghost" size="sm"
           onClick={onDelete}
           className="text-xs text-slate-400 hover:text-red-400 hover:bg-red-500/10 h-7 px-2"
-          title="Supprimer"
+          title="Déconnecter le site"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
@@ -612,7 +734,7 @@ function PollStatusLine({ account }: { account: ShellyAccount }) {
     return (
       <div className="flex items-center gap-2 text-slate-500">
         <Clock className="h-3 w-3 shrink-0" />
-        <span>Aucun poll enregistré</span>
+        <span>Aucun relevé encore</span>
       </div>
     );
   }
@@ -630,7 +752,7 @@ function PollStatusLine({ account }: { account: ShellyAccount }) {
       <div className="space-y-1">
         <div className="flex items-center gap-2 text-red-400">
           <AlertTriangle className="h-3 w-3 shrink-0" />
-          <span>Erreur · {elapsedLabel}</span>
+          <span>Relevé en erreur · {elapsedLabel}</span>
         </div>
         {account.last_error_msg && (
           <p className="text-red-500 text-[10px] pl-5 leading-tight truncate" title={account.last_error_msg}>
@@ -647,7 +769,7 @@ function PollStatusLine({ account }: { account: ShellyAccount }) {
         ? <AlertTriangle className="h-3 w-3 shrink-0" />
         : <CheckCircle2  className="h-3 w-3 shrink-0" />
       }
-      <span>Dernier poll · {elapsedLabel}</span>
+      <span>Dernier relevé · {elapsedLabel}</span>
     </div>
   );
 }

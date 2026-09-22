@@ -274,6 +274,32 @@ que le compte Académie couvre au moins trois arrivées SENELEC distinctes (buil
 EPT, bureau Woyofal). À traiter au chantier Paramètres (un « lieu » sous le compte), sinon les
 bilans M1–M5 de l'Académie mélangent des bâtiments sans arrivée commune.
 
+### Onglet Paramètres — deux niveaux (chantier 3, 22/09/2026)
+
+Constat de l'inventaire : sur les 7 situations où l'on ouvre Paramètres, 3 marchaient déjà
+(connecter un compte, voir un appareil apparaître, lui donner un rôle), 2 sont techniques par
+nature (modèle de matériel inconnu, appareil multi-prises), 2 manquent encore (les **lieux**
+sous un site — l'Académie a 3 arrivées SENELEC — et le **calendrier / jours fériés** par site,
+aujourd'hui figés dans le code pour le Sénégal).
+
+Livré (version minimale) :
+- **Réglages courants** : `Connexions Shelly` + `Rôle des appareils`. **Réglages avancés**
+  (`Types de matériel`, `Appareils multi-prises`) repliés derrière un bouton, avec un bandeau
+  ambre expliquant quand y toucher.
+- **Connecter un site** : bandeau « les appareils se créent dans l'app Shelly, ici vous donnez
+  le droit de les lire » ; aide dépliable « Où trouver la clé ? » (3 étapes) ; le serveur se
+  choisit parmi ceux **déjà utilisés** par les sites connectés (`shelly-88-eu`, `shelly-97-eu`,
+  `shelly-271-eu`…) ou se saisit en nom court, `normalizeServer()` reconstruisant l'URL.
+  *Le numéro de serveur n'est PAS déductible de la clé* (vérifié : le base64 de la clé ne
+  contient pas le nom d'hôte) — ne pas réintroduire d'heuristique là-dessus.
+- **Appareils multi-prises** : l'appareil se choisit dans le catalogue (groupé par site) au lieu
+  de taper un `device_id` ; le site est repris de l'appareil ; la liste affiche le nom.
+- **Vocabulaire** : compte → connexion / site, poll → relevé, auth key → clé de connexion,
+  famille `ENERGIE_3PH` → « Énergie triphasée », « supprimer le compte » → « déconnecter le site »
+  (avec la précision que les appareils ne sont pas touchés côté Shelly).
+
+Reste à trancher pour la version complète : **lieux** (~1 j) et **calendrier/fériés en base**.
+
 ### Détection des feuilles Excel « profil Mi »
 `UploadTab.tsx` garde un type local `ProfilMi` (`M1_RESEAU`…) et des motifs
 (`RESEAU|SENELEC|M1`, …) uniquement pour reconnaître les feuilles M1..M5 des anciens

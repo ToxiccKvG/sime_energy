@@ -29,6 +29,7 @@ import {
   fetchDeviceRoles, upsertDeviceRole, confirmDeviceRoles, deleteDeviceRole,
   DEVICE_ROLES, type ShellyDeviceRole, type DeviceRole,
 } from '@/lib/shelly-device-role-service';
+import { DEVICE_FAMILIES } from '@/lib/shelly-device-config-service';
 import { fetchDisponibles } from '@/lib/iot-supabase-service';
 
 interface Appareil {
@@ -270,7 +271,7 @@ export function ShellyDeviceRolesPanel() {
                       <Button size="sm" variant="ghost" onClick={() => rattacherSuggeres(site, liste)}
                         disabled={saving != null}
                         className="h-7 px-2 text-xs text-blue-300 hover:text-blue-200 hover:bg-blue-500/10"
-                        title="DEPART pour les prises/éclairages, AMBIANCE pour les capteurs, AUTRE pour les contacts — les compteurs 3PH/2PH restent à trancher un par un">
+                        title="Départ pour les prises et éclairages, Ambiance pour les capteurs, Autre pour les contacts — les compteurs triphasés et biphasés restent à trancher un par un">
                         <Wand2 className="h-3.5 w-3.5 mr-1" />
                         Rattacher les {nbSuggeres} déductibles
                       </Button>
@@ -288,7 +289,9 @@ export function ShellyDeviceRolesPanel() {
                                 {a.name}
                                 {a.room && <span className="text-slate-500 block text-[10px]">{a.room}</span>}
                               </TableCell>
-                              <TableCell className="text-slate-500 text-xs">{a.device_family}</TableCell>
+                              <TableCell className="text-slate-500 text-xs">
+                                {DEVICE_FAMILIES.find(f => f.value === a.device_family)?.label ?? a.device_family}
+                              </TableCell>
                               <TableCell>
                                 <SelectRole
                                   value={choix}
