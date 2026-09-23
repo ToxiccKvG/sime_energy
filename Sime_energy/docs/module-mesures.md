@@ -177,6 +177,22 @@ légendes — que ce soit dans IOT ou dans Mesures ».
   (°C, dB, %), si un seul relevé, ou si les unités diffèrent — on ne mélange pas des Wh et des kWh.
   Son titre automatique ne mentionne pas la grandeur du relevé courant, puisqu'elle compare les relevés.
 
+### 4.5 Cartes de chaleur — regroupement par jour (22/09/2026)
+
+Le « Profil journalier » de Mesures groupait par **jour de semaine × heure**, ce qui suppose
+plusieurs semaines de relevés. Inutilisable pour une campagne courte : les trois relevés
+sonores de Donsin couvrent 1 à 2 h sur une seule journée — la grille n'affichait qu'une ligne
+de trois cases, les autres jours vides.
+
+`DailyProfileView` calcule désormais les deux grilles et propose une bascule
+**Par jour** (jour calendaire × heure, comme `EnvHeatmapView` d'IOT) / **Jour de semaine**.
+Le défaut est automatique : jour calendaire à 14 jours de mesure ou moins, jour de semaine
+au-delà. Chaque grille a ses propres min/max, sinon l'échelle de couleur d'une campagne
+courte serait écrasée par les jours absents.
+
+`EnvHeatmapView` (IOT) suivait encore une échelle HSL 220 → 10 codée en dur ; elle passe sur
+le dégradé de la palette, comme le reste (oubli du lot 1).
+
 ## 5. Modèles d'analyse (`services/analysisModels/`)
 
 Principe : un modèle répond à une question d'audit et se choisit d'après la **nature des

@@ -571,30 +571,62 @@ function DistributionView({
 /* ----------------------------------------------------- vue Profil journalier */
 
 function DailyProfileView({ measurements, primary, unit, palette }: { measurements: Measurement[]; primary: string; unit: string; palette: Palette }) {
-  const { matrix, min, max, subDaily } = useMemo(() => {
-    const sum = Array.from({ length: 7 }, () => new Array(24).fill(0));
-    const cnt = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  // Deux regroupements, parce que les campagnes n'ont pas la même durée :
+  //  · « Jour de semaine » révèle les habitudes sur plusieurs semaines
+  //    (un compteur qui tourne en continu) ;
+  //  · « Par jour » suit une campagne courte — un sonomètre posé deux jours,
+  //    un enregistreur H&T sur une semaine — où le lundi/mardi ne veut rien dire.
+  const { weekday, calendar, subDaily } = useMemo(() => {
+    const wdSum = Array.from({ length: 7 }, () => new Array(24).fill(0));
+    const wdCnt = Array.from({ length: 7 }, () => new Array(24).fill(0));
+    const byDay = new Map<string, { ts: number; sums: number[]; counts: number[] }>();
     const hoursSeen = new Set<number>();
+
     for (const m of measurements) {
       const v = m[primary];
       if (typeof v !== 'number' || !isFinite(v)) continue;
       const d = parseTs(m.timestamp);
       if (isNaN(d.getTime())) continue;
-      const wd = (d.getDay() + 6) % 7; // 0 = lundi
       const h = d.getHours();
       hoursSeen.add(h);
-      sum[wd][h] += v;
-      cnt[wd][h] += 1;
+
+      const wd = (d.getDay() + 6) % 7; // 0 = lundi
+      wdSum[wd][h] += v;
+      wdCnt[wd][h] += 1;
+
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const cur = byDay.get(key) ?? { ts: d.setHours(0, 0, 0, 0), sums: new Array(24).fill(0), counts: new Array(24).fill(0) };
+      cur.sums[h] += v;
+      cur.counts[h] += 1;
+      byDay.set(key, cur);
     }
-    const matrix = sum.map((row, i) => row.map((s, h) => (cnt[i][h] ? s / cnt[i][h] : null)));
-    const flat = matrix.flat().filter((x): x is number => x != null);
+
+    const stats = (rows: (number | null)[][]) => {
+      const flat = rows.flat().filter((x): x is number => x != null);
+      return { min: flat.length ? Math.min(...flat) : 0, max: flat.length ? Math.max(...flat) : 0 };
+    };
+
+    const wdRows = wdSum.map((row, i) => row.map((sum, h) => (wdCnt[i][h] ? sum / wdCnt[i][h] : null)));
+    const days = [...byDay.entries()].sort((a, b) => a[1].ts - b[1].ts);
+    const calRows = days.map(([, { sums, counts }]) => sums.map((sum, h) => (counts[h] ? sum / counts[h] : null)));
+
     return {
-      matrix,
-      min: flat.length ? Math.min(...flat) : 0,
-      max: flat.length ? Math.max(...flat) : 0,
+      weekday: { labels: WEEKDAYS, rows: wdRows, ...stats(wdRows) },
+      calendar: {
+        labels: days.map(([key]) => new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })),
+        rows: calRows,
+        ...stats(calRows),
+      },
       subDaily: hoursSeen.size > 1,
     };
   }, [measurements, primary]);
+
+  // Campagne courte : le jour calendaire parle, le jour de semaine non.
+  const [grouping, setGrouping] = useState<'auto' | 'weekday' | 'calendar'>('auto');
+  const effective = grouping === 'auto'
+    ? (calendar.labels.length > 0 && calendar.labels.length <= 14 ? 'calendar' : 'weekday')
+    : grouping;
+  const active = effective === 'calendar' ? calendar : weekday;
 
   if (!subDaily) {
     return (
@@ -606,32 +638,45 @@ function DailyProfileView({ measurements, primary, unit, palette }: { measuremen
   // la carte de chaleur en rouge pour comparer deux relevés).
   const color = (v: number | null) => {
     if (v == null) return 'hsl(var(--muted))';
-    const t = max === min ? 0.5 : (v - min) / (max - min);
+    const t = active.max === active.min ? 0.5 : (v - active.min) / (active.max - active.min);
     return heatColor(palette, t);
   };
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">
-        Moyenne par heure et jour de semaine — révèle les habitudes (plus la couleur est vive, plus la valeur est élevée).
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          {effective === 'calendar'
+            ? `Moyenne par heure, jour par jour — ${calendar.labels.length} jour(s) de mesure.`
+            : 'Moyenne par heure et jour de semaine — révèle les habitudes.'}
+          {' '}(plus la couleur est vive, plus la valeur est élevée)
+        </p>
+        <div className="flex items-center gap-1 p-1 bg-muted rounded-lg">
+          <ModeButton active={effective === 'calendar'} onClick={() => setGrouping('calendar')} icon={<CalendarRange className="h-3.5 w-3.5" />}>
+            Par jour
+          </ModeButton>
+          <ModeButton active={effective === 'weekday'} onClick={() => setGrouping('weekday')} icon={<Grid3x3 className="h-3.5 w-3.5" />}>
+            Jour de semaine
+          </ModeButton>
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <div className="inline-block min-w-full">
           <div className="flex">
-            <div className="w-10 shrink-0" />
+            <div className="w-16 shrink-0" />
             {Array.from({ length: 24 }, (_, h) => (
               <div key={h} className="flex-1 text-center text-[9px] text-muted-foreground min-w-[18px]">
                 {h % 3 === 0 ? `${h}h` : ''}
               </div>
             ))}
           </div>
-          {matrix.map((row, wd) => (
-            <div key={wd} className="flex items-center">
-              <div className="w-10 shrink-0 text-xs text-muted-foreground pr-1 text-right">{WEEKDAYS[wd]}</div>
+          {active.rows.map((row, r) => (
+            <div key={active.labels[r] ?? r} className="flex items-center">
+              <div className="w-16 shrink-0 text-xs text-muted-foreground pr-1 text-right truncate">{active.labels[r]}</div>
               {row.map((v, h) => (
                 <div
                   key={h}
-                  title={v == null ? '—' : `${WEEKDAYS[wd]} ${h}h : ${formatValue(v, unit)}`}
+                  title={v == null ? '—' : `${active.labels[r]} ${h}h : ${formatValue(v, unit)}`}
                   className="flex-1 aspect-square min-w-[18px] m-[1px] rounded-sm"
                   style={{ backgroundColor: color(v) }}
                 />
@@ -641,9 +686,9 @@ function DailyProfileView({ measurements, primary, unit, palette }: { measuremen
         </div>
       </div>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span>{formatValue(min, unit)}</span>
+        <span>{formatValue(active.min, unit)}</span>
         <div className="h-2 w-32 rounded" style={{ background: `linear-gradient(to right, ${palette.heat[0]}, ${palette.heat[1]}, ${palette.heat[2]})` }} />
-        <span>{formatValue(max, unit)}</span>
+        <span>{formatValue(active.max, unit)}</span>
       </div>
     </div>
   );

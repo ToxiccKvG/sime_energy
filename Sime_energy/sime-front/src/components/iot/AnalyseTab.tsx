@@ -502,11 +502,11 @@ function EnvHeatmapView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetric
     return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
   }
 
-  // Échelle bleu (froid/min) → rouge (chaud/max) via teinte HSL 220 → 10
+  // Dégradé de la palette choisie (commun avec le module Mesures).
   const colorFor = (v: number | null): string => {
     if (v === null) return 'rgba(255,255,255,0.03)';
     const t = vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5;
-    return `hsl(${220 - t * 210} 75% ${35 + t * 15}%)`;
+    return heatColor(envPalette, t);
   };
 
   return (
@@ -516,7 +516,7 @@ function EnvHeatmapView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetric
         <div className="flex items-center gap-1.5 text-xs text-slate-400">
           {fmtFr(vmin, 1)} {meta.unit}
           <span className="inline-block h-2.5 w-24 rounded-full"
-            style={{ background: 'linear-gradient(90deg, hsl(220 75% 35%), hsl(115 75% 42%), hsl(10 75% 50%))' }} />
+            style={{ background: `linear-gradient(90deg, ${envPalette.heat[0]}, ${envPalette.heat[1]}, ${envPalette.heat[2]})` }} />
           {fmtFr(vmax, 1)} {meta.unit}
         </div>
       </div>
