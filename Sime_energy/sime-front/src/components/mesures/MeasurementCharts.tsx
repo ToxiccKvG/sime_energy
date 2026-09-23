@@ -25,6 +25,8 @@ import {
   ComposedChart,
   Legend,
   Line,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -35,9 +37,12 @@ import { Button } from '@/components/ui/button';
 import { integrateEnergy, type QuantityKind } from '@/services/measurementStats';
 import { useToast } from '@/hooks/use-toast';
 import { PeriodFilter, dayRangeOf, filterByRange, singleDayOf, toDatetimeLocalValue, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
+import { ChartOptions } from '@/components/shared/ChartOptions';
+import { useChartPreferences, usePalette, seriesColor, chartTitle, heatColor, type Palette } from '@/lib/chart-preferences';
 import {
   Activity,
   BarChart3,
+  PieChart as PieIcon,
   CalendarRange,
   Grid3x3,
   Image as ImageIcon,
@@ -67,27 +72,32 @@ interface MeasurementChartsProps {
   quantityKind?: QuantityKind;
   /** Nom du relevé (titre de l'image exportée). */
   title?: string;
+  /**
+   * Tous les relevés de la session, pour la vue Répartition : dans ce module
+   * un relevé = un appareil, donc la part qui intéresse l'auditeur est celle
+   * de chaque appareil dans l'ensemble, pas celle des colonnes d'un relevé.
+   */
+  siblings?: { label: string; measurements: Measurement[]; unit?: string; quantityKind?: QuantityKind }[];
   /** Plage de période contrôlée par le parent (partagée avec l'onglet Analyse). Sinon, état local. */
   dateRange?: DateRange;
   onDateRangeChange?: (range: DateRange) => void;
 }
 
-type ViewMode = 'curve' | 'distribution' | 'profile' | 'period';
+type ViewMode = 'curve' | 'distribution' | 'profile' | 'period' | 'repartition';
+
+const MODE_LABELS: Record<ViewMode, string> = {
+  curve: 'Courbe',
+  distribution: 'Distribution',
+  profile: 'Profil journalier',
+  period: 'Par période',
+  repartition: 'Répartition',
+};
 type Granularity = 'day' | 'week' | 'month';
 
 /** Champs techniques jamais proposés comme série. */
 const HIDDEN_KEYS = new Set(['timestamp']);
 
-/** Palette de couleurs pour les séries superposées. */
-const PALETTE = [
-  'hsl(var(--primary))',
-  'hsl(38 92% 50%)',
-  'hsl(160 84% 39%)',
-  'hsl(280 65% 60%)',
-  'hsl(0 84% 60%)',
-  'hsl(199 89% 48%)',
-  'hsl(48 96% 53%)',
-];
+
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -126,9 +136,11 @@ const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
 export function MeasurementCharts({
   measurements: allMeasurements, unit = '', label = 'Valeur', quantityKind = 'other', title,
-  dateRange: controlledRange, onDateRangeChange,
+  siblings, dateRange: controlledRange, onDateRangeChange,
 }: MeasurementChartsProps) {
   const [mode, setMode] = useState<ViewMode>('curve');
+  const prefs = useChartPreferences();
+  const palette = usePalette();
   const [localRange, setLocalRange] = useState<DateRange>(null);
   const [exporting, setExporting] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -189,9 +201,9 @@ export function MeasurementCharts({
       key,
       // La grandeur principale porte son unité dans son nom, comme les colonnes secondaires ("P apparente (VA)").
       name: key === 'consumption' ? (unit ? `${label} (${unit})` : label) : key,
-      color: PALETTE[i % PALETTE.length],
+      color: seriesColor(palette, i),
     }));
-  }, [measurements, label, unit]);
+  }, [measurements, label, unit, palette]);
 
   const primary = series[0]?.key ?? 'consumption';
 
@@ -228,6 +240,14 @@ export function MeasurementCharts({
       hasInjection: vals.some((v) => v < 0),
     };
   }, [measurements, primary, quantityKind, unit]);
+
+  // Titre : celui saisi par l'utilisateur, sinon « relevé · grandeur (unité) · vue ».
+  // La Répartition fait exception : elle compare les relevés entre eux, elle ne
+  // parle donc pas de la grandeur du relevé courant.
+  const autoTitle = mode === 'repartition'
+    ? 'Répartition de la consommation'
+    : `${title ? `${title} · ` : ''}${label}${unit ? ` (${unit})` : ''} · ${MODE_LABELS[mode]}`;
+  const displayTitle = chartTitle(prefs, `mesures:${mode}`, autoTitle);
 
   if (!allMeasurements || allMeasurements.length === 0) {
     return (
@@ -279,6 +299,10 @@ export function MeasurementCharts({
         <ModeButton active={mode === 'distribution'} onClick={() => setMode('distribution')} icon={<BarChart3 className="h-4 w-4" />}>
           Distribution
         </ModeButton>
+        {/* Répartition : le camembert existait dans IOT, pas ici (demande du 18/09). */}
+        <ModeButton active={mode === 'repartition'} onClick={() => setMode('repartition')} icon={<PieIcon className="h-4 w-4" />}>
+          Répartition
+        </ModeButton>
         <ModeButton active={mode === 'profile'} onClick={() => setMode('profile')} icon={<Grid3x3 className="h-4 w-4" />}>
           Profil journalier
         </ModeButton>
@@ -286,25 +310,33 @@ export function MeasurementCharts({
           Par période
         </ModeButton>
       </div>
-      <Button variant="outline" size="sm" className="h-8 text-xs" onClick={exportImage} disabled={exporting || measurements.length === 0}>
-        {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5 mr-1.5" />}
-        Exporter en image
-      </Button>
+      <div className="flex flex-wrap items-center gap-3">
+        <ChartOptions chartId={`mesures:${mode}`} defaultTitle={autoTitle} />
+        <Button variant="outline" size="sm" className="h-8 text-xs" onClick={exportImage} disabled={exporting || measurements.length === 0}>
+          {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5 mr-1.5" />}
+          Exporter en image
+        </Button>
+      </div>
       </div>
 
       <Card className="p-4" ref={cardRef}>
         {/* En-tête repris dans l'image exportée */}
+        <p className="text-sm font-medium text-foreground mb-0.5">{displayTitle}</p>
         <p className="text-xs text-muted-foreground mb-2">
-          {title ? `${title} · ` : ''}{label}{unit ? ` (${unit})` : ''}
-          {' · '}
-          {mode === 'curve' ? 'Courbe' : mode === 'distribution' ? 'Distribution' : mode === 'profile' ? 'Profil journalier' : 'Par période'}
           {bounds && (
-            <> · {formatTick(dateRange?.start ?? toDatetimeLocalValue(bounds.min))} → {formatTick(dateRange?.end ?? toDatetimeLocalValue(bounds.max))}</>
+            <>{formatTick(dateRange?.start ?? toDatetimeLocalValue(bounds.min))} → {formatTick(dateRange?.end ?? toDatetimeLocalValue(bounds.max))}</>
           )}
         </p>
-        {mode === 'curve' && <CurveView measurements={measurements} series={series} unit={unit} />}
-        {mode === 'distribution' && <DistributionView measurements={measurements} primary={primary} label={label} unit={unit} />}
-        {mode === 'profile' && <DailyProfileView measurements={measurements} primary={primary} unit={unit} />}
+        {mode === 'curve' && <CurveView measurements={measurements} series={series} unit={unit} showLegend={prefs.showLegend} />}
+        {mode === 'repartition' && (
+          <RepartitionView
+            measurements={measurements} series={series} unit={unit}
+            showLegend={prefs.showLegend} palette={palette} quantityKind={quantityKind}
+            siblings={siblings} dateRange={dateRange} bounds={bounds}
+          />
+        )}
+        {mode === 'distribution' && <DistributionView measurements={measurements} primary={primary} label={label} unit={unit} showLegend={prefs.showLegend} color={seriesColor(palette, 0)} />}
+        {mode === 'profile' && <DailyProfileView measurements={measurements} primary={primary} unit={unit} palette={palette} />}
         {mode === 'period' && (
           <PeriodView
             measurements={measurements}
@@ -313,6 +345,8 @@ export function MeasurementCharts({
             unit={unit}
             quantityKind={primary === 'consumption' ? quantityKind : 'other'}
             onDrillDay={drillToDay}
+            showLegend={prefs.showLegend}
+            color={seriesColor(palette, 0)}
           />
         )}
       </Card>
@@ -326,7 +360,9 @@ function CurveView({
   measurements,
   series,
   unit,
+  showLegend,
 }: {
+  showLegend: boolean;
   measurements: Measurement[];
   series: { key: string; name: string; color: string }[];
   unit: string;
@@ -402,9 +438,10 @@ function CurveView({
       <ResponsiveContainer width="100%" height={400}>
         <ComposedChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
           <defs>
+            {/* Le remplissage suit la couleur de la 1re série, donc la palette choisie. */}
             <linearGradient id="curveFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+              <stop offset="5%" stopColor={shown[0]?.color ?? 'hsl(var(--primary))'} stopOpacity={0.3} />
+              <stop offset="95%" stopColor={shown[0]?.color ?? 'hsl(var(--primary))'} stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -427,7 +464,7 @@ function CurveView({
             labelFormatter={(l) => `📅 ${l}`}
             formatter={(v: number, n) => [formatValue(Number(v), unitByName.get(String(n)) ?? ''), n]}
           />
-          {shown.length > 1 && <Legend />}
+          {showLegend && shown.length > 1 && <Legend />}
           {shown.map((s, i) =>
             i === 0 ? (
               <Area
@@ -472,7 +509,11 @@ function DistributionView({
   primary,
   label,
   unit,
+  showLegend,
+  color,
 }: {
+  showLegend: boolean;
+  color: string;
   measurements: Measurement[];
   primary: string;
   label: string;
@@ -519,7 +560,8 @@ function DistributionView({
             formatter={(v: number) => [`${v} mesures`, 'Effectif']}
             labelFormatter={(l) => `≈ ${l} ${unit}`}
           />
-          <Bar dataKey="count" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+          {showLegend && <Legend />}
+          <Bar dataKey="count" name="Nombre de mesures" fill={color} radius={[3, 3, 0, 0]} isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -528,7 +570,7 @@ function DistributionView({
 
 /* ----------------------------------------------------- vue Profil journalier */
 
-function DailyProfileView({ measurements, primary, unit }: { measurements: Measurement[]; primary: string; unit: string }) {
+function DailyProfileView({ measurements, primary, unit, palette }: { measurements: Measurement[]; primary: string; unit: string; palette: Palette }) {
   const { matrix, min, max, subDaily } = useMemo(() => {
     const sum = Array.from({ length: 7 }, () => new Array(24).fill(0));
     const cnt = Array.from({ length: 7 }, () => new Array(24).fill(0));
@@ -560,16 +602,18 @@ function DailyProfileView({ measurements, primary, unit }: { measurements: Measu
     );
   }
 
+  // Dégradé repris de la palette choisie (demande du 18/09 : pouvoir passer
+  // la carte de chaleur en rouge pour comparer deux relevés).
   const color = (v: number | null) => {
     if (v == null) return 'hsl(var(--muted))';
     const t = max === min ? 0.5 : (v - min) / (max - min);
-    return `hsl(var(--primary) / ${(0.12 + t * 0.85).toFixed(2)})`;
+    return heatColor(palette, t);
   };
 
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
-        Moyenne par heure et jour de semaine — révèle les habitudes (plus c'est foncé, plus la valeur est élevée).
+        Moyenne par heure et jour de semaine — révèle les habitudes (plus la couleur est vive, plus la valeur est élevée).
       </p>
       <div className="overflow-x-auto">
         <div className="inline-block min-w-full">
@@ -598,7 +642,7 @@ function DailyProfileView({ measurements, primary, unit }: { measurements: Measu
       </div>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span>{formatValue(min, unit)}</span>
-        <div className="h-2 w-32 rounded" style={{ background: 'linear-gradient(to right, hsl(var(--primary) / 0.12), hsl(var(--primary)))' }} />
+        <div className="h-2 w-32 rounded" style={{ background: `linear-gradient(to right, ${palette.heat[0]}, ${palette.heat[1]}, ${palette.heat[2]})` }} />
         <span>{formatValue(max, unit)}</span>
       </div>
     </div>
@@ -614,7 +658,11 @@ function PeriodView({
   unit,
   quantityKind,
   onDrillDay,
+  showLegend,
+  color,
 }: {
+  showLegend: boolean;
+  color: string;
   measurements: Measurement[];
   primary: string;
   label: string;
@@ -688,16 +736,139 @@ function PeriodView({
           <YAxis fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => formatValue(Number(v), periodUnit)} width={80}
             label={{ value: `${isCumulative ? 'Total' : 'Moyenne'}${periodUnit ? ` (${periodUnit})` : ''}`, angle: -90, position: 'insideLeft', fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
           <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [formatValue(Number(v), periodUnit), isCumulative ? 'Total' : 'Moyenne']} labelFormatter={(l) => `📅 ${l}`} />
-          <Bar dataKey="value" radius={[3, 3, 0, 0]} isAnimationActive={false}
+          {showLegend && <Legend />}
+          <Bar dataKey="value" name={isCumulative ? 'Total' : 'Moyenne'} radius={[3, 3, 0, 0]} isAnimationActive={false}
             cursor={gran === 'day' && onDrillDay ? 'pointer' : undefined}
             onClick={(d: { period?: string }) => { if (gran === 'day' && onDrillDay && d?.period) onDrillDay(d.period); }}>
             {data.map((d, i) => (
-              <Cell key={i} fill={d.value < 0 ? 'hsl(38 92% 50%)' : 'hsl(var(--primary))'} />
+              // Une valeur négative (injection / retour réseau) garde l'ambre : c'est une
+              // information, pas une couleur de série.
+              <Cell key={i} fill={d.value < 0 ? 'hsl(38 92% 50%)' : color} />
             ))}
           </Bar>
-          <Brush dataKey="period" height={22} stroke="hsl(var(--primary))" travellerWidth={8} />
+          <Brush dataKey="period" height={22} stroke={color} travellerWidth={8} />
         </BarChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------- vue Répartition */
+
+/**
+ * Part de chaque grandeur sur la période — le camembert qui existait dans IOT
+ * et manquait ici (demande du 18/09). Une part n'a de sens que pour des
+ * grandeurs cumulables : une température ou un pourcentage ne s'additionnent
+ * pas, on le dit plutôt que d'afficher un camembert faux.
+ */
+function RepartitionView({
+  measurements, series, unit, showLegend, palette, quantityKind, siblings, dateRange, bounds,
+}: {
+  measurements: Measurement[];
+  series: { key: string; name: string; color: string }[];
+  unit: string;
+  showLegend: boolean;
+  palette: Palette;
+  quantityKind: QuantityKind;
+  siblings?: { label: string; measurements: Measurement[]; unit?: string; quantityKind?: QuantityKind }[];
+  dateRange: DateRange;
+  bounds: ReturnType<typeof useTimestampBounds>;
+}) {
+  // Deux lectures possibles, du plus parlant au moins parlant :
+  //  · « Par appareil » quand plusieurs relevés cumulables sont chargés — c'est
+  //    la question de l'auditeur : quel usage pèse le plus ?
+  //  · « Par grandeur » quand un seul relevé porte plusieurs colonnes cumulables
+  //    (analyseur de réseau : actif, apparent, réactif…).
+  const byDevice = useMemo(() => {
+    const cumulables = (siblings ?? []).filter(s => s.quantityKind === 'energy' || s.quantityKind === 'power');
+    if (cumulables.length < 2) return null;
+    const rows = cumulables.map((s, i) => {
+      const pts = filterByRange(s.measurements ?? [], dateRange, bounds)
+        .map(m => ({ t: parseTs(m.timestamp).getTime(), v: m.consumption }))
+        .filter((p): p is { t: number; v: number } => typeof p.v === 'number' && isFinite(p.v) && p.v > 0 && !isNaN(p.t));
+      if (pts.length === 0) return null;
+      const value = s.quantityKind === 'power' ? integrateEnergy(pts) : pts.reduce((a, p) => a + p.v, 0);
+      const u = s.unit ?? '';
+      return { name: s.label, value, unit: s.quantityKind === 'power' ? (u ? `${u}h` : '') : u, color: seriesColor(palette, i) };
+    }).filter((r): r is { name: string; value: number; unit: string; color: string } => r !== null && r.value > 0);
+    if (rows.length < 2) return null;
+    // Des unités différentes ne s'additionnent pas : on ne mélange pas des Wh et des kWh dans une part.
+    const units = new Set(rows.map(r => r.unit));
+    if (units.size > 1) return null;
+    return { rows: rows.sort((a, b) => b.value - a.value), unit: rows[0].unit };
+  }, [siblings, dateRange, bounds, palette]);
+
+  const bySeries = useMemo(() => {
+    if (quantityKind === 'other') return null;
+    const rows = series.map((s, i) => {
+      let sum = 0;
+      for (const m of measurements) {
+        const v = m[s.key];
+        if (typeof v === 'number' && isFinite(v) && v > 0) sum += v;
+      }
+      return { name: s.name, value: sum, unit, color: seriesColor(palette, i) };
+    }).filter(r => r.value > 0);
+    return rows.length >= 2 ? { rows: rows.sort((a, b) => b.value - a.value), unit } : null;
+  }, [measurements, series, unit, palette, quantityKind]);
+
+  const [preferDevice, setPreferDevice] = useState(true);
+  const active = (preferDevice && byDevice) ? byDevice : (bySeries ?? byDevice);
+  const isDevice = active === byDevice;
+
+  if (!active) {
+    return (
+      <p className="text-sm text-muted-foreground py-10 text-center max-w-xl mx-auto">
+        {quantityKind === 'other'
+          ? "La répartition suppose des grandeurs qui s'additionnent (énergie, puissance). Pour une température, une humidité ou un niveau sonore, une part de camembert n'aurait pas de sens — utilisez « Profil journalier » ou « Par période »."
+          : "Rien à répartir : ce relevé ne porte qu'une grandeur, et il n'y a pas d'autre relevé d'énergie chargé à comparer. Chargez les relevés des différents appareils pour voir lequel consomme le plus."}
+      </p>
+    );
+  }
+
+  const total = active.rows.reduce((a, d) => a + d.value, 0);
+
+  return (
+    <div className="space-y-3">
+      {byDevice && bySeries && (
+        <div className="flex items-center gap-1 p-1 bg-muted rounded-lg w-fit mx-auto">
+          <ModeButton active={isDevice} onClick={() => setPreferDevice(true)} icon={<PieIcon className="h-3.5 w-3.5" />}>Par appareil</ModeButton>
+          <ModeButton active={!isDevice} onClick={() => setPreferDevice(false)} icon={<BarChart3 className="h-3.5 w-3.5" />}>Par grandeur</ModeButton>
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground text-center">
+        {isDevice
+          ? `Part de chaque appareil dans le total mesuré sur la période — ${active.rows.length} relevés comparés.`
+          : 'Part de chaque grandeur de ce relevé sur la période.'}
+      </p>
+      <ResponsiveContainer width="100%" height={380}>
+        <PieChart>
+          <Tooltip
+            contentStyle={tooltipStyle}
+            formatter={(v: number, n) => [`${formatValue(Number(v), active.unit)} · ${((Number(v) / total) * 100).toFixed(1)} %`, n]}
+          />
+          {showLegend && <Legend />}
+          <Pie
+            data={active.rows}
+            dataKey="value"
+            nameKey="name"
+            innerRadius={70}
+            outerRadius={130}
+            paddingAngle={2}
+            isAnimationActive={false}
+            label={(d: { percent?: number }) => `${((d.percent ?? 0) * 100).toFixed(0)} %`}
+          >
+            {active.rows.map((d) => <Cell key={d.name} fill={d.color} />)}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground justify-center">
+        {active.rows.map(d => (
+          <span key={d.name} className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: d.color }} />
+            {d.name} — {formatValue(d.value, active.unit)} ({((d.value / total) * 100).toFixed(1)} %)
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

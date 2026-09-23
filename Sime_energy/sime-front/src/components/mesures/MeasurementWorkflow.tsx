@@ -229,6 +229,12 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
                 label={currentData?.metric_label ?? 'Valeur'}
                 quantityKind={currentData?.quantity_kind}
                 title={currentData ? measurementLabel(currentData, currentDataIndex) : undefined}
+                siblings={measurementData.map((d, i) => ({
+                  label: measurementLabel(d, i),
+                  measurements: d.measurements ?? [],
+                  unit: d.unit ?? d.kpis?.unit,
+                  quantityKind: d.quantity_kind,
+                }))}
                 dateRange={currentRange}
                 onDateRangeChange={setCurrentRange}
               />

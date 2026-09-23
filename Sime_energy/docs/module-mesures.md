@@ -150,6 +150,33 @@ réels ne sont pas affectés.
 - `groupMeasurementsByDay()` : clé jour locale, `total` non nul seulement pour la grandeur
   principale.
 
+### 4.4 Réglages de graphiques, communs aux deux modules (22/09/2026)
+
+Demande du manager (réunions du 18/09) : « pas seulement la carte de chaleur, mais pour tous
+types de graphiques choisir les couleurs, pouvoir éditer le titre, et ne pas oublier les
+légendes — que ce soit dans IOT ou dans Mesures ».
+
+- **`lib/chart-preferences.ts`** : 6 palettes (Par défaut, Chaud, Froid, Contrasté, Daltonisme
+  Okabe-Ito, Sobre impression), `showLegend`, et un titre par graphique (`titles['module:vue']`).
+  Store module + `useSyncExternalStore`, persisté en `localStorage` (`sime-chart-prefs-v1`) :
+  préférence d'affichage propre au poste, quelques octets, lectures/écritures protégées.
+  `seriesColor()` attribue par rang ; `heatColor()` interpole les trois teintes `heat`.
+  **Convention des dégradés** : valeur faible = sombre et peu saturée, valeur forte = vive
+  (l'interface est sombre, c'est la valeur forte qui doit ressortir) — d'où la légende
+  « plus la couleur est vive, plus la valeur est élevée », corrigée le 22/09.
+- **`components/shared/ChartOptions.tsx`** : la barre Titre · Légendes · Palette, posée dans
+  `MeasurementCharts` et dans la barre de vues d'`AnalyseTab`.
+- **IOT** : les couleurs étaient écrites en dur à 124 endroits. `colorForMetric(palette, key)`
+  les remplace au point d'usage (barres, lignes, aires, camembert, capteurs d'ambiance) ;
+  `METRIQUES[].color` / `METRIQUES_ENV[].color` restent le repli pour les pastilles hors
+  graphique. Les 4 légendes de `TcdChart` suivent `showLegend`.
+- **Mesures** : nouvelle vue **Répartition** (le camembert existait dans IOT, pas ici). Comme un
+  relevé = un appareil, la lecture utile est **par appareil** (part de chaque relevé cumulable
+  de la session, via la prop `siblings`), avec bascule « Par grandeur » quand un relevé porte
+  plusieurs colonnes cumulables. Garde-fous : refus explicite si la grandeur n'est pas cumulable
+  (°C, dB, %), si un seul relevé, ou si les unités diffèrent — on ne mélange pas des Wh et des kWh.
+  Son titre automatique ne mentionne pas la grandeur du relevé courant, puisqu'elle compare les relevés.
+
 ## 5. Modèles d'analyse (`services/analysisModels/`)
 
 Principe : un modèle répond à une question d'audit et se choisit d'après la **nature des

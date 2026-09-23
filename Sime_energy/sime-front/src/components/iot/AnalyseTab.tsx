@@ -1,5 +1,7 @@
 import { useMemo, useState, useRef, useCallback, useEffect, Fragment } from 'react';
 import { parseExcelBuffer, rowsToObjects, exportJsonToXlsx } from '@/lib/excel-utils';
+import { ChartOptions } from '@/components/shared/ChartOptions';
+import { useChartPreferences, usePalette, seriesColor, heatColor, chartTitle, type Palette } from '@/lib/chart-preferences';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import {
@@ -36,6 +38,34 @@ const ENV_MODES: AnalyseMode[] = ['env_bande', 'env_heatmap', 'env_profil24'];
 type ChartType = 'bar' | 'line' | 'area' | 'pie';
 
 const COULEURS = ['#a78bfa', '#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#f97316', '#06b6d4'];
+
+/** Libellé lisible de chaque vue — sert au titre du graphique et à l'export. */
+const MODE_LABELS: Record<string, string> = {
+  courbe: 'Courbe de charge',
+  serie: 'Série temporelle',
+  tcd: 'Tableau croisé',
+  profil_semaine: 'Profil de semaine',
+  distribution: 'Distribution',
+  correlation: 'Corrélation',
+  env_bande: 'Min / Max par jour',
+  env_heatmap: 'Carte de chaleur',
+  env_profil24: 'Profil 24 h',
+  signature: 'Signature énergétique',
+};
+
+/**
+ * Couleur d'une grandeur, prise dans la palette choisie par l'utilisateur
+ * (lib/chart-preferences, commune avec le module Mesures). Les couleurs
+ * écrites dans METRIQUES / METRIQUES_ENV restent le repli : elles servent
+ * encore aux pastilles hors graphique et si une clé est inconnue.
+ */
+function colorForMetric(palette: Palette, key: string): string {
+  const iE = METRIQUES.findIndex(m => m.key === key);
+  if (iE >= 0) return seriesColor(palette, iE);
+  const iV = METRIQUES_ENV.findIndex(m => m.key === key);
+  if (iV >= 0) return seriesColor(palette, iV);
+  return seriesColor(palette, 0);
+}
 
 type MetricKey =
   | 'kwhTotal' | 'kwhNet' | 'kwhRetourTotal'
@@ -290,6 +320,11 @@ function TcdChart({
   xAxisLabel?: string;
   compact: boolean;
 }) {
+  // Couleurs et légendes : réglages partagés avec le module Mesures.
+  const palette = usePalette();
+  const { showLegend } = useChartPreferences();
+  const metricColor = (mk: string) => colorForMetric(palette, mk);
+
   const tickFontSize = compact ? 10 : 11;
   const yTickFontSize = compact ? 9 : 10;
   const axisLabelFontSize = compact ? 10 : 11;
@@ -313,13 +348,13 @@ function TcdChart({
             <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[1]), angle: 90, position: 'insideRight', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
           )}
           <Tooltip content={<TcdTooltip />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
-          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {showLegend && <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />}
           {Array.from(metrics).map(mk => {
             const meta = METRIQUES.find(m => m.key === mk);
             return (
-              <Bar key={mk} yAxisId={metricAxis(mk)} dataKey={mk} name={meta?.label ?? mk} radius={barRadius} fill={meta?.color ?? accentColor} cursor="pointer" opacity={0.85}>
+              <Bar key={mk} yAxisId={metricAxis(mk)} dataKey={mk} name={meta?.label ?? mk} radius={barRadius} fill={metricColor(mk)} cursor="pointer" opacity={0.85}>
                 {mk === primaryMetric && data.map((entry, i) => (
-                  <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : meta?.color ?? COULEURS[i % COULEURS.length]} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} />
+                  <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : metricColor(mk)} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} />
                 ))}
               </Bar>
             );
@@ -334,10 +369,10 @@ function TcdChart({
             <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[1]), angle: 90, position: 'insideRight', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
           )}
           <Tooltip content={<TcdTooltip />} />
-          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {showLegend && <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />}
           {Array.from(metrics).map(mk => {
             const meta = METRIQUES.find(m => m.key === mk);
-            return <Line key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? accentColor} strokeWidth={2} dot={{ r: dotRadius }} />;
+            return <Line key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={metricColor(mk)} strokeWidth={2} dot={{ r: dotRadius }} />;
           })}
           <Line yAxisId={unitAxis(primaryUnit)} type="monotone" dataKey="moyenne" name={avgLabel} stroke="#06b6d4" strokeWidth={1} strokeDasharray="4 4" dot={false} />
         </LineChart>
@@ -350,22 +385,22 @@ function TcdChart({
             <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[1]), angle: 90, position: 'insideRight', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
           )}
           <Tooltip content={<TcdTooltip />} />
-          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {showLegend && <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />}
           {Array.from(metrics).map(mk => {
             const meta = METRIQUES.find(m => m.key === mk);
-            return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? accentColor} fill={(meta?.color ?? accentColor) + '20'} strokeWidth={2} />;
+            return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={metricColor(mk)} fill={metricColor(mk) + '20'} strokeWidth={2} />;
           })}
         </AreaChart>
       ) : (
         <PieChart>
           <Tooltip content={<TcdTooltip />} />
-          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {showLegend && <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />}
           <Pie data={data} dataKey={primaryMetric} nameKey="label" cx="50%" cy="50%" outerRadius={pieOuterRadius} innerRadius={pieInnerRadius}
             label={(e: { name?: string; percent?: number }) => `${e.name} · ${((e.percent ?? 0) * 100).toFixed(0)}%`}
             labelLine={false}
             onClick={onPieClick}>
             {data.map((entry, i) => (
-              <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : COULEURS[i % COULEURS.length]} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} cursor="pointer" />
+              <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : seriesColor(palette, i)} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} cursor="pointer" />
             ))}
           </Pie>
         </PieChart>
@@ -405,6 +440,8 @@ function aggEnvByDay(rows: ShellyRow[], metric: EnvMetricKey): EnvDayAgg[] {
 // Vue 1 — Bande min/max journalière + moyenne
 function EnvBandeView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
   const meta = METRIQUES_ENV.find(m => m.key === metric)!;
+  const envPalette = usePalette();
+  const envColor = colorForMetric(envPalette, metric);
   const data = useMemo(() => aggEnvByDay(rows, metric), [rows, metric]);
   if (data.length === 0) {
     return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
@@ -427,8 +464,8 @@ function EnvBandeView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKe
               if (Array.isArray(value)) return [`${fmtFr(value[0], 1)} → ${fmtFr(value[1], 1)} ${meta.unit}`, 'Min → Max'];
               return [`${fmtFr(value, 1)} ${meta.unit}`, name];
             }} />
-          <Area dataKey="range" name="Min → Max" stroke="none" fill={meta.color} fillOpacity={0.18} connectNulls />
-          <Line dataKey="moy" name="Moyenne" stroke={meta.color} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+          <Area dataKey="range" name="Min → Max" stroke="none" fill={envColor} fillOpacity={0.18} connectNulls />
+          <Line dataKey="moy" name="Moyenne" stroke={envColor} strokeWidth={2} dot={{ r: 3 }} connectNulls />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -438,6 +475,8 @@ function EnvBandeView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKe
 // Vue 2 — Heatmap heures × jours (couleur = moyenne horaire)
 function EnvHeatmapView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
   const meta = METRIQUES_ENV.find(m => m.key === metric)!;
+  const envPalette = usePalette();
+  const envColor = colorForMetric(envPalette, metric);
   const { days, grid, vmin, vmax } = useMemo(() => {
     // (jour, heure) → moyenne
     const acc = new Map<string, { ts: number; sums: number[]; counts: number[] }>();
@@ -506,6 +545,8 @@ function EnvHeatmapView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetric
 // Vue 4 — Profil journalier moyen sur 24 h (moyenne par heure + bande ±1σ)
 function EnvProfil24View({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
   const meta = METRIQUES_ENV.find(m => m.key === metric)!;
+  const envPalette = usePalette();
+  const envColor = colorForMetric(envPalette, metric);
   const data = useMemo(() => {
     const byHour: number[][] = Array.from({ length: 24 }, () => []);
     for (const r of rows) {
@@ -548,8 +589,8 @@ function EnvProfil24View({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetri
               if (Array.isArray(value)) return [`${fmtFr(value[0], 1)} → ${fmtFr(value[1], 1)} ${meta.unit}`, '±1σ'];
               return [`${fmtFr(value, 1)} ${meta.unit}`, name];
             }} />
-          <Area dataKey="range" name="±1σ" stroke="none" fill={meta.color} fillOpacity={0.18} connectNulls />
-          <Line dataKey="moy" name="Moyenne" stroke={meta.color} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+          <Area dataKey="range" name="±1σ" stroke="none" fill={envColor} fillOpacity={0.18} connectNulls />
+          <Line dataKey="moy" name="Moyenne" stroke={envColor} strokeWidth={2} dot={{ r: 3 }} connectNulls />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -1446,6 +1487,10 @@ export function AnalyseTab() {
 
   // ---- Analyse ----
   const [mode, setMode] = useState<AnalyseMode>('courbe');
+  const chartPrefs = useChartPreferences();
+  // Titre du graphique : « source · vue », remplaçable par l'utilisateur.
+  const autoChartTitle = `${dataSource ? `${dataSource} · ` : ''}${MODE_LABELS[mode] ?? mode}`;
+  const displayChartTitle = chartTitle(chartPrefs, `iot:${mode}`, autoChartTitle);
   const [serieMetrics, setSerieMetrics] = useState<Set<MetricKey>>(new Set(['kwhTotal']));
   const toggleSerieMetric = (k: MetricKey) =>
     setSerieMetrics(prev => {
@@ -2570,6 +2615,8 @@ export function AnalyseTab() {
                   <Switch id="we2" checked={showWeekends} onCheckedChange={setShowWeekends} className="data-[state=checked]:bg-yellow-500 scale-75" />
                   <Label htmlFor="we2" className="text-slate-400 text-xs">WE</Label>
                 </div>
+                {/* Couleurs, légendes et titre — mêmes réglages que le module Mesures. */}
+                <ChartOptions chartId={`iot:${mode}`} defaultTitle={autoChartTitle} />
                 <Badge variant="outline" className="border-white/20 text-slate-400 text-xs">
                   {(ENV_MODES.includes(mode) ? envRows.length : filteredRows.length).toLocaleString('fr-FR')} pts
                 </Badge>
@@ -2591,6 +2638,8 @@ export function AnalyseTab() {
             </div>
 
             <div ref={chartRef} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
+              {/* Titre repris dans l'export PDF/image */}
+              <p className="text-white font-medium text-sm">{displayChartTitle}</p>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-white font-semibold text-sm">Espace visualisation</h3>
