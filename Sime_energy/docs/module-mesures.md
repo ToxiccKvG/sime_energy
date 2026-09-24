@@ -230,6 +230,35 @@ Complété par l'utilisateur : « faudrait pas que ce soit le talon seulement. �
 - **Mesures › Analyse** : un relevé = un appareil, donc l'attribution utile est le **moment** :
   les cartes Maximum et Minimum indiquent quand l'extremum a été atteint.
 
+### 4.8 Écriture des valeurs et des unités (24/09/2026)
+
+Demande du manager (18/09) : choisir l'unité d'affichage et passer aux multiples au-delà du
+millier. **`lib/unit-format.ts`** est désormais la source unique.
+
+**Distinction qui commande tout le module** : le **préfixe** (Wh → kWh → MWh) est de la
+présentation — conversion exacte, jamais fausse. La **famille** (W → VA → A) désigne des
+grandeurs physiques différentes : passer de W à VA demande le cos φ, de W à A demande en plus
+la tension. Le logiciel du manager peut le faire parce qu'il *dimensionne* (il connaît U, I,
+cos φ) ; nous *mesurons*. Ces conversions ne sont donc pas proposées — si l'utilisateur veut
+des VA, la mesure doit exister dans le fichier (`lib/sensor-comparison.ts` tient déjà la table
+des familles et refuse de les mélanger).
+
+**Défaut corrigé au passage** : les graphiques mettaient à l'échelle au-delà de 1 000, les
+cartes d'indicateurs non — le même relevé s'écrivait « 3 899,1 Wh » dans une carte et
+« 3,90 kWh » dans un graphique. Tout passe maintenant par `formatQuantity()`.
+
+- Trois modes, dans la barre `ChartOptions` (même persistance que les couleurs,
+  `sime-unit-display-v1`) : **Auto** (k au-delà de 1 000, M au-delà d'un million), **Unité du
+  fichier** (jamais de multiple, pour comparer des chiffres bruts), **Forcé** (préfixe imposé
+  dans la famille du relevé).
+- **Jamais de préfixe sur °C, dB, %, ppm** (`PREFIXABLE`) : le CO₂ dépasse régulièrement
+  1 000 ppm et « 1,2 kppm » n'a aucun sens.
+- **Chiffres significatifs, pas décimales fixes** (5 par défaut, plafond 4 décimales) : 207,97
+  reste 207,97 au lieu de devenir 208, et 0,0043 ne devient pas 0.
+- **Les exports CSV gardent les nombres bruts** (une valeur, une unité en en-tête) : « 3,9 kWh »
+  en texte ne serait pas calculable dans Excel. Le réglage ne concerne que l'affichage et les
+  rapports PDF/Word.
+
 ## 5. Modèles d'analyse (`services/analysisModels/`)
 
 Principe : un modèle répond à une question d'audit et se choisit d'après la **nature des

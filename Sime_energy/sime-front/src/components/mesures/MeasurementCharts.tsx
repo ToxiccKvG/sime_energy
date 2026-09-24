@@ -38,6 +38,7 @@ import { integrateEnergy, type QuantityKind } from '@/services/measurementStats'
 import { useToast } from '@/hooks/use-toast';
 import { PeriodFilter, dayRangeOf, filterByRange, singleDayOf, toDatetimeLocalValue, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
 import { ChartOptions } from '@/components/shared/ChartOptions';
+import { formatQuantity, useUnitSettings } from '@/lib/unit-format';
 import { useChartPreferences, usePalette, seriesColor, chartTitle, heatColor, type Palette } from '@/lib/chart-preferences';
 import {
   Activity,
@@ -121,13 +122,13 @@ function formatTick(ts: string): string {
   return `${dd}/${mm} ${hh}:${mi}`;
 }
 
+/**
+ * Écriture des valeurs : déléguée à lib/unit-format, seule source de vérité
+ * partagée avec les cartes d'indicateurs et les exports. Avant, ce fichier
+ * mettait à l'échelle et les cartes non — même relevé, deux écritures.
+ */
 function formatValue(v: number, unit = ''): string {
-  if (v == null || isNaN(v)) return '—';
-  const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(2)} M${unit}`;
-  if (abs >= 1000) return `${(v / 1000).toFixed(2)} k${unit}`;
-  if (abs > 0 && abs < 1) return `${v.toFixed(2)} ${unit}`;
-  return `${v.toFixed(0)} ${unit}`;
+  return formatQuantity(v, unit);
 }
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -141,6 +142,9 @@ export function MeasurementCharts({
   const [mode, setMode] = useState<ViewMode>('curve');
   const prefs = useChartPreferences();
   const palette = usePalette();
+  // Abonnement au réglage d'unité : formatQuantity lit l'état courant, encore
+  // faut-il que le composant se redessine quand il change.
+  useUnitSettings();
   const [localRange, setLocalRange] = useState<DateRange>(null);
   const [exporting, setExporting] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -311,7 +315,7 @@ export function MeasurementCharts({
         </ModeButton>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <ChartOptions chartId={`mesures:${mode}`} defaultTitle={autoTitle} />
+        <ChartOptions chartId={`mesures:${mode}`} defaultTitle={autoTitle} unit={unit} />
         <Button variant="outline" size="sm" className="h-8 text-xs" onClick={exportImage} disabled={exporting || measurements.length === 0}>
           {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5 mr-1.5" />}
           Exporter en image

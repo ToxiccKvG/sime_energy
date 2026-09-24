@@ -8,11 +8,15 @@
 // ============================================================
 
 import { useEffect, useRef, useState } from 'react';
-import { Palette as PaletteIcon, Tags, Pencil, Check, X, RotateCcw } from 'lucide-react';
+import { Palette as PaletteIcon, Tags, Pencil, Check, X, RotateCcw, Ruler } from 'lucide-react';
 import {
   PALETTES, useChartPreferences, usePalette, setPalette, setShowLegend, setChartTitle, chartTitle,
   type PaletteId,
 } from '@/lib/chart-preferences';
+import {
+  availablePrefixes, setUnitMode, setUnitPrefix, useUnitSettings,
+  type UnitPrefix,
+} from '@/lib/unit-format';
 
 interface ChartOptionsProps {
   /** Identifiant stable du graphique, ex. « mesures:courbe » — porte le titre personnalisé. */
@@ -21,26 +25,31 @@ interface ChartOptionsProps {
   defaultTitle: string;
   /** Masquer le champ de titre (graphique sans en-tête propre). */
   hideTitle?: boolean;
+  /** Unité de la grandeur affichée — active le réglage d'écriture des valeurs. */
+  unit?: string;
   className?: string;
 }
 
-export function ChartOptions({ chartId, defaultTitle, hideTitle = false, className = '' }: ChartOptionsProps) {
+export function ChartOptions({ chartId, defaultTitle, hideTitle = false, unit, className = '' }: ChartOptionsProps) {
   const prefs = useChartPreferences();
   const active = usePalette();
+  const units = useUnitSettings();
+  const prefixes = availablePrefixes(unit ?? '');
   const [open, setOpen] = useState(false);
+  const [unitOpen, setUnitOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // Fermer le sélecteur au clic extérieur — sinon il reste ouvert sur le graphique.
+  // Fermer les sélecteurs au clic extérieur — sinon ils restent ouverts sur le graphique.
   useEffect(() => {
-    if (!open) return;
+    if (!open && !unitOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) { setOpen(false); setUnitOpen(false); }
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+  }, [open, unitOpen]);
 
   const current = chartTitle(prefs, chartId, defaultTitle);
   const isCustom = !!prefs.titles[chartId];
@@ -48,7 +57,7 @@ export function ChartOptions({ chartId, defaultTitle, hideTitle = false, classNa
   const commit = () => { setChartTitle(chartId, draft); setEditing(false); };
 
   return (
-    <div className={`flex flex-wrap items-center gap-2 ${className}`}>
+    <div className={`flex flex-wrap items-center gap-2 ${className}`} ref={boxRef}>
       {!hideTitle && (
         editing ? (
           <div className="flex items-center gap-1">
@@ -99,7 +108,55 @@ export function ChartOptions({ chartId, defaultTitle, hideTitle = false, classNa
         Légendes
       </button>
 
-      <div className="relative" ref={boxRef}>
+      {prefixes.length > 0 && (
+        <div className="relative">
+          <button
+            onClick={() => setUnitOpen(o => !o)}
+            title="Choisir comment les valeurs sont écrites"
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+          >
+            <Ruler className="h-3.5 w-3.5" />
+            {units.mode === 'raw' ? prefixes[0].label
+              : units.mode === 'forced' ? (prefixes.find(p => p.value === units.prefix)?.label ?? prefixes[0].label)
+              : 'Auto'}
+          </button>
+          {unitOpen && (
+            <div className="absolute right-0 top-7 z-50 w-64 rounded-lg border border-white/10 bg-[#0f111a] p-2 shadow-xl">
+              <p className="text-[11px] text-slate-500 px-1.5 pb-1.5">
+                Change l'écriture des valeurs, pas les données. Les exports CSV gardent les nombres bruts.
+              </p>
+              <button
+                onClick={() => { setUnitMode('auto'); setUnitOpen(false); }}
+                className={`w-full text-left px-2 py-1.5 rounded-md transition-colors ${units.mode === 'auto' ? 'bg-blue-500/15 text-white' : 'text-slate-300 hover:bg-white/5'}`}
+              >
+                <span className="text-xs">Automatique</span>
+                <span className="block text-[11px] text-slate-500">Passe en k au-delà de 1 000, en M au-delà d'un million.</span>
+              </button>
+              <button
+                onClick={() => { setUnitMode('raw'); setUnitOpen(false); }}
+                className={`w-full text-left px-2 py-1.5 rounded-md transition-colors ${units.mode === 'raw' ? 'bg-blue-500/15 text-white' : 'text-slate-300 hover:bg-white/5'}`}
+              >
+                <span className="text-xs">Unité du fichier ({prefixes[0].label})</span>
+                <span className="block text-[11px] text-slate-500">Jamais de multiple — pour comparer des chiffres bruts.</span>
+              </button>
+              <p className="text-[11px] text-slate-500 px-2 pt-1.5 pb-0.5">Imposer un multiple</p>
+              <div className="flex gap-1 px-1 pb-1">
+                {prefixes.map(p => (
+                  <button
+                    key={p.value}
+                    onClick={() => { setUnitPrefix(p.value as UnitPrefix); setUnitOpen(false); }}
+                    className={`flex-1 px-2 py-1 rounded-md text-xs transition-colors ${units.mode === 'forced' && units.prefix === p.value ? 'bg-blue-500/25 text-white' : 'text-slate-300 hover:bg-white/5'}`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="relative">
         <button
           onClick={() => setOpen(o => !o)}
           title="Choisir la palette de couleurs"

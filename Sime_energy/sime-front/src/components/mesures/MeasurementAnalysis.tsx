@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { computeMeasurementKpis, groupMeasurementsByDay, toDate, type ColumnStat, type QuantityKind } from '@/services/measurementStats';
 import { exportReportToDocx, exportReportToPdf, type MeasurementReport } from '@/services/measurementReportExport';
 import { PeriodFilter, dayRangeOf, filterByRange, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
+import { formatQuantity, useUnitSettings } from '@/lib/unit-format';
 import {
   Activity,
   AlertTriangle,
@@ -76,8 +77,9 @@ function amplitude(min: number, max: number): number {
   return +(max - min).toFixed(2);
 }
 
+/** Nombre seul (l'unité est portée par l'en-tête de colonne ou la carte). */
 function fmtNumber(v: any): string {
-  if (typeof v === 'number') return v.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+  if (typeof v === 'number') return formatQuantity(v, '', undefined, { omitUnit: true });
   return String(v ?? '—');
 }
 
@@ -184,8 +186,10 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
     [columns, selectedSet],
   );
 
-  /** Moment où le maximum et le minimum de la grandeur principale ont été atteints. */
-  const extremes = useMemo(() => {
+  const unitSettings = useUnitSettings();
+
+  /** Moment où le maximum et le minimum ont été atteints. */
+  const extremesInner = useMemo(() => {
     let hi: { v: number; t: string } | null = null;
     let lo: { v: number; t: string } | null = null;
     for (const m of dateFiltered) {
@@ -201,6 +205,7 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
     };
     return { max: fmt(hi), min: fmt(lo) };
   }, [dateFiltered]);
+  const extremes = extremesInner;
 
   const filtered = useMemo(() => {
     if (!query.trim()) return dateFiltered;
@@ -250,7 +255,7 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
           const meta = KPI_META[k];
           const raw = (kpis as Record<string, any>)[k];
           const cardUnit = k === 'totalConsumption' ? (kpis.totalUnit ?? unit) : unit;
-          const value = meta?.withUnit && typeof raw === 'number' ? `${fmtNumber(raw)} ${cardUnit}` : fmtNumber(raw);
+          const value = meta?.withUnit && typeof raw === 'number' ? formatQuantity(raw, cardUnit, unitSettings) : fmtNumber(raw);
           return [meta?.label ?? k, value];
         })
       : [];
@@ -409,7 +414,7 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
             const meta = KPI_META[k];
             const raw = (kpis as Record<string, any>)[k];
             const cardUnit = k === 'totalConsumption' ? (kpis.totalUnit ?? unit) : unit;
-            const value = meta?.withUnit && typeof raw === 'number' ? `${fmtNumber(raw)} ${cardUnit}` : fmtNumber(raw);
+            const value = meta?.withUnit && typeof raw === 'number' ? formatQuantity(raw, cardUnit, unitSettings) : fmtNumber(raw);
             // Un extremum sans son moment n'est pas exploitable dans un rapport :
             // on indique quand il a été atteint (demande du 18/09).
             const quand = k === 'peakConsumption' ? extremes.max : k === 'minConsumption' ? extremes.min : null;
