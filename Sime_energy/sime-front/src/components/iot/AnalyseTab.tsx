@@ -2069,6 +2069,31 @@ export function AnalyseTab() {
     return calculerStats(vals);
   }, [filteredRows, primarySerieMetric]);
 
+  /**
+   * Quel appareil et quand, derrière le maximum et le minimum.
+   * Demande du manager (18/09) : « on ne sait pas c'est quel usage qui est à
+   * 18,7 Wh — on l'a, mais on ne l'affiche pas ». Quand plusieurs appareils
+   * sont chargés, la valeur affichée est une somme : sans l'attribution, elle
+   * ne se rattache à rien.
+   */
+  const statsQui = useMemo(() => {
+    let hi: { v: number; r: ShellyRow } | null = null;
+    let lo: { v: number; r: ShellyRow } | null = null;
+    for (const r of filteredRows) {
+      const v = safeNum((r as unknown as Record<string, unknown>)[primarySerieMetric] as number, NaN);
+      if (typeof v !== 'number' || !isFinite(v)) continue;
+      if (!hi || v > hi.v) hi = { v, r };
+      if (!lo || v < lo.v) lo = { v, r };
+    }
+    const decrire = (x: { v: number; r: ShellyRow } | null) => {
+      if (!x) return null;
+      const nom = x.r.nomAppareil?.trim();
+      const quand = toDate(x.r.date).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      return nom ? `${nom} · ${quand}` : quand;
+    };
+    return { max: decrire(hi), min: decrire(lo) };
+  }, [filteredRows, primarySerieMetric]);
+
   const serieData = useMemo(() =>
     filteredRows.map(r => {
       const obj: Record<string, unknown> = {
@@ -2818,16 +2843,17 @@ export function AnalyseTab() {
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
                     {[
-                      { label: 'Moyenne', value: fmt2(stats.moyenne), color: 'text-blue-400' },
-                      { label: 'Médiane', value: fmt2(stats.mediane), color: 'text-cyan-400' },
-                      { label: 'Écart-type', value: fmt2(stats.ecartType), color: 'text-purple-400' },
-                      { label: 'P25', value: fmt2(stats.p25), color: 'text-green-400' },
-                      { label: 'P75', value: fmt2(stats.p75), color: 'text-yellow-400' },
-                      { label: 'Maximum', value: fmt2(stats.max), color: 'text-orange-400' },
+                      { label: 'Moyenne', value: fmt2(stats.moyenne), color: 'text-blue-400', qui: null },
+                      { label: 'Médiane', value: fmt2(stats.mediane), color: 'text-cyan-400', qui: null },
+                      { label: 'Écart-type', value: fmt2(stats.ecartType), color: 'text-purple-400', qui: null },
+                      { label: 'P25', value: fmt2(stats.p25), color: 'text-green-400', qui: null },
+                      { label: 'Minimum', value: fmt2(stats.min), color: 'text-green-400', qui: statsQui.min },
+                      { label: 'Maximum', value: fmt2(stats.max), color: 'text-orange-400', qui: statsQui.max },
                     ].map(s => (
                       <div key={s.label} className="bg-white/5 rounded-xl border border-white/10 p-3 text-center">
                         <p className="text-slate-500 text-xs">{s.label}</p>
                         <p className={`${s.color} font-bold text-sm mt-1`}>{s.value}</p>
+                        {s.qui && <p className="text-slate-500 text-[10px] mt-0.5 leading-tight truncate" title={s.qui}>{s.qui}</p>}
                       </div>
                     ))}
                   </div>

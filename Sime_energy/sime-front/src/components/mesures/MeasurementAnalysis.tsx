@@ -184,6 +184,24 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
     [columns, selectedSet],
   );
 
+  /** Moment où le maximum et le minimum de la grandeur principale ont été atteints. */
+  const extremes = useMemo(() => {
+    let hi: { v: number; t: string } | null = null;
+    let lo: { v: number; t: string } | null = null;
+    for (const m of dateFiltered) {
+      const v = m.consumption;
+      if (typeof v !== 'number' || !isFinite(v)) continue;
+      if (!hi || v > hi.v) hi = { v, t: String(m.timestamp) };
+      if (!lo || v < lo.v) lo = { v, t: String(m.timestamp) };
+    }
+    const fmt = (x: { t: string } | null) => {
+      if (!x) return null;
+      const d = toDate(x.t);
+      return isNaN(d.getTime()) ? null : d.toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    };
+    return { max: fmt(hi), min: fmt(lo) };
+  }, [dateFiltered]);
+
   const filtered = useMemo(() => {
     if (!query.trim()) return dateFiltered;
     const q = query.toLowerCase();
@@ -222,6 +240,9 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
     const periodText = isRangeFiltered && dateRange
       ? `Période : ${new Date(dateRange.start).toLocaleString('fr-FR')} → ${new Date(dateRange.end).toLocaleString('fr-FR')}`
       : `Période complète (${kpis.duration})`;
+    // Sans cette ligne, deux moyennes différentes sur le même fichier seraient
+    // inexplicables devant un client.
+    const quarantineText = (data as { quarantineNote?: string }).quarantineNote ?? null;
     const measuresText = `Grandeurs : ${Array.from(selectedSet).map((k) => columnLabel(k, metricLabel)).join(', ') || 'aucune'}`;
 
     const kpiRows: [string, string][] = selectedSet.has('consumption')
@@ -276,7 +297,7 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
 
     return {
       title: `Rapport de mesures — ${metricLabel}`,
-      subtitle: `${periodText} — ${measuresText}`,
+      subtitle: `${periodText} — ${measuresText}${quarantineText ? ` — ${quarantineText}` : ''}`,
       generatedAt: new Date().toLocaleString('fr-FR'),
       summary: kpis.interpretation.summary,
       insights: kpis.interpretation.insights ?? [],
@@ -285,7 +306,7 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
       statsTable: { headers: statsHeaders, rows: statsRows },
       dailyTable,
     };
-  }, [kpis, selectedSet, metricLabel, unit, dailyGroups, dailyMetricKey, isRangeFiltered, dateRange]);
+  }, [kpis, selectedSet, metricLabel, unit, dailyGroups, dailyMetricKey, isRangeFiltered, dateRange, data]);
 
   return (
     <div className="space-y-6">
@@ -389,6 +410,9 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
             const raw = (kpis as Record<string, any>)[k];
             const cardUnit = k === 'totalConsumption' ? (kpis.totalUnit ?? unit) : unit;
             const value = meta?.withUnit && typeof raw === 'number' ? `${fmtNumber(raw)} ${cardUnit}` : fmtNumber(raw);
+            // Un extremum sans son moment n'est pas exploitable dans un rapport :
+            // on indique quand il a été atteint (demande du 18/09).
+            const quand = k === 'peakConsumption' ? extremes.max : k === 'minConsumption' ? extremes.min : null;
             return (
               <div key={k} className="p-3 rounded-xl border bg-card">
                 <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
@@ -396,6 +420,7 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
                   {meta?.label ?? k}
                 </div>
                 <p className="text-lg font-semibold mt-1 leading-tight">{value}</p>
+                {quand && <p className="text-muted-foreground text-[10px] mt-0.5 leading-tight truncate" title={quand}>{quand}</p>}
               </div>
             );
           })}

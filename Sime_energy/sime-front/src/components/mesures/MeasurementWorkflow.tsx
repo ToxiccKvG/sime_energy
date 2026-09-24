@@ -1,5 +1,5 @@
 import { MeasurementData, measurementLabel } from '@/services/measurementService';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import {
   useMeasurementSession, updateMeasurementSession, ensureMeasurementLibrary,
   addMeasurements, renameMeasurement as renameInSession, removeMeasurement as removeFromSession,
@@ -14,6 +14,8 @@ import { Badge } from '@/components/ui/badge';
 import { MeasurementUploadStep } from './MeasurementUploadStep';
 import { MeasurementCharts } from './MeasurementCharts';
 import { MeasurementAnalysis } from './MeasurementAnalysis';
+import { QuarantineBar } from './QuarantineBar';
+import { applyQuarantine, useQuarantineSettings } from '@/services/measurementQuarantine';
 import { SensorComparisonPanel } from './SensorComparisonPanel';
 import { ModelComparisonPanel } from './ModelComparisonPanel';
 import { AnalysisModelsPanel } from './AnalysisModelsPanel';
@@ -41,6 +43,8 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
   // Bibliothèque serveur de l'utilisateur (une fois par compte)
   useEffect(() => { void ensureMeasurementLibrary(user?.id ?? null); }, [user?.id]);
 
+
+
   const handleMeasurementsReceived = (data: MeasurementData[]) => {
     addMeasurements(data, user?.id ?? null, organization?.id ?? null);
     setCurrentDataIndex(0);
@@ -49,6 +53,25 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
   const removeMeasurement = removeFromSession;
 
   const currentData = measurementData[currentDataIndex];
+
+  // Quarantaine : calculée une fois ici, appliquée à l'Analyse, aux graphiques
+  // et aux modèles, pour qu'un même relevé donne les mêmes chiffres partout.
+  const quarantineSettings = useQuarantineSettings();
+  const quarantine = useMemo(
+    () => applyQuarantine(currentData?.measurements ?? [], {
+      label: currentData ? measurementLabel(currentData, currentDataIndex) : '',
+      sensorType: currentData?.sensor_type,
+      metricKey: 'consumption',
+      metricLabel: currentData?.metric_label ?? 'Valeur',
+      unit: currentData?.unit ?? '',
+      quantityKind: currentData?.quantity_kind ?? 'other',
+    }, quarantineSettings),
+    [currentData, currentDataIndex, quarantineSettings],
+  );
+  // La note suit le relevé filtré : elle doit se retrouver dans le rapport exporté.
+  const currentFiltered = currentData
+    ? { ...currentData, measurements: quarantine.kept, ...(quarantine.summary ? { quarantineNote: quarantine.summary } : {}) }
+    : currentData;
   const hasData = measurementData.length > 0;
   const effectiveStep: WorkflowStep = hasData ? currentStep : 'upload';
 
@@ -142,8 +165,9 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
                 onNext={() => setCurrentDataIndex((i) => Math.min(measurementData.length - 1, i + 1))}
                 onUploadMore={() => setCurrentStep('upload')}
               />
-              {currentData ? (
-                <MeasurementAnalysis data={currentData} dateRange={currentRange} onDateRangeChange={setCurrentRange} />
+              <QuarantineBar result={quarantine} settings={quarantineSettings} />
+              {currentFiltered ? (
+                <MeasurementAnalysis data={currentFiltered} dateRange={currentRange} onDateRangeChange={setCurrentRange} />
               ) : (
                 <p className="text-center py-8 text-slate-500">Aucune donnée pour ce fichier</p>
               )}
@@ -163,9 +187,10 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
                 onNext={() => setCurrentDataIndex((i) => Math.min(measurementData.length - 1, i + 1))}
                 onUploadMore={() => setCurrentStep('upload')}
               />
-              {currentData ? (
+              <QuarantineBar result={quarantine} settings={quarantineSettings} />
+              {currentFiltered ? (
                 <AnalysisModelsPanel
-                  data={currentData}
+                  data={currentFiltered}
                   title={measurementLabel(currentData, currentDataIndex)}
                   dateRange={currentRange}
                   onDateRangeChange={setCurrentRange}
@@ -222,9 +247,10 @@ export function MeasurementWorkflow({ auditId: _auditId }: MeasurementWorkflowPr
                 />
               </Card>
             )}
+            <QuarantineBar result={quarantine} settings={quarantineSettings} />
             <Card className="p-6 bg-white/5 border-white/10">
               <MeasurementCharts
-                measurements={currentData?.measurements ?? []}
+                measurements={quarantine.kept}
                 unit={currentData?.unit ?? currentData?.kpis?.unit ?? 'W'}
                 label={currentData?.metric_label ?? 'Valeur'}
                 quantityKind={currentData?.quantity_kind}

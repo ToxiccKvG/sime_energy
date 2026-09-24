@@ -193,6 +193,43 @@ courte serait écrasée par les jours absents.
 `EnvHeatmapView` (IOT) suivait encore une échelle HSL 220 → 10 codée en dur ; elle passe sur
 le dégradé de la palette, comme le reste (oubli du lot 1).
 
+### 4.6 Quarantaine des mesures aberrantes (24/09/2026)
+
+Demande du manager (18/09), reprise mot pour mot : « il ne va pas l'éliminer dans la base,
+pour la base les données doivent rester telles quelles ; mais dans ce qu'on va analyser, il
+faut qu'on puisse le filtrer » — et le terme qu'il a proposé, **mettre en quarantaine**.
+
+- **`services/measurementQuarantine.ts`** : réglage persistant (`sime-quarantine-v1`) et
+  `applyQuarantine()` qui s'appuie sur les épisodes déjà détectés par `computeAnomalies`.
+  Trois familles activables séparément : **zéros**, **valeurs figées**, **écarts au profil**.
+  Les *trous de collecte* sont exclus du dispositif : il n'y a pas de point à écarter d'une
+  moyenne quand la mesure est absente.
+- **`components/mesures/QuarantineBar.tsx`** : bandeau présent sur Analyse, Visualisation et
+  Modèles. Rien n'est écarté en silence — il affiche le décompte par famille et le détail des
+  épisodes. La note est reportée dans le sous-titre du rapport exporté (`quarantineNote`),
+  sans quoi deux moyennes différentes sur le même fichier seraient inexplicables.
+- Le calcul est fait **une fois** dans `MeasurementWorkflow` et partagé par les trois vues,
+  pour qu'un même relevé donne partout les mêmes chiffres.
+
+**Défaut prudent, établi par mesure et non par principe** : seules les *valeurs figées non
+nulles* sont cochées d'office. Écarter les zéros a été testé sur `shelly_Clim_Salon.csv` :
+2 312 mesures sur 2 948 écartées, **écart-type porté de 166 à 326 Wh** et durée couverte
+tombée de 123 à 79 jours. Une clim éteinte n'est pas une anomalie. La famille « zéros » ne
+vaut que sur un **compteur d'arrivée**, où un zéro prolongé signale une coupure ; l'infobulle
+le dit. À noter que la moyenne principale s'appelle déjà « Moyenne (hors zéros) » : la
+plainte initiale du manager était donc déjà traitée de ce côté.
+
+### 4.7 Attribution des extremums (24/09/2026)
+
+« On ne sait pas c'est quel usage qui est à 18,7 Wh — on l'a, mais on ne l'affiche pas. »
+Complété par l'utilisateur : « faudrait pas que ce soit le talon seulement. »
+
+- **IOT › Analyse** : les cartes Maximum et Minimum (celle-ci ajoutée) portent désormais
+  *appareil · date et heure*. C'est là que ça compte : quand plusieurs appareils sont chargés
+  depuis Supabase, la valeur affichée est une somme, sans rattachement possible sans cela.
+- **Mesures › Analyse** : un relevé = un appareil, donc l'attribution utile est le **moment** :
+  les cartes Maximum et Minimum indiquent quand l'extremum a été atteint.
+
 ## 5. Modèles d'analyse (`services/analysisModels/`)
 
 Principe : un modèle répond à une question d'audit et se choisit d'après la **nature des
