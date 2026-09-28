@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   fetchLatestSnapshot, fetchDevices, fetchEnergyByDevice,
-  fetchHourlyHeatmap, fetchCalendarActivity, computeAlerts,
+  fetchHourlyHeatmap, fetchCalendarActivity, computeAlerts, mergeSnapshotDevices,
   DEFAULT_FILTERS,
   type ShellyClRow, type Device, type EnergyAgg, type HeatmapCell, type CalendarDay, type Alert,
   type Filters,
@@ -105,11 +105,14 @@ export function DashboardTab() {
       ]);
       if (ctrl.signal.aborted) return;
       setSnapshot(snap);
-      setAllDevices(devs);
+      // Le catalogue est une vue matérialisée rafraîchie par lots : un appareil
+      // qui vient de se mettre à émettre n'y figure pas encore. On le récupère
+      // depuis le snapshot pour qu'il ne manque ni aux compteurs ni aux filtres.
+      setAllDevices(mergeSnapshotDevices(devs, snap));
       setEnergyAgg(energy);
       setHeatmap(heat);
       setCalendarDays(cal);
-      setAlerts(computeAlerts(snap, devs));
+      setAlerts(computeAlerts(snap, mergeSnapshotDevices(devs, snap)));
       setLastUpdate(new Date());
     } catch (e) {
       console.error('[Dashboard] fetchAll error:', e);
