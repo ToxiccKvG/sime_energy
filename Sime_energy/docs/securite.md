@@ -145,6 +145,48 @@ puis reporter la même valeur dans `SHELLY_GCP_00/.env`, sinon `configure_webhoo
 refuse de tourner — il a été mis à jour pour ne plus configurer d'appareils avec des
 webhooks morts, et ne transmet plus `site`.
 
+### 3.3 En-têtes de sécurité du front, CSP comprise
+
+*`Sime_energy/sime-front/vercel.json` — 28/09. Prend effet au premier déploiement Vercel, rien n'est en ligne aujourd'hui.*
+
+Cinq en-têtes sont posés : `Content-Security-Policy`, `X-Content-Type-Options`,
+`Referrer-Policy`, `Permissions-Policy` et `Strict-Transport-Security`.
+
+La CSP autorise exactement les origines dont l'application a besoin, et rien d'autre :
+
+| Directive | Autorisé | Pourquoi |
+|---|---|---|
+| `script-src` | `'self'` uniquement | aucun script tiers ; c'est ce qui protège la session en `localStorage` |
+| `style-src` | `'self'`, `'unsafe-inline'`, Google Fonts | `'unsafe-inline'` est imposé par shadcn/ui, qui injecte une balise `<style>` (`components/ui/chart.tsx:70`) |
+| `font-src` | `'self'`, `fonts.gstatic.com` | la police Inter |
+| `img-src` | `'self'`, `data:`, `blob:`, Supabase, `*.tile.openstreetmap.org` | tuiles Leaflet, aperçus d'images, fichiers du stockage |
+| `connect-src` | `'self'`, Supabase (https + **wss**), Edge Functions, `localhost:8000` | REST, temps réel, fonctions, backend en développement |
+| `worker-src` | `'self'`, `blob:` | exports Excel et CSV (`URL.createObjectURL`) |
+| `object-src`, `frame-ancestors` | `'none'` | pas de plugin, pas d'iframe tierce : bloque le détournement de clic |
+
+**Vérifié le 28/09** en servant le build de production en local avec ces en-têtes
+réellement appliqués, puis en testant depuis la page :
+
+| Test | Résultat |
+|---|---|
+| Supabase REST | autorisé — HTTP 401, la requête atteint le serveur |
+| Supabase temps réel (`wss://`) | non bloqué par la CSP |
+| Backend `127.0.0.1:8000` | autorisé — HTTP 200 |
+| Tuile OpenStreetMap | image chargée |
+| Feuille de style Google Fonts | chargée |
+| Police Inter depuis gstatic | 2 faces chargées |
+| **Script externe (jsdelivr)** | **refusé** — la CSP mord bien |
+| Violations dans la console | **aucune** |
+
+> `document.fonts.check('1em Inter')` renvoie `false` même quand la police est
+> chargée : ce n'est pas un symptôme de CSP. Le test fiable est
+> `await document.fonts.load('600 1em Inter')`.
+
+**À faire avant la mise en ligne.** `connect-src` ne contient pas encore l'origine
+du backend hébergé, puisque la décision 1 n'est pas prise. **Sans cet ajout, toute
+la Facturation cassera en production** : les 8 routes du backend seront bloquées par
+le navigateur. Ajouter l'URL de l'hébergeur et retirer les deux entrées `localhost`.
+
 ## 4. Ce qui reste ouvert
 
 ### 4.1 Le backend Python n'a aucune authentification — reporté
@@ -193,8 +235,8 @@ Et `processHierarchy` vit dans `measurementService.ts` mais n'est appelée que p
 
 | Point | Détail |
 |---|---|
-| `run_migration.mjs:15` | clé anon en dur. Le script est de toute façon inutilisable : le chemin qui marche est `supabase db query --linked`. |
-| CSP | absente ; session Supabase en `localStorage`. |
+| ~~`run_migration.mjs`~~ | **Supprimé le 28/09.** La clé qui s'y trouvait en dur était la clé **anon publique**, identique à celle que le front embarque déjà dans le navigateur : ce n'était donc pas une fuite, seulement un mauvais signal. Le script était mort par ailleurs — il visait un fichier de migration qui n'existe plus, n'était référencé nulle part, et ne pouvait pas fonctionner : l'API Management exige un jeton personnel, pas une clé anon. Le chemin qui marche est `supabase db query --linked` (section 5). |
+| Session Supabase | en `localStorage`, donc lisible par un script injecté. Atténué par la CSP `script-src 'self'` (section 3.3), qui bloque le chargement d'un script tiers. |
 | Dépendances | non auditées. |
 | Fonctions déployées orphelines | `shelly-web-hook` (v6 du 20/04) et `poll-shelly` sous le slug **`swift-processor`** (v8 du 20/04) : absentes du dépôt, source perdue. `shelly-web-hook` est protégée par JWT, donc pas une porte ouverte. **À supprimer ou non : décision en attente.** |
 
