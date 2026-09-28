@@ -1,0 +1,42 @@
+-- ============================================================
+--  Suppression de idx_readings_dashboard sur shelly_cl.
+--
+--  Définition : (site, device_family, room, device_id, ts DESC) — 1 234 Mo,
+--  soit 27 % de toute la base, pour 2 489 scans historiques.
+--
+--  Pourquoi il ne sert jamais : `ts` y est en DERNIÈRE position, alors que
+--  toutes les requêtes du tableau de bord sont pilotées par une plage de
+--  temps et triées par le temps (`WHERE ts >= … ORDER BY ts DESC LIMIT n`).
+--  Le planificateur ne peut pas s'en servir pour satisfaire à la fois le
+--  filtre et le tri : il prend shelly_cl_ts_idx (ts DESC), ou
+--  shelly_cl_site_ts_idx (site, ts DESC) quand un site est filtré. L'index
+--  est construit à l'envers de l'usage réel.
+--
+--  Vérifié en production le 2026-09-28, compteurs pg_stat_user_indexes
+--  relevés avant/après avoir exercé l'application :
+--    • périodes Live, 24 h et 30 j            -> 0 utilisation
+--    • filtre site = Académie CER2E           -> 0 utilisation
+--    • filtre famille = Énergie 1PH           -> 0 utilisation
+--    • filtre pièce (seule colonne exclusive) -> 0 utilisation
+--    • rafraîchissement de shelly_devices_catalog -> shelly_cl_ts_idx
+--    • fn_aggregate_horaire                   -> shelly_cl_ts_idx
+--    • fn_energy_by_device                    -> idx_shelly_cl_dev_ts_whtot
+--  Sur toute la session, seuls shelly_cl_ts_idx (+55 scans) et
+--  shelly_cl_site_ts_idx (+21) ont bougé ; idx_readings_dashboard est resté
+--  figé à 2 489. Ses 99,8 M de tuples lus pour 2 489 scans (~40 000 par
+--  scan) sont la signature de requêtes analytiques ponctuelles, pas du
+--  trafic applicatif.
+--
+--  Gain : 1 234 Mo libérés (base 4,6 Go -> ~3,4 Go) et un index de moins à
+--  maintenir sur chaque insertion, soit ~46 000 écritures par jour.
+--
+--  CONCURRENTLY : pas de verrou exclusif sur shelly_cl, le collecteur
+--  continue d'insérer pendant l'opération. Ne peut pas tourner dans une
+--  transaction — à exécuter tel quel.
+--
+--  Retour arrière si nécessaire :
+--    CREATE INDEX CONCURRENTLY idx_readings_dashboard ON public.shelly_cl
+--      USING btree (site, device_family, room, device_id, ts DESC);
+-- ============================================================
+
+DROP INDEX CONCURRENTLY IF EXISTS public.idx_readings_dashboard;
