@@ -91,7 +91,9 @@ Lecture du résumé :
 
 ## 7. Sauvegarde et capacité
 
-- **Pas de sauvegarde automatique à ce jour** (export Supabase souhaité, plan Pro : destination et périmètre à choisir).
+- **Sauvegardes Supabase** : une sauvegarde physique par jour (~07:15 UTC), ~7 jours conservés, **sans PITR**. Vérifier : `supabase backups list --project-ref amctayugahwhxwytqiqf`. Elles sont dans le même compte que la base : insuffisant seul.
+- **Export à toi** : `python SHELLY_GCP_00/scripts/export_supabase.py --out /Volumes/Lexar/SIME_BACKUP_SUPABASE` (SSD branché ; ~40 min pour tout, `--from AAAA-MM-JJ` pour l'incrémental). Produit tables en JSON, `shelly_cl` et `shelly_cl_horaire` en CSV.gz par mois, schéma (fonctions, cron, RLS) et `manifest.json` ; chaque mois est vérifié ligne par ligne. `shelly_accounts` (clés Shelly) est exclue. **Premier export fait le 2026-10-01** (10 019 467 lignes de `shelly_cl`, 178 Mo). **À refaire chaque mois** ; les buckets de stockage et `auth.users` ne sont pas inclus.
+- Restaurer un mois : décompresser le CSV.gz et le recharger dans la table (colonnes = en-tête du fichier ; cellule vide = NULL).
 - Capacité : base 3,46 Go (1er oct. 2026), seuil de 8 Go repoussé à mi-2028 ; la vraie question est la **rétention du brut**. Dédoublonner à l'ingestion réduirait le volume.
 - Contrôle : `select pg_size_pretty(pg_database_size(current_database()));`
 
