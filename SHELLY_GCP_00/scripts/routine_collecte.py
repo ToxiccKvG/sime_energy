@@ -12,6 +12,7 @@ Prérequis :
   * PDF : `pip install reportlab` (sinon le script affiche seulement le résumé).
 
 Code de sortie : 0 = collecte fraîche, 1 = collecte en retard (> 10 min), 2 = erreur d'accès.
+Absences déclarées : table site_absences (voir docs/runbook-data.md) ; un appareil muet pendant une absence n'alerte pas.
 Voir Sime_energy/docs/runbook-data.md.
 """
 import argparse, json, subprocess, sys, os, datetime as dt
@@ -54,6 +55,8 @@ def collect(hours: int) -> dict:
         from shelly_cl where ts>=now()-interval '35 days'
           and device_id in (select device_id from shelly_device_roles)
         group by 1 having max(ts)<now()-interval '{hours} hours' order by site, last_ts""")
+    d["absences"] = sql("""select site, start_at, end_at, note from site_absences
+        where end_at is null or end_at > now() - interval '35 days' order by start_at""")
     d["db"] = sql("""select pg_size_pretty(pg_database_size(current_database())) db,
         pg_size_pretty(pg_total_relation_size('shelly_cl')) cl,
         (select reltuples::bigint from pg_class where relname='shelly_cl') rows""")[0]
@@ -73,6 +76,17 @@ def analyse(d: dict) -> dict:
         age_h = (parse(f["now"]) - parse(r["last_meas"])).total_seconds() / 3600
         if age_h > STALE_MEAS_H:
             old_meas.append((r, age_h))
+    now = parse(f["now"])
+    def in_absence(site, last_ts):
+        """Appareil muet à cause d'une absence déclarée : l'absence couvre maintenant et l'appareil s'est tu
+        depuis ~6 h avant le départ (arrêts avant de partir)."""
+        for ab in d["absences"]:
+            if ab["site"] != site: continue
+            start, end = parse(ab["start_at"]), (parse(ab["end_at"]) if ab["end_at"] else None)
+            if start <= now and (end is None or now <= end) and parse(last_ts) >= start - dt.timedelta(hours=6):
+                return True
+        return False
+    for r in d["silent"]: r["absence"] = in_absence(r["site"], r["last_ts"])
     return dict(lag_min=lag_min, live=live, stale=stale, noroles=noroles, old_meas=old_meas,
                 by_site=Counter(r["site"] for r in live))
 
@@ -90,12 +104,15 @@ def summary(d: dict, a: dict, hours: int) -> str:
          f"{'OK ' if ok else 'ALERTE'} dernière ligne il y a {a['lag_min']:.1f} min ; {f['n_win']} lignes sur {hours} h",
          f"Appareils actifs (dernière heure) : {len(a['live'])} — " + ", ".join(f"{k} {v}" for k, v in sorted(a['by_site'].items())),
          f"Base : {db['db']} (shelly_cl {db['cl']}, ~{db['rows']/1e6:.1f} M lignes) ; seuil prévu 8 Go",
-         f"Appareils muets > {hours} h : {len(d['silent'])} — par site : " +
-         ", ".join(f"{k} {v}" for k, v in sorted(Counter(r['site'] for r in d['silent']).items())),
+         f"Appareils muets > {hours} h : {len(d['silent'])} dont {sum(1 for r in d['silent'] if r['absence'])} expliqués par une absence déclarée — "
+         "à expliquer : " + (", ".join(f"{k} {v}" for k, v in sorted(Counter(r['site'] for r in d['silent'] if not r['absence']).items())) or "aucun"),
          f"Collectés mais sans donnée depuis > 1 h : {len(a['stale'])}"]
     L += [f"   - {r['site']} / {r['lib']} (dernière ligne {r['last_ts'][:16]})" for r in a["stale"]]
     L.append(f"Mesure renvoyée trop ancienne (> {STALE_MEAS_H} h, capteurs non événementiels) : {len(a['old_meas'])}")
     L += [f"   - {r['site']} / {r['lib']} : mesure du {r['last_meas'][:16]} ({h/24:.0f} j)" for r, h in a["old_meas"]]
+    for ab in d["absences"]:
+        if not ab["end_at"] or parse(ab["end_at"]) >= parse(f["now"]):
+            L.append(f"Absence déclarée : {ab['site']} depuis le {ab['start_at'][:16]} UTC" + (f" jusqu'au {ab['end_at'][:16]}" if ab["end_at"] else " (en cours)"))
     L.append(f"Appareils sans rôle (shelly_device_roles) : {len(a['noroles'])}")
     L += [f"   - {r['lib']} ({r['id']})" for r in a["noroles"]]
     return "\n".join(L)
@@ -148,8 +165,9 @@ def make_pdf(d: dict, a: dict, path: Path, hours: int) -> bool:
               f"{len(a['noroles'])} appareil(s) sans rôle : " + (", ".join(f"{r['lib']} ({r['id']})" for r in a['noroles']) or "aucun")]:
         st += [P("• " + t), Spacer(1, .1 * cm)]
     st += [P(f"Appareils sans donnée depuis {hours} h ou plus", h1)]
-    rows = [["Site", "Appareil", "Dernière donnée (UTC)"]] + [[(r["site"] or "").replace("Académie CER2E", "Académie"), (r["name"] or "")[:40], r["last_ts"][:16]] for r in d["silent"]]
-    st += [tbl(rows, [2.6 * cm, 8.5 * cm, 4.5 * cm], 7)]
+    rows = [["Site", "Appareil", "Dernière donnée (UTC)", "Cause"]] + [[(r["site"] or "").replace("Académie CER2E", "Académie"), (r["name"] or "")[:40], r["last_ts"][:16],
+            "Absence déclarée" if r["absence"] else "À expliquer"] for r in d["silent"]]
+    st += [tbl(rows, [2.4 * cm, 7 * cm, 4 * cm, 3 * cm], 7)]
     SimpleDocTemplate(str(path), pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm, topMargin=1.8 * cm, bottomMargin=1.8 * cm,
                       title="Rapport de collecte Shelly").build(st)
     return True

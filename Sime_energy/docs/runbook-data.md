@@ -48,6 +48,25 @@ Lecture du résumé :
 - **Mesure trop ancienne** : un capteur est collecté mais ne transmet plus (pile, portée). La plateforme relit alors sa dernière valeur.
 - **Sans rôle** : à classer dans `shelly_device_roles`.
 
+### Déclarer une absence (voyage, fermeture, arrêt volontaire)
+
+Quand les occupants coupent le disjoncteur ou débranchent des appareils, la signature est celle d'une coupure SENELEC. À déclarer pour éviter les fausses alertes et les fausses coupures :
+
+```bash
+cd SHELLY_GCP_00
+supabase db query --linked "insert into site_absences (site, start_at, note) values ('Ma Maison', '2026-10-15 08:00+00', 'Voyage …')"
+# au retour :
+supabase db query --linked "update site_absences set end_at='2026-10-20 18:00+00' where site='Ma Maison' and end_at is null"
+```
+`site` = valeur exacte de `shelly_cl.site`. Absence en cours déclarée : **Ma Maison depuis le 28/09/2026 15:30 UTC** (fin à renseigner au retour).
+
+### Coupures SENELEC et énergie non distribuée
+
+```bash
+python SHELLY_GCP_00/scripts/detect_coupures.py --site "Ma Maison" --days 35 --csv coupures.csv
+```
+Signature : appareils secteur muets pendant que les capteurs à pile émettent ; trous < 5 min fusionnés ; seuil 5 min ; END = Σ P_réf(heure) × durée (P_réf = moyenne de l'arrivée à la même heure, hors coupures et hors absences). Résultat de référence, Ma Maison au 01/10/2026 : **18 coupures, 12,1 h, ≈ 5,8 kWh** (dont une de 3 h le 23/09). Les coupures tombant dans une absence sont signalées et ne sont pas à attribuer à SENELEC. Pour un autre site, passer `--arrivee <device_id du compteur d'arrivée>`.
+
 ## 4. Tables et fonctions clés
 
 | Objet | Rôle | Remarque |
@@ -59,6 +78,7 @@ Lecture du résumé :
 | `shelly_device_types`, `shelly_device_channels` | Types et canaux configurables | self-service (phase B de nettoyage du code dur restante) |
 | `shelly_accounts` | 3 comptes Shelly Cloud | source de vérité |
 | `fn_energy_by_device / by_day / profile / repartition` | Calcul des kWh | contourner le plafond de 1 000 lignes de PostgREST |
+| `site_absences` | Absences déclarées d'un site (`site`, `start_at`, `end_at` NULL = en cours, `note`) | Lue par la routine et la détection des coupures : un appareil muet pendant une absence n'est pas une panne |
 | `iot_files`, `measurement_files` | Fichiers importés par utilisateur (+ buckets) | |
 
 **Tâches planifiées (pg_cron)** : `poll-shelly-every-minute` (`* * * * *`), `aggregate-shelly-hourly` (`0 * * * *`), `aggregate-shelly-cl-horaire` (`5 * * * *`), `aggregate-shelly-cl-horaire-env` (`7 * * * *`), `refresh-shelly-devices-catalog` (`10 * * * *`, vue matérialisée).
