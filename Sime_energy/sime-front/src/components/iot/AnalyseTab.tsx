@@ -1994,21 +1994,41 @@ export function AnalyseTab() {
     if (file) parseFile(file);
   }, [parseFile]);
 
-  // ---- Export CSV ----
+  // ---- Export Excel ----
+  // Écrit ce qui est CHARGÉ, à sa granularité d'origine (minute, heure, jour) : une ligne par relevé avec
+  // la date ET l'heure, l'appareil, la pièce, puis les colonnes qui portent réellement des données.
+  // Avant, l'export était un tableau fixe de colonnes d'énergie avec la date seule : une station météo
+  // à la minute donnait 1 440 lignes identiques par jour, sans heure ni température — d'où le détour par
+  // la granularité horaire pour « avoir les bonnes colonnes ».
   const exportCSV = async () => {
+    const envCols = METRIQUES_ENV.filter(m => activeRows.some(r => typeof r[m.key] === 'number'));
+    const hasEnergy = activeRows.some(r => r.kwhTotal !== 0 || r.kwhRetourTotal !== 0 || r.puissKwTotal !== 0);
+    const hms = (d: Date) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     await exportJsonToXlsx(
-      activeRows.map(r => ({
-        Date: toDate(r.date).toLocaleDateString('fr-FR'),
-        Jour: r.jourSemaine,
-        'kWh Total': fmt3(r.kwhTotal),
-        'kWh Net': fmt3(r.kwhNet),
-        'kWh Retour': r.kwhRetourTotal.toFixed(3),
-        'Phase A': fmt3(r.kwhA),
-        'Phase B': fmt3(r.kwhB),
-        'Phase C': fmt3(r.kwhC),
-        Ferié: r.isJourFerie ? 'Oui' : '',
-        Weekend: r.isWeekend ? 'Oui' : '',
-      })),
+      activeRows.map(r => {
+        const d = toDate(r.date);
+        const ligne: Record<string, unknown> = {
+          Date: d.toLocaleDateString('fr-FR'),
+          Heure: hms(d),
+          Appareil: r.nomAppareil ?? '',
+          Pièce: r.deviceRoom ?? '',
+          Site: r.deviceLocation ?? '',
+        };
+        for (const m of envCols) ligne[`${m.label}${m.unit ? ` (${m.unit})` : ''}`] = typeof r[m.key] === 'number' ? r[m.key] : '';
+        if (hasEnergy) {
+          ligne['kWh Total'] = fmt3(r.kwhTotal);
+          ligne['kWh Net'] = fmt3(r.kwhNet);
+          ligne['kWh Retour'] = r.kwhRetourTotal.toFixed(3);
+          ligne['Puissance (kW)'] = fmt3(r.puissKwTotal);
+          ligne['Phase A'] = fmt3(r.kwhA);
+          ligne['Phase B'] = fmt3(r.kwhB);
+          ligne['Phase C'] = fmt3(r.kwhC);
+        }
+        ligne['Jour'] = r.jourSemaine;
+        ligne['Férié'] = r.isJourFerie ? 'Oui' : '';
+        ligne['Weekend'] = r.isWeekend ? 'Oui' : '';
+        return ligne;
+      }),
       'Données',
       `tcd_${fileName || 'export'}.xlsx`
     );
