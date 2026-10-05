@@ -625,6 +625,28 @@ async function resolveDeviceIds(opts: {
   return (data ?? []).map(d => (d as { device_id: string }).device_id);
 }
 
+/**
+ * Date de fin saisie dans l'écran (« 2026-08-31 », sans heure) : elle désigne le JOUR entier.
+ * Transmise telle quelle, la requête `ts <= '2026-08-31'` s'arrêtait à 00:00 et excluait tout le dernier jour.
+ */
+function finDeJour(d?: string): string | undefined {
+  return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T23:59:59.999Z` : d;
+}
+
+/**
+ * Message lisible pour une erreur Supabase. Les erreurs PostgREST sont des objets simples, PAS des `Error` :
+ * le test `instanceof Error` les réduisait à « Erreur inconnue ».
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; code?: string };
+    if (e.code === '57014') return "La base a interrompu la requête (délai dépassé). Réduisez la période ou le nombre d'appareils, puis réessayez.";
+    if (e.message) return e.code ? `${e.message} (code ${e.code})` : e.message;
+  }
+  return 'Erreur inconnue';
+}
+
 // ── Fonction principale d'export ──────────────────────────────
 export async function exporterDonneesSupabase(
   options: SupabaseExportOptions,
@@ -638,9 +660,10 @@ export async function exporterDonneesSupabase(
     deviceName,
     deviceIds,
     dateDebut,
-    dateFin,
+    dateFin: dateFinSaisie,
     limit,
   } = options;
+  const dateFin = finDeJour(dateFinSaisie);
 
   const colonnesValides = colonnes.filter(c => ALL_AVAILABLE_KEYS.has(c));
   if (colonnesValides.length === 0) {
@@ -715,8 +738,7 @@ export async function exporterDonneesSupabase(
       return { rows, total: rows.length };
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Erreur inconnue';
-    return { rows: [], total: 0, erreur: msg };
+    return { rows: [], total: 0, erreur: describeError(err) };
   }
 }
 
