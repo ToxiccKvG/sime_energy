@@ -27,6 +27,7 @@ import {
   Line,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -35,6 +36,7 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { integrateEnergy, type QuantityKind } from '@/services/measurementStats';
+import { computeTalon } from '@/services/analysisModels/talon';
 import { useToast } from '@/hooks/use-toast';
 import { PeriodFilter, dayRangeOf, filterByRange, singleDayOf, toDatetimeLocalValue, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
 import { ChartOptions } from '@/components/shared/ChartOptions';
@@ -339,7 +341,7 @@ export function MeasurementCharts({
             <>{formatTick(dateRange?.start ?? toDatetimeLocalValue(bounds.min))} → {formatTick(dateRange?.end ?? toDatetimeLocalValue(bounds.max))}</>
           )}
         </p>
-        {mode === 'curve' && <CurveView measurements={measurements} series={series} unit={unit} showLegend={prefs.showLegend} />}
+        {mode === 'curve' && <CurveView measurements={measurements} series={series} unit={unit} showLegend={prefs.showLegend} quantityKind={quantityKind} />}
         {mode === 'repartition' && (
           <RepartitionView
             measurements={measurements} series={series} unit={unit}
@@ -368,16 +370,26 @@ export function MeasurementCharts({
 
 /* ------------------------------------------------------------- vue Courbe */
 
+type MarkKey = 'max' | 'mean' | 'talon' | 'min';
+const MARKS: { key: MarkKey; label: string; color: string; hint: string }[] = [
+  { key: 'max', label: 'Maximum', color: 'hsl(0 84% 60%)', hint: 'Valeur la plus haute de la série affichée en premier, sur la période.' },
+  { key: 'mean', label: 'Moyenne', color: 'hsl(45 93% 47%)', hint: 'Moyenne arithmétique des mesures de la période.' },
+  { key: 'talon', label: 'Talon', color: 'hsl(262 83% 58%)', hint: "Charge de fond : puissance qui reste en permanence (veilles, froid, box…). Médiane des minima de nuit (00 h–05 h) de chaque jour. Disponible pour une puissance avec des mesures au moins horaires." },
+  { key: 'min', label: 'Minimum', color: 'hsl(190 80% 42%)', hint: 'Valeur la plus basse de la série affichée en premier, sur la période.' },
+];
+
 function CurveView({
   measurements,
   series,
   unit,
   showLegend,
+  quantityKind,
 }: {
   showLegend: boolean;
   measurements: Measurement[];
   series: { key: string; name: string; color: string }[];
   unit: string;
+  quantityKind: QuantityKind;
 }) {
   // Par défaut : grandeur principale + éventuellement la 2e série.
   const [visible, setVisible] = useState<Set<string>>(
@@ -402,7 +414,30 @@ function CurveView({
       return next;
     });
 
-  const shown = series.filter((s) => visible.has(s.key));
+  const shown = useMemo(() => series.filter((s) => visible.has(s.key)), [series, visible]);
+
+  // Repères horizontaux (max, moyenne, talon, min) sur la série affichée en premier :
+  // le réflexe d'un auditeur devant une courbe de charge. Le talon vient du même calcul que le
+  // modèle « Talon » de l'onglet Analyse, pour que les deux écrans donnent le même chiffre.
+  const [marks, setMarks] = useState<Set<MarkKey>>(() => new Set<MarkKey>(['max', 'mean', 'talon']));
+  const refValues = useMemo(() => {
+    const first = shown[0];
+    if (!first) return null;
+    const vals = measurements.map((m) => m[first.key]).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    if (vals.length < 2) return null;
+    let talon: number | null = null;
+    if (first.key === 'consumption' && quantityKind === 'power') {
+      const t = computeTalon({ label: first.name, measurements, metricKey: first.key, metricLabel: first.name, unit, quantityKind });
+      if (t.applicable && Number.isFinite(t.talon)) talon = t.talon;
+    }
+    return {
+      max: Math.max(...vals),
+      min: Math.min(...vals),
+      mean: vals.reduce((a, v) => a + v, 0) / vals.length,
+      talon,
+    } as Record<MarkKey, number | null>;
+  }, [shown, measurements, quantityKind, unit]);
+  const toggleMark = (k: MarkKey) => setMarks((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
   // Chaque grandeur a sa propre unité (ou aucune, ex. Cos φ) — jamais celle de la
   // grandeur principale par défaut.
@@ -444,6 +479,28 @@ function CurveView({
               {s.name}
             </button>
           ))}
+        </div>
+      )}
+
+      {refValues && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-no-export>
+          <span>Repères :</span>
+          {MARKS.filter((m) => refValues[m.key] !== null).map((m) => (
+            <button
+              key={m.key}
+              onClick={() => toggleMark(m.key)}
+              title={m.hint}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition ${
+                marks.has(m.key) ? 'bg-muted border-transparent text-foreground' : 'opacity-50 border-border hover:opacity-80'
+              }`}
+            >
+              <span className="h-0.5 w-3" style={{ backgroundColor: m.color }} />
+              {m.label} {formatValue(refValues[m.key] as number, unit)}
+            </button>
+          ))}
+          {quantityKind === 'power' && refValues.talon === null && (
+            <span className="italic" title="Il faut une puissance mesurée au moins toutes les heures, sur la grandeur principale.">Talon indisponible</span>
+          )}
         </div>
       )}
 
@@ -507,6 +564,18 @@ function CurveView({
               />
             ),
           )}
+          {refValues && shown[0] && MARKS.filter((m) => marks.has(m.key) && refValues[m.key] !== null).map((m) => (
+            <ReferenceLine
+              key={m.key}
+              yAxisId={axisIdFor(shown[0].name)}
+              y={refValues[m.key] as number}
+              stroke={m.color}
+              strokeDasharray="6 4"
+              strokeWidth={1.5}
+              ifOverflow="extendDomain"
+              label={{ value: `${m.label} ${formatValue(refValues[m.key] as number, unit)}`, position: 'insideTopRight', fontSize: 10, fill: m.color }}
+            />
+          ))}
           <Brush dataKey="label" height={24} stroke="hsl(var(--primary))" travellerWidth={8} />
         </ComposedChart>
       </ResponsiveContainer>
