@@ -147,7 +147,7 @@ const ENERGIE_COLUMNS = [
 const ENV_COLUMNS = [
   'Temperature', 'Humidite', 'Ressenti', 'Point_Rosee',
   'UV_Index', 'Luminosite', 'Pression', 'Tendance_Pression',
-  'Precipitation', 'Alarme_Humidite',
+  'Precipitation', 'Precipitation_Incr', 'Mesure_Le', 'Alarme_Humidite',
   'Vent_Vitesse', 'Vent_Rafale', 'Vent_Direction',
   'Batterie', 'Batterie_V', 'Signal',
 ];

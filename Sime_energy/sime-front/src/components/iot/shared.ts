@@ -39,7 +39,9 @@ export const COLONNES_PROFIL_SHELLY: ColonneProfilShelly[] = [
   { key: 'Luminosite',        label: 'Luminosité',                groupe: 'entree', unite: 'lux' },
   { key: 'Pression',          label: 'Pression atmosphérique',    groupe: 'entree', unite: 'hPa' },
   { key: 'Tendance_Pression', label: 'Tendance de pression',      groupe: 'entree' },
-  { key: 'Precipitation',     label: 'Précipitations',            groupe: 'entree', unite: 'mm' },
+  { key: 'Precipitation',     label: 'Précipitations (cumul)',    groupe: 'entree', unite: 'mm' },
+  { key: 'Precipitation_Incr', label: 'Pluie par intervalle',     groupe: 'calcule', unite: 'mm' },
+  { key: 'Mesure_Le',         label: 'Heure réelle de mesure',    groupe: 'entree' },
   { key: 'Alarme_Humidite',   label: 'Alarme pluie/humidité',     groupe: 'entree' },
   { key: 'Vent_Vitesse',      label: 'Vitesse du vent',           groupe: 'entree', unite: 'm/s' },
   { key: 'Vent_Rafale',       label: 'Rafale de vent',            groupe: 'entree', unite: 'm/s' },
@@ -201,7 +203,9 @@ export interface ShellyRow {
   luminosite?: number;
   pression?: number;
   tendancePression?: string;
-  precipitation?: number;
+  precipitation?: number;           // CUMUL du pluviomètre depuis son installation (jamais filtré)
+  precipitationIncr?: number;       // pluie tombée depuis la mesure précédente du même appareil (calculée)
+  mesureAt?: Date;                  // heure RÉELLE de la mesure (measured_at) : distingue une mesure d'une relecture
   alarmeHumidite?: boolean;
   ventVitesse?: number;
   ventRafale?: number;

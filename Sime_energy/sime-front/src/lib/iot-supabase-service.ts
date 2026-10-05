@@ -25,6 +25,7 @@ const SHELLY_TABLE = 'shelly_cl' as const;
 interface ShellyRow {
   id?: number;
   ts: string;                        // horodatage du poll
+  measured_at?: string | null;       // heure RÉELLE de la mesure (≠ ts : le poll relit la dernière valeur si la station est muette)
 
   // Localisation
   site: string;
@@ -323,6 +324,12 @@ export function transformRowsToProfilMi(
       Pression:           m.pressure_hpa ?? null,
       Tendance_Pression:  m.pressure_slope ?? null,
       Precipitation:      m.precipitation_mm ?? null,
+      // Le pluviomètre renvoie un CUMUL : la pluie d'un intervalle est la différence avec la mesure précédente
+      // du même appareil. Un recul du compteur (remise à zéro) ne fabrique pas de pluie négative : 0.
+      Precipitation_Incr: typeof m.precipitation_mm === 'number'
+        ? (prev && typeof prev.precipitation_mm === 'number' ? Math.max(0, Math.round((m.precipitation_mm - prev.precipitation_mm) * 1000) / 1000) : 0)
+        : null,
+      Mesure_Le:          m.measured_at ?? null,
       Alarme_Humidite:    m.moisture_alarm ?? null,
       Vent_Vitesse:       m.wind_speed_ms ?? null,
       Vent_Rafale:        m.wind_gust_ms ?? null,
@@ -457,6 +464,8 @@ export function transformHoraireToProfilMi(
       Pression:           m.pressure_hpa_moy ?? null,
       Tendance_Pression:  m.pressure_slope_dernier ?? null,
       Precipitation:      m.precipitation_mm ?? null,
+      Precipitation_Incr: null,
+      Mesure_Le:          null,
       Alarme_Humidite:    m.moisture_alarm ?? null,
       Vent_Vitesse:       m.wind_speed_ms_moy ?? null,
       Vent_Rafale:        m.wind_gust_ms_max ?? null,

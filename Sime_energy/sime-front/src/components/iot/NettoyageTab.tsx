@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useIOT } from './IOTContext';
+import { findFrozenRows, fmtDuration, BLANKABLE_ENV_KEYS } from '@/lib/iot-frozen';
 import { usePinnedColumns } from './tablePrefs';
 import type { ShellyRow } from './shared';
 import { COLONNES_PROFIL_SHELLY } from './shared';
@@ -66,7 +67,7 @@ function buildCleanedFileName(rows: IdentiteRow[], fallback: string): string {
 }
 
 type ColType = 'date' | 'num' | 'text';
-type IssueType = 'duplicates_day' | 'duplicates_exact' | 'zeros' | 'outliers' | 'gaps' | 'negatives' | 'phase_mismatch';
+type IssueType = 'duplicates_day' | 'duplicates_exact' | 'frozen' | 'zeros' | 'outliers' | 'gaps' | 'negatives' | 'phase_mismatch';
 type FillMethod = 'zero' | 'mean' | 'forward' | 'linear';
 type NumOp  = 'round' | 'multiply' | 'add' | 'clamp_min' | 'clamp_max' | 'abs' | 'zero_neg' | 'normalize';
 type TextOp = 'trim' | 'uppercase' | 'lowercase' | 'dot_comma' | 'comma_dot' | 'replace';
@@ -145,7 +146,9 @@ const COLUMNS: ColDef[] = [
   { key: 'luminosite',          label: 'Luminosité',    type: 'num',  editable: true,  defaultVisible: false, width: 95  },
   { key: 'pression',            label: 'Pression',      type: 'num',  editable: true,  defaultVisible: false, width: 85  },
   { key: 'tendancePression',    label: 'Tend. Press.',  type: 'text', editable: false, defaultVisible: false, width: 100 },
-  { key: 'precipitation',       label: 'Précip.',       type: 'num',  editable: true,  defaultVisible: false, width: 80  },
+  { key: 'precipitation',       label: 'Pluie cumulée', type: 'num',  editable: false, defaultVisible: false, width: 95  },
+  { key: 'precipitationIncr',   label: 'Pluie (mm)',    type: 'num',  editable: false, defaultVisible: false, width: 85  },
+  { key: 'mesureAt',            label: 'Mesure réelle', type: 'date', editable: false, defaultVisible: false, width: 130 },
   { key: 'alarmeHumidite',      label: 'Alarme Pluie',  type: 'text', editable: false, defaultVisible: false, width: 100 },
   { key: 'ventVitesse',         label: 'Vent',           type: 'num',  editable: true,  defaultVisible: false, width: 75  },
   { key: 'ventRafale',          label: 'Rafale',        type: 'num',  editable: true,  defaultVisible: false, width: 75  },
@@ -325,6 +328,21 @@ function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
       id: 'duplicates_exact',
       count: dupExact,
       description: `${dupExact} doublon${dupExact > 1 ? 's' : ''} exacts (même date et heure)`,
+    });
+  }
+
+  // 2 bis. Données figées d'un capteur environnemental : la collecte relit la dernière mesure quand la
+  //        station ne transmet pas (nuit, pile…). Ce ne sont pas des mesures.
+  const frozen = findFrozenRows(rows);
+  if (frozen.rows.length > 0) {
+    const pct = Math.round((frozen.rows.length / rows.length) * 100);
+    issues.push({
+      id: 'frozen',
+      count: frozen.rows.length,
+      description: `${frozen.rows.length} ligne${frozen.rows.length > 1 ? 's' : ''} figée${frozen.rows.length > 1 ? 's' : ''} — la dernière mesure relue (${pct} % des lignes)`,
+      detail: `${frozen.sequences} séquence${frozen.sequences > 1 ? 's' : ''}, la plus longue ${fmtDuration(frozen.longestMs)}`
+        + (frozen.longestStart ? ` à partir du ${frozen.longestStart.toLocaleDateString('fr-FR')} ${frozen.longestStart.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : '')
+        + (frozen.exact ? " · repérées d'après l'heure réelle de mesure" : ' · repérées par des valeurs identiques pendant 30 min ou plus'),
     });
   }
 
@@ -587,6 +605,9 @@ export function NettoyageTab() {
         present.add(key);
       }
     }
+    // La pluie par intervalle est presque toujours à 0 au début d'une série : sans cette règle elle serait
+    // masquée alors que le cumul, lui, est affiché.
+    if (present.has('precipitation')) present.add('precipitationIncr');
     return present;
   }, [activeRows]);
 
@@ -750,6 +771,24 @@ export function NettoyageTab() {
     pushUndo(activeRows);
     setActiveRows(unique);
     ignoreIssue('duplicates_exact');
+    setSelectedIndices(new Set());
+  }, [activeRows, pushUndo, setActiveRows, ignoreIssue]);
+
+  // Données figées : on ne touche jamais au cumul de pluie (la première ligne de la séquence en garde la vraie valeur).
+  const doFixFrozen = useCallback((mode: 'delete' | 'blank') => {
+    const set = new Set(findFrozenRows(activeRows).rows);
+    pushUndo(activeRows);
+    if (mode === 'delete') {
+      setActiveRows(activeRows.filter(r => !set.has(r)));
+    } else {
+      setActiveRows(activeRows.map(r => {
+        if (!set.has(r)) return r;
+        const c: ShellyRow = { ...r, precipitationIncr: 0 };
+        for (const k of BLANKABLE_ENV_KEYS) (c as unknown as Record<string, unknown>)[k] = undefined;
+        return c;
+      }));
+    }
+    ignoreIssue('frozen');
     setSelectedIndices(new Set());
   }, [activeRows, pushUndo, setActiveRows, ignoreIssue]);
 
@@ -1757,6 +1796,39 @@ export function NettoyageTab() {
                     </Button>
                     <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500 hover:text-white"
                       onClick={() => ignoreIssue('duplicates_exact')}>Ignorer</Button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Données figées */}
+            {activeIssues.find(i => i.id === 'frozen') && (() => {
+              const iss = activeIssues.find(i => i.id === 'frozen')!;
+              return (
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <Copy className="h-4 w-4 text-sky-400 shrink-0" />
+                        <span className="text-white text-sm font-medium">{iss.description}</span>
+                        <Badge className="bg-sky-500/20 text-sky-300 border-0 text-[10px]">{iss.count}</Badge>
+                      </div>
+                      {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
+                      <p className="text-slate-500 text-xs ml-6 mt-0.5">Le cumul de pluie n'est jamais modifié : la première ligne de chaque séquence garde la vraie valeur.</p>
+                    </div>
+                    <button onClick={() => ignoreIssue('frozen')} className="text-slate-600 hover:text-slate-400 shrink-0"><X className="h-4 w-4" /></button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 mt-3 ml-6">
+                    <Button size="sm" className="h-7 text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30"
+                      onClick={() => doFixFrozen('delete')}>
+                      <Scissors className="h-3.5 w-3.5 mr-1" /> Supprimer les relectures
+                    </Button>
+                    <Button size="sm" className="h-7 text-xs bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/30"
+                      onClick={() => doFixFrozen('blank')}>
+                      <Eraser className="h-3.5 w-3.5 mr-1" /> Vider les valeurs (garder l'heure)
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500 hover:text-white"
+                      onClick={() => ignoreIssue('frozen')}>Ignorer</Button>
                   </div>
                 </div>
               );

@@ -219,6 +219,8 @@ export function parseShellyRow(
     pression:         numOrUndef(raw['Pression']),
     tendancePression: (raw['Tendance_Pression'] ?? undefined) as string | undefined,
     precipitation:    numOrUndef(raw['Precipitation']),
+    precipitationIncr: numOrUndef(raw['Precipitation_Incr']),
+    mesureAt:         (() => { const v = raw['Mesure_Le']; if (!v) return undefined; const d = v instanceof Date ? v : new Date(String(v)); return isNaN(d.getTime()) ? undefined : d; })(),
     alarmeHumidite:   typeof raw['Alarme_Humidite'] === 'boolean' ? raw['Alarme_Humidite'] as boolean : undefined,
     ventVitesse:      numOrUndef(raw['Vent_Vitesse']),
     ventRafale:       numOrUndef(raw['Vent_Rafale']),
