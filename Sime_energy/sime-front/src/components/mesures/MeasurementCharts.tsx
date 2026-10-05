@@ -147,6 +147,8 @@ export function MeasurementCharts({
   useUnitSettings();
   const [localRange, setLocalRange] = useState<DateRange>(null);
   const [exporting, setExporting] = useState(false);
+  // Rapports et impression : image sur fond blanc, avec le thème clair (le thème sombre rend le texte invisible sur blanc).
+  const [whiteBg, setWhiteBg] = useState(true);
   const cardRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -177,6 +179,8 @@ export function MeasurementCharts({
       const canvas = await html2canvas(cardRef.current, {
         scale: 2, logging: false, useCORS: true,
         ignoreElements: isHoverArtifact,
+        backgroundColor: whiteBg ? '#ffffff' : null,
+        onclone: (doc) => { if (whiteBg) doc.documentElement.classList.remove('dark'); },
       });
       const a = document.createElement('a');
       a.href = canvas.toDataURL('image/png');
@@ -316,6 +320,10 @@ export function MeasurementCharts({
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <ChartOptions chartId={`mesures:${mode}`} defaultTitle={autoTitle} unit={unit} />
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none" title="Image exportée sur fond blanc, pour les rapports et l'impression">
+          <input type="checkbox" className="h-3.5 w-3.5" checked={whiteBg} onChange={(e) => setWhiteBg(e.target.checked)} />
+          Fond blanc
+        </label>
         <Button variant="outline" size="sm" className="h-8 text-xs" onClick={exportImage} disabled={exporting || measurements.length === 0}>
           {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5 mr-1.5" />}
           Exporter en image
@@ -804,6 +812,24 @@ function PeriodView({
 
 /* -------------------------------------------------------- vue Répartition */
 
+const OTHERS_COLOR = '#94a3b8';
+const MAX_PARTS_CHOICES = [4, 5, 6, 8, 0] as const; // 0 = tout afficher
+
+/**
+ * Au-delà de `max` parts le camembert devient illisible : les plus petites sont
+ * regroupées dans « Autres » (comme un camembert Excel), le détail restant
+ * consultable. On garde max − 1 parts + « Autres » pour ne jamais dépasser `max`.
+ */
+function groupSmallParts<T extends { name: string; value: number; color: string }>(rows: T[], max: number) {
+  if (max <= 0 || rows.length <= max) return { shown: rows, others: [] as T[] };
+  const keep = rows.slice(0, max - 1);
+  const rest = rows.slice(max - 1);
+  const grouped = { ...rest[0], name: `Autres (${rest.length})`, value: rest.reduce((a, r) => a + r.value, 0), color: OTHERS_COLOR };
+  return { shown: [...keep, grouped], others: rest };
+}
+
+type SliceLabelMode = 'percent' | 'value' | 'both';
+
 /**
  * Part de chaque grandeur sur la période — le camembert qui existait dans IOT
  * et manquait ici (demande du 18/09). Une part n'a de sens que pour des
@@ -861,6 +887,9 @@ function RepartitionView({
   }, [measurements, series, unit, palette, quantityKind]);
 
   const [preferDevice, setPreferDevice] = useState(true);
+  const [maxParts, setMaxParts] = useState<number>(5);
+  const [labelMode, setLabelMode] = useState<SliceLabelMode>('both');
+  const [showOthers, setShowOthers] = useState(false);
   const active = (preferDevice && byDevice) ? byDevice : (bySeries ?? byDevice);
   const isDevice = active === byDevice;
 
@@ -875,49 +904,102 @@ function RepartitionView({
   }
 
   const total = active.rows.reduce((a, d) => a + d.value, 0);
+  const { shown, others } = groupSmallParts(active.rows, maxParts);
+  const pct = (v: number) => `${((v / total) * 100).toFixed(1)} %`;
+  const sliceLabel = (d: { percent?: number; value?: number }) => {
+    const p = `${((d.percent ?? 0) * 100).toFixed(0)} %`;
+    if (labelMode === 'percent') return p;
+    const v = formatValue(Number(d.value ?? 0), active.unit);
+    return labelMode === 'value' ? v : `${v} · ${p}`;
+  };
 
   return (
     <div className="space-y-3">
       {byDevice && bySeries && (
-        <div className="flex items-center gap-1 p-1 bg-muted rounded-lg w-fit mx-auto">
+        <div className="flex items-center gap-1 p-1 bg-muted rounded-lg w-fit mx-auto" data-no-export>
           <ModeButton active={isDevice} onClick={() => setPreferDevice(true)} icon={<PieIcon className="h-3.5 w-3.5" />}>Par appareil</ModeButton>
           <ModeButton active={!isDevice} onClick={() => setPreferDevice(false)} icon={<BarChart3 className="h-3.5 w-3.5" />}>Par grandeur</ModeButton>
         </div>
       )}
+      {/* Réglages d'affichage : hors de l'image exportée */}
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-muted-foreground" data-no-export>
+        <label className="flex items-center gap-1.5">
+          Parts affichées
+          <select
+            className="h-7 rounded-md border border-input bg-background px-1.5 text-xs text-foreground"
+            value={maxParts}
+            onChange={(e) => { setMaxParts(Number(e.target.value)); setShowOthers(false); }}
+          >
+            {MAX_PARTS_CHOICES.map((n) => <option key={n} value={n}>{n === 0 ? 'Toutes' : `${n} max, le reste en « Autres »`}</option>)}
+          </select>
+        </label>
+        <div className="flex items-center gap-1 p-1 bg-muted rounded-lg">
+          <ModeButton active={labelMode === 'percent'} onClick={() => setLabelMode('percent')} icon={null}>%</ModeButton>
+          <ModeButton active={labelMode === 'value'} onClick={() => setLabelMode('value')} icon={null}>Valeur</ModeButton>
+          <ModeButton active={labelMode === 'both'} onClick={() => setLabelMode('both')} icon={null}>Les deux</ModeButton>
+        </div>
+      </div>
       <p className="text-xs text-muted-foreground text-center">
         {isDevice
           ? `Part de chaque appareil dans le total mesuré sur la période — ${active.rows.length} relevés comparés.`
           : 'Part de chaque grandeur de ce relevé sur la période.'}
       </p>
-      <ResponsiveContainer width="100%" height={380}>
-        <PieChart>
-          <Tooltip
-            contentStyle={tooltipStyle}
-            formatter={(v: number, n) => [`${formatValue(Number(v), active.unit)} · ${((Number(v) / total) * 100).toFixed(1)} %`, n]}
-          />
-          {showLegend && <Legend />}
-          <Pie
-            data={active.rows}
-            dataKey="value"
-            nameKey="name"
-            innerRadius={70}
-            outerRadius={130}
-            paddingAngle={2}
-            isAnimationActive={false}
-            label={(d: { percent?: number }) => `${((d.percent ?? 0) * 100).toFixed(0)} %`}
-          >
-            {active.rows.map((d) => <Cell key={d.name} fill={d.color} />)}
-          </Pie>
-        </PieChart>
-      </ResponsiveContainer>
+      <div className="relative">
+        <ResponsiveContainer width="100%" height={380}>
+          <PieChart>
+            <Tooltip
+              contentStyle={tooltipStyle}
+              formatter={(v: number, n) => [`${formatValue(Number(v), active.unit)} · ${pct(Number(v))}`, n]}
+            />
+            {showLegend && <Legend />}
+            <Pie
+              data={shown}
+              dataKey="value"
+              nameKey="name"
+              innerRadius={70}
+              outerRadius={130}
+              paddingAngle={2}
+              isAnimationActive={false}
+              label={sliceLabel}
+            >
+              {shown.map((d) => <Cell key={d.name} fill={d.color} />)}
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+        {/* Total au centre : couleurs du thème, lisibles en sombre comme en clair (et sur l'image à fond blanc). */}
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center" style={{ paddingBottom: showLegend ? 28 : 0 }}>
+          <span className="text-[11px] text-muted-foreground">Total</span>
+          <span className="text-base font-semibold text-foreground">{formatValue(total, active.unit)}</span>
+        </div>
+      </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground justify-center">
-        {active.rows.map(d => (
+        {shown.map(d => (
           <span key={d.name} className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: d.color }} />
-            {d.name} — {formatValue(d.value, active.unit)} ({((d.value / total) * 100).toFixed(1)} %)
+            {d.name} — {formatValue(d.value, active.unit)} ({pct(d.value)})
           </span>
         ))}
       </div>
+      <p className="text-xs text-center text-foreground">
+        Total : <span className="font-semibold">{formatValue(total, active.unit)}</span> (= 100 %)
+      </p>
+      {others.length > 0 && (
+        <div className="text-xs text-muted-foreground max-w-xl mx-auto">
+          <button className="underline underline-offset-2 hover:text-foreground" onClick={() => setShowOthers((o) => !o)} data-no-export>
+            {showOthers ? 'Masquer' : 'Voir'} le détail de « Autres » ({others.length} éléments)
+          </button>
+          {showOthers && (
+            <ul className="mt-2 space-y-0.5">
+              {others.map((r) => (
+                <li key={r.name} className="flex justify-between gap-3">
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: r.color }} />{r.name}</span>
+                  <span>{formatValue(r.value, active.unit)} ({pct(r.value)})</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }
