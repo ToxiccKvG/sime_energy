@@ -12,7 +12,7 @@
  * s'adapte donc à n'importe quel capteur sans configuration.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import { isHoverArtifact } from '@/lib/chart-export';
 import {
@@ -27,6 +27,7 @@ import {
   Line,
   Pie,
   PieChart,
+  Customized,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -900,6 +901,144 @@ function groupSmallParts<T extends { name: string; value: number; color: string 
 type SliceLabelMode = 'percent' | 'value' | 'both';
 
 /**
+ * Camembert « principal + secondaire » (format Excel « camembert de camembert ») :
+ * les grosses parts à gauche avec des étiquettes encadrées (nom + valeur ou %), et la part
+ * « Autres » reliée par des pointillés à un second camembert qui en montre le détail.
+ * Tout est dessiné en pixels (largeur mesurée) pour que les pointillés tombent juste.
+ */
+type PieRow = { name: string; value: number; color: string };
+const PIE_H = 380;
+const RAD = Math.PI / 180;
+
+
+type CalloutLayout = { ex: number; ey: number; ax: number; ay: number; right: boolean };
+
+/**
+ * Place les étiquettes d'un camembert : côté (gauche/droite) selon l'angle de la part, ou colonne
+ * unique à droite (second camembert) ; puis espacement vertical minimal pour qu'elles ne se chevauchent pas.
+ */
+function layoutCallouts(rows: PieRow[], cx: number, cy: number, R: number, startAngle: number, forceRight: boolean, skip: number): (CalloutLayout | null)[] {
+  const sum = rows.reduce((a, r) => a + r.value, 0) || 1;
+  let ang = startAngle;
+  const L = rows.map((r, i) => {
+    const span = (r.value / sum) * 360, mid = ang - span / 2;
+    ang -= span;
+    const a = -mid * RAD;
+    return { i, right: forceRight || Math.cos(a) >= 0, ex: cx + (R + 4) * Math.cos(a), ey: cy + (R + 4) * Math.sin(a), y: cy + (R + 26) * Math.sin(a) };
+  });
+  const out: (CalloutLayout | null)[] = rows.map(() => null);
+  for (const side of [true, false]) {
+    const g = L.filter((l) => l.right === side && l.i !== skip).sort((p, q) => p.y - q.y);
+    for (let k = 1; k < g.length; k++) if (g[k].y - g[k - 1].y < 36) g[k].y = g[k - 1].y + 36;
+    const over = g.length ? g[g.length - 1].y - (PIE_H - 22) : 0;
+    for (const l of g) { if (over > 0) l.y -= over; l.y = Math.max(20, l.y); }
+    for (const l of g) {
+      out[l.i] = { ex: l.ex, ey: l.ey, ay: l.y, right: side, ax: forceRight ? cx + R + 44 : cx + (side ? R + 30 : -(R + 30)) };
+    }
+  }
+  return out;
+}
+
+export function PieOfPie({ shown, others, total, unit, labelMode, showTooltip }: {
+  shown: PieRow[]; others: PieRow[]; total: number; unit: string; labelMode: SliceLabelMode; showTooltip: boolean;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [avail, setAvail] = useState(720);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    setAvail(Math.max(320, el.clientWidth));
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setAvail(Math.max(320, el.clientWidth)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const hasSecond = others.length > 0;
+  const othersTotal = others.reduce((a, r) => a + r.value, 0);
+  const f = total > 0 ? othersTotal / total : 0;
+  const pct = (v: number) => `${((v / total) * 100).toFixed(1).replace('.', ',')} %`;
+  const line2Of = (v: number) => {
+    const val = formatValue(v, unit), p = pct(v);
+    return labelMode === 'percent' ? p : labelMode === 'value' ? val : `${val} · ${p}`;
+  };
+  const boxW = (name: string, v: number) => Math.max(name.length * 6.2, line2Of(v).length * 5.6) + 12;
+
+  // Largeur nécessaire : les étiquettes de gauche, les deux camemberts, la colonne de détail à droite.
+  // Si l'écran est plus étroit, le graphique défile horizontalement plutôt que de couper du texte.
+  const R = 95;
+  const r2 = 66;
+  const bwMain = Math.max(100, ...(hasSecond ? shown.slice(0, -1) : shown).map((d) => boxW(d.name, d.value)));
+  const bwSec = Math.max(100, ...others.map((d) => boxW(d.name, d.value)));
+  const cxMainMin = R + 34 + bwMain;
+  const required = hasSecond ? cxMainMin + R + 90 + r2 + 52 + bwSec : 2 * (R + 34 + bwMain);
+  const w = Math.max(avail, required);
+  const cy = PIE_H / 2;
+  const cxMain = hasSecond ? Math.max(cxMainMin, w * 0.27) : w / 2;
+  const cxSec = Math.max(cxMain + R + 90, Math.min(w * 0.66, w - r2 - 52 - bwSec));
+  // « Autres » est la dernière part : on tourne le camembert pour qu'elle regarde le second (à droite, 0°).
+  const startAngle = hasSecond ? 360 - 180 * f : 90;
+  const endAngle = startAngle - 360;
+  const theta = 180 * f * RAD;
+
+  const layMain = useMemo(() => layoutCallouts(shown, cxMain, cy, R, startAngle, false, hasSecond ? shown.length - 1 : -1), [shown, cxMain, cy, R, startAngle, hasSecond]);
+  const laySec = useMemo(() => layoutCallouts(others, cxSec, cy, r2, 90, true, -1), [others, cxSec, cy, r2]);
+
+  /** Étiquette encadrée avec ligne de rappel : nom (couleur de la part) puis valeur et/ou %. */
+  const callout = (lay: (CalloutLayout | null)[]) => (d: any) => {
+    const l = lay[d.index];
+    if (!l) return null; // « Autres » : décrit sous le second camembert
+    const line2 = line2Of(Number(d.value));
+    const bw = boxW(String(d.name), Number(d.value)), bh = 32;
+    const bx = l.right ? l.ax : l.ax - bw, by = l.ay - bh / 2;
+    return (
+      <g>
+        <polyline points={`${l.ex},${l.ey} ${l.ax},${l.ay}`} fill="none" stroke={d.fill} strokeDasharray="2 2" />
+        <rect x={bx} y={by} width={bw} height={bh} rx={3} fill="hsl(var(--background))" stroke={d.fill} strokeDasharray="3 2" />
+        <text x={bx + bw / 2} y={by + 13} textAnchor="middle" fontSize={10} fontWeight={700} fill={d.fill}>{d.name}</text>
+        <text x={bx + bw / 2} y={by + 26} textAnchor="middle" fontSize={10} fill="hsl(var(--foreground))">{line2}</text>
+      </g>
+    );
+  };
+
+  const connectors = () => hasSecond ? (
+    <g stroke="hsl(var(--muted-foreground))" strokeDasharray="4 3" strokeWidth={1}>
+      <line x1={cxMain + R * Math.cos(theta)} y1={cy - R * Math.sin(theta)} x2={cxSec} y2={cy - r2} />
+      <line x1={cxMain + R * Math.cos(theta)} y1={cy + R * Math.sin(theta)} x2={cxSec} y2={cy + r2} />
+    </g>
+  ) : null;
+
+  const tip = (v: number, n: string) => [`${formatValue(Number(v), unit)} · ${pct(Number(v))}`, n] as [string, string];
+
+  return (
+    <div ref={boxRef} className="w-full overflow-x-auto">
+      <PieChart width={w} height={PIE_H} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+        {showTooltip && <Tooltip contentStyle={tooltipStyle} formatter={tip} />}
+        <Pie data={shown} dataKey="value" nameKey="name" cx={cxMain} cy={cy} outerRadius={R} innerRadius={0}
+          startAngle={startAngle} endAngle={endAngle} isAnimationActive={false} stroke="hsl(var(--background))"
+          label={callout(layMain)} labelLine={false}>
+          {shown.map((d) => <Cell key={d.name} fill={d.color} />)}
+        </Pie>
+        {hasSecond && (
+          <Pie data={others} dataKey="value" nameKey="name" cx={cxSec} cy={cy} outerRadius={r2} innerRadius={0}
+            startAngle={90} endAngle={-270} isAnimationActive={false} stroke="hsl(var(--background))"
+            label={callout(laySec)} labelLine={false}>
+            {others.map((d) => <Cell key={d.name} fill={d.color} />)}
+          </Pie>
+        )}
+        <Customized component={connectors} />
+      </PieChart>
+      {hasSecond && (
+        <p className="text-xs text-center text-muted-foreground -mt-2">
+          Détail de la part « Autres » ({others.length} éléments) : {formatValue(othersTotal, unit)} · {pct(othersTotal)} du total
+        </p>
+      )}
+    </div>
+  );
+}
+
+
+/**
  * Part de chaque grandeur sur la période — le camembert qui existait dans IOT
  * et manquait ici (demande du 18/09). Une part n'a de sens que pour des
  * grandeurs cumulables : une température ou un pourcentage ne s'additionnent
@@ -974,14 +1113,7 @@ function RepartitionView({
 
   const total = active.rows.reduce((a, d) => a + d.value, 0);
   const { shown, others } = groupSmallParts(active.rows, maxParts);
-  const pct = (v: number) => `${((v / total) * 100).toFixed(1)} %`;
-  const sliceLabel = (d: { percent?: number; value?: number }) => {
-    const p = `${((d.percent ?? 0) * 100).toFixed(0)} %`;
-    if (labelMode === 'percent') return p;
-    const v = formatValue(Number(d.value ?? 0), active.unit);
-    return labelMode === 'value' ? v : `${v} · ${p}`;
-  };
-
+  const pct = (v: number) => `${((v / total) * 100).toFixed(1).replace('.', ',')} %`;
   return (
     <div className="space-y-3">
       {byDevice && bySeries && (
@@ -1013,34 +1145,7 @@ function RepartitionView({
           ? `Part de chaque appareil dans le total mesuré sur la période — ${active.rows.length} relevés comparés.`
           : 'Part de chaque grandeur de ce relevé sur la période.'}
       </p>
-      <div className="relative">
-        <ResponsiveContainer width="100%" height={380}>
-          <PieChart>
-            <Tooltip
-              contentStyle={tooltipStyle}
-              formatter={(v: number, n) => [`${formatValue(Number(v), active.unit)} · ${pct(Number(v))}`, n]}
-            />
-            {showLegend && <Legend />}
-            <Pie
-              data={shown}
-              dataKey="value"
-              nameKey="name"
-              innerRadius={70}
-              outerRadius={130}
-              paddingAngle={2}
-              isAnimationActive={false}
-              label={sliceLabel}
-            >
-              {shown.map((d) => <Cell key={d.name} fill={d.color} />)}
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
-        {/* Total au centre : couleurs du thème, lisibles en sombre comme en clair (et sur l'image à fond blanc). */}
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center" style={{ paddingBottom: showLegend ? 28 : 0 }}>
-          <span className="text-[11px] text-muted-foreground">Total</span>
-          <span className="text-base font-semibold text-foreground">{formatValue(total, active.unit)}</span>
-        </div>
-      </div>
+      <PieOfPie shown={shown} others={others} total={total} unit={active.unit} labelMode={labelMode} showTooltip />
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground justify-center">
         {shown.map(d => (
           <span key={d.name} className="flex items-center gap-1.5">
