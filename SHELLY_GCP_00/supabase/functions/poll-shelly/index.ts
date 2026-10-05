@@ -566,6 +566,27 @@ function extractChannelReading(deviceId: string, site: string, meta: Meta, paren
   return {...base,state:"offline"};
 }
 
+// Appareils dont on ne conserve que les mesures nouvelles (measured_at changé).
+// Volontairement limité à la station météo Donsin ; à étendre au cas par cas.
+const DEDUP_MEASURE_IDS = new Set<string>(["XB211299189491624"]);
+
+async function dropRepeatedMeasures(rows: Record<string,unknown>[]): Promise<Record<string,unknown>[]> {
+  const targets=[...new Set(rows.filter(r=>DEDUP_MEASURE_IDS.has(String(r.device_id))).map(r=>String(r.device_id)))];
+  if (targets.length===0) return rows;
+  const last: Record<string,number|null>={};
+  for (const id of targets) {
+    const {data,error}=await supabase.from("shelly_cl").select("measured_at").eq("device_id",id)
+      .not("measured_at","is",null).order("ts",{ascending:false}).limit(1);
+    // En cas d'erreur de lecture on préfère écrire (doublon possible) plutôt que perdre une mesure.
+    last[id]=!error&&data&&data[0]?.measured_at ? new Date(data[0].measured_at as string).getTime() : null;
+  }
+  return rows.filter(r=>{
+    const id=String(r.device_id);
+    if (!DEDUP_MEASURE_IDS.has(id) || !r.measured_at || last[id]==null) return true;
+    return new Date(r.measured_at as string).getTime()!==last[id];
+  });
+}
+
 async function pollAccount(
   account: Account,
   forceMetaRefresh: boolean,
@@ -624,12 +645,22 @@ async function pollAccount(
   // Seule la statistique `nb_offline` de shelly_cl_journalier s'appuyait encore
   // dessus ; elle vaudra désormais 0.
 
-  if (rows.length>0) {
-    const {error}=await supabase.from("shelly_cl").insert(rows);
+  // Dédoublonnage des relectures — appareils listés dans DEDUP_MEASURE_IDS seulement.
+  //
+  // La station météo Donsin ne transmet qu'environ de 07 h 20 à 18 h UTC ; le reste
+  // du temps all_status renvoie la dernière mesure connue (`_updated` inchangé).
+  // Écrire une ligne par minute produisait 61,5 % de lignes identiques en
+  // septembre 2026 (valeurs « figées » la nuit, cumul de pluie plat puis en
+  // marche d'escalier). On n'écrit donc que si `measured_at` a changé.
+  // Le statut hors-ligne se déduit de l'absence de relevé récent (voir plus haut) :
+  // la station apparaît hors-ligne la nuit, ce qui est exact.
+  const toWrite=await dropRepeatedMeasures(rows);
+  if (toWrite.length>0) {
+    const {error}=await supabase.from("shelly_cl").insert(toWrite);
     if (error) throw new Error(`[${account.site}] ${error.message}`);
-    console.log(`[${account.site}] ${rows.length} lignes insérées`);
   }
-  return {inserted:rows.length};
+  console.log(`[${account.site}] ${toWrite.length} lignes insérées` + (rows.length!==toWrite.length ? ` (${rows.length-toWrite.length} relectures ignorées)` : ""));
+  return {inserted:toWrite.length};
 }
 
 async function loadAccounts(): Promise<Account[]> {
