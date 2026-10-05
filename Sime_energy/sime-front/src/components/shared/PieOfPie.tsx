@@ -66,7 +66,7 @@ function layoutCallouts(rows: PieRow[], cx: number, cy: number, R: number, start
   const out: (CalloutLayout | null)[] = rows.map(() => null);
   for (const side of [true, false]) {
     const g = L.filter((l) => l.right === side && l.i !== skip).sort((p, q) => p.y - q.y);
-    for (let k = 1; k < g.length; k++) if (g[k].y - g[k - 1].y < 36) g[k].y = g[k - 1].y + 36;
+    for (let k = 1; k < g.length; k++) if (g[k].y - g[k - 1].y < 44) g[k].y = g[k - 1].y + 44;
     const over = g.length ? g[g.length - 1].y - (height - 22) : 0;
     for (const l of g) { if (over > 0) l.y -= over; l.y = Math.max(20, l.y); }
     for (const l of g) {
@@ -76,10 +76,18 @@ function layoutCallouts(rows: PieRow[], cx: number, cy: number, R: number, start
   return out;
 }
 
-/** Nom abrégé pour l'étiquette (les noms de cause sont longs) : sans parenthèse finale, 30 caractères max. Le nom complet reste dans l'infobulle. */
-const shortName = (n: string) => {
+/**
+ * Nom d'étiquette sur 1 ou 2 lignes (24 caractères max chacune) : sans parenthèse finale, coupé à un espace.
+ * Les vrais noms d'appareils sont longs (« Congélateur Beko A+_224kWh/an ») : sur une seule ligne ils
+ * débordent sur le second camembert. Le nom complet reste dans l'infobulle.
+ */
+const nameLines = (n: string): string[] => {
   const t = n.replace(/\s*\([^)]*\)\s*$/, '').trim();
-  return t.length > 30 ? `${t.slice(0, 29)}…` : t;
+  if (t.length <= 24) return [t];
+  const cut = t.lastIndexOf(' ', 24);
+  const first = t.slice(0, cut > 8 ? cut : 24);
+  const rest = t.slice(first.length).trim();
+  return [first, rest.length > 24 ? `${rest.slice(0, 23)}…` : rest];
 };
 
 export function PieOfPie({ shown, others, total, format, labelMode, showTooltip = true, height = PIE_H, onSliceClick, activeName, tooltipExtra }: {
@@ -113,20 +121,23 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
     const val = format(v), p = pct(v);
     return labelMode === 'percent' ? p : labelMode === 'value' ? val : `${val} · ${p}`;
   };
-  const boxW = (name: string, v: number) => Math.max(shortName(name).length * 6.2, line2Of(v).length * 5.6) + 12;
+  const boxW = (name: string, v: number) => Math.max(...nameLines(name).map((l) => l.length * 6.2), line2Of(v).length * 5.6) + 12;
 
   // Largeur nécessaire : les étiquettes de gauche, les deux camemberts, la colonne de détail à droite.
   // Si l'écran est plus étroit, le graphique défile horizontalement plutôt que de couper du texte.
-  const R = 95;
-  const r2 = 66;
+  const R = 90;
+  const r2 = 62;
   const bwMain = Math.max(100, ...(hasSecond ? shown.slice(0, -1) : shown).map((d) => boxW(d.name, d.value)));
   const bwSec = Math.max(100, ...others.map((d) => boxW(d.name, d.value)));
   const cxMainMin = R + 34 + bwMain;
-  const required = hasSecond ? cxMainMin + R + 90 + r2 + 52 + bwSec : 2 * (R + 34 + bwMain);
+  // Entre les deux camemberts : les étiquettes de droite du principal (largeur bwMain) ne doivent pas toucher le second.
+  const gapMain = R + 30 + bwMain + 24 + r2;
+  const required = hasSecond ? cxMainMin + gapMain + r2 + 52 + bwSec : 2 * (R + 34 + bwMain);
   const w = Math.max(avail, required);
+  const scale = Math.max(0.55, Math.min(1, avail / w));
   const cy = height / 2;
   const cxMain = hasSecond ? Math.max(cxMainMin, w * 0.27) : w / 2;
-  const cxSec = Math.max(cxMain + R + 90, Math.min(w * 0.66, w - r2 - 52 - bwSec));
+  const cxSec = Math.max(cxMain + gapMain, Math.min(w * 0.66, w - r2 - 52 - bwSec));
   // « Autres » est la dernière part : on tourne le camembert pour qu'elle regarde le second (à droite, 0°).
   const startAngle = hasSecond ? 360 - 180 * f : 90;
   const endAngle = startAngle - 360;
@@ -140,14 +151,17 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
     const l = lay[d.index];
     if (!l) return null; // « Autres » : décrit sous le second camembert
     const line2 = line2Of(Number(d.value));
-    const bw = boxW(String(d.name), Number(d.value)), bh = 32;
+    const nl = nameLines(String(d.name));
+    const bw = boxW(String(d.name), Number(d.value)), bh = 10 + (nl.length + 1) * 12.5;
     const bx = l.right ? l.ax : l.ax - bw, by = l.ay - bh / 2;
     return (
       <g>
         <polyline points={`${l.ex},${l.ey} ${l.ax},${l.ay}`} fill="none" stroke={d.fill} strokeDasharray="2 2" />
         <rect x={bx} y={by} width={bw} height={bh} rx={3} fill="hsl(var(--background))" stroke={d.fill} strokeDasharray="3 2" />
-        <text x={bx + bw / 2} y={by + 13} textAnchor="middle" fontSize={10} fontWeight={700} fill={d.fill}>{shortName(String(d.name))}</text>
-        <text x={bx + bw / 2} y={by + 26} textAnchor="middle" fontSize={10} fill="hsl(var(--foreground))">{line2}</text>
+        {nl.map((t, i) => (
+          <text key={i} x={bx + bw / 2} y={by + 14 + i * 12.5} textAnchor="middle" fontSize={10} fontWeight={700} fill={d.fill}>{t}</text>
+        ))}
+        <text x={bx + bw / 2} y={by + 14 + nl.length * 12.5} textAnchor="middle" fontSize={10} fill="hsl(var(--foreground))">{line2}</text>
       </g>
     );
   };
@@ -179,7 +193,11 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
   const opacityOf = (d: PieRow) => (activeName && d.name !== activeName ? 0.35 : 1);
 
   return (
-    <div ref={boxRef} className="w-full overflow-x-auto">
+    <div ref={boxRef} className="w-full max-w-full min-w-0" style={{ contain: 'inline-size' }}>
+      {/* Le graphique est dessiné à sa largeur naturelle `w`, puis RÉDUIT pour tenir dans la largeur disponible
+          (jamais coupé). Sous 55 % de réduction, il défile plutôt que de devenir illisible. */}
+      <div style={{ width: '100%', height: height * scale, overflowX: scale > avail / w + 0.001 ? 'auto' : 'hidden', overflowY: 'hidden' }}>
+        <div style={{ width: w, height, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
       <PieChart width={w} height={height} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
         {showTooltip && <Tooltip content={tipContent} />}
         <Pie data={shown} dataKey="value" nameKey="name" cx={cxMain} cy={cy} outerRadius={R} innerRadius={0}
@@ -196,6 +214,8 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
         )}
         <Customized component={connectors} />
       </PieChart>
+        </div>
+      </div>
       {hasSecond && (
         <p className="text-xs text-center text-muted-foreground -mt-2">
           Détail de la part « Autres » ({others.length} éléments) : {format(othersTotal)} · {pct(othersTotal)} du total
