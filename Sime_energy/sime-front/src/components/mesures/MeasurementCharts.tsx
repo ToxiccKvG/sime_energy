@@ -27,7 +27,6 @@ import {
   Line,
   Pie,
   PieChart,
-  Customized,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -38,9 +37,11 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { integrateEnergy, type QuantityKind } from '@/services/measurementStats';
 import { computeTalon } from '@/services/analysisModels/talon';
+import { detectStepMs } from '@/services/analysisModels/types';
 import { useToast } from '@/hooks/use-toast';
 import { PeriodFilter, dayRangeOf, filterByRange, singleDayOf, toDatetimeLocalValue, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
 import { ChartOptions } from '@/components/shared/ChartOptions';
+import { PieOfPie, groupSmallParts, MAX_PARTS_CHOICES, type SliceLabelMode } from '@/components/shared/PieOfPie';
 import { formatQuantity, useUnitSettings } from '@/lib/unit-format';
 import { useChartPreferences, usePalette, seriesColor, chartTitle, heatColor, type Palette } from '@/lib/chart-preferences';
 import {
@@ -256,7 +257,7 @@ export function MeasurementCharts({
   // La Répartition fait exception : elle compare les relevés entre eux, elle ne
   // parle donc pas de la grandeur du relevé courant.
   const autoTitle = mode === 'repartition'
-    ? 'Répartition de la consommation'
+    ? `Répartition${label ? ` · ${label}` : ''}`
     : `${title ? `${title} · ` : ''}${label}${unit ? ` (${unit})` : ''} · ${MODE_LABELS[mode]}`;
   const displayTitle = chartTitle(prefs, `mesures:${mode}`, autoTitle);
 
@@ -882,168 +883,30 @@ function PeriodView({
 
 /* -------------------------------------------------------- vue Répartition */
 
-const OTHERS_COLOR = '#94a3b8';
-const MAX_PARTS_CHOICES = [4, 5, 6, 8, 0] as const; // 0 = tout afficher
-
 /**
- * Au-delà de `max` parts le camembert devient illisible : les plus petites sont
- * regroupées dans « Autres » (comme un camembert Excel), le détail restant
- * consultable. On garde max − 1 parts + « Autres » pour ne jamais dépasser `max`.
+ * Répartition — le camembert s'adapte à la donnée plutôt que de ne parler que de consommation.
+ *
+ * Plusieurs axes de répartition, proposés selon ce que le relevé permet :
+ *  · par appareil     — plusieurs relevés cumulables chargés (quel usage pèse le plus ?) ;
+ *  · par grandeur     — un relevé à plusieurs colonnes cumulables (actif, apparent, réactif…) ;
+ *  · par moment de la journée / jour de la semaine — énergie ou puissance : QUAND ça consomme ;
+ *  · par tranches de valeurs — TOUTES les grandeurs, y compris température, humidité, niveau sonore :
+ *    le temps passé dans chaque plage de valeurs (une part de somme n'aurait pas de sens, une part de
+ *    temps si).
  */
-function groupSmallParts<T extends { name: string; value: number; color: string }>(rows: T[], max: number) {
-  if (max <= 0 || rows.length <= max) return { shown: rows, others: [] as T[] };
-  const keep = rows.slice(0, max - 1);
-  const rest = rows.slice(max - 1);
-  const grouped = { ...rest[0], name: `Autres (${rest.length})`, value: rest.reduce((a, r) => a + r.value, 0), color: OTHERS_COLOR };
-  return { shown: [...keep, grouped], others: rest };
-}
+type RepartAxis = 'device' | 'series' | 'daypart' | 'weekday' | 'range';
+type RepartData = { rows: { name: string; value: number; color: string }[]; unit: string; description: string; fmt: (v: number) => string };
 
-type SliceLabelMode = 'percent' | 'value' | 'both';
+const DAY_PARTS = [
+  { name: 'Nuit (0 h–6 h)', from: 0, to: 6 }, { name: 'Matin (6 h–12 h)', from: 6, to: 12 },
+  { name: 'Après-midi (12 h–18 h)', from: 12, to: 18 }, { name: 'Soir (18 h–24 h)', from: 18, to: 24 },
+];
+const REPART_WEEKDAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+const AXIS_LABELS: Record<RepartAxis, string> = {
+  device: 'Par appareil', series: 'Par grandeur', daypart: 'Par moment de la journée', weekday: 'Par jour de la semaine', range: 'Par tranches de valeurs',
+};
+const nfr = (v: number, d = 1) => v.toFixed(Math.abs(v) >= 100 ? 0 : d).replace('.', ',');
 
-/**
- * Camembert « principal + secondaire » (format Excel « camembert de camembert ») :
- * les grosses parts à gauche avec des étiquettes encadrées (nom + valeur ou %), et la part
- * « Autres » reliée par des pointillés à un second camembert qui en montre le détail.
- * Tout est dessiné en pixels (largeur mesurée) pour que les pointillés tombent juste.
- */
-type PieRow = { name: string; value: number; color: string };
-const PIE_H = 380;
-const RAD = Math.PI / 180;
-
-
-type CalloutLayout = { ex: number; ey: number; ax: number; ay: number; right: boolean };
-
-/**
- * Place les étiquettes d'un camembert : côté (gauche/droite) selon l'angle de la part, ou colonne
- * unique à droite (second camembert) ; puis espacement vertical minimal pour qu'elles ne se chevauchent pas.
- */
-function layoutCallouts(rows: PieRow[], cx: number, cy: number, R: number, startAngle: number, forceRight: boolean, skip: number): (CalloutLayout | null)[] {
-  const sum = rows.reduce((a, r) => a + r.value, 0) || 1;
-  let ang = startAngle;
-  const L = rows.map((r, i) => {
-    const span = (r.value / sum) * 360, mid = ang - span / 2;
-    ang -= span;
-    const a = -mid * RAD;
-    return { i, right: forceRight || Math.cos(a) >= 0, ex: cx + (R + 4) * Math.cos(a), ey: cy + (R + 4) * Math.sin(a), y: cy + (R + 26) * Math.sin(a) };
-  });
-  const out: (CalloutLayout | null)[] = rows.map(() => null);
-  for (const side of [true, false]) {
-    const g = L.filter((l) => l.right === side && l.i !== skip).sort((p, q) => p.y - q.y);
-    for (let k = 1; k < g.length; k++) if (g[k].y - g[k - 1].y < 36) g[k].y = g[k - 1].y + 36;
-    const over = g.length ? g[g.length - 1].y - (PIE_H - 22) : 0;
-    for (const l of g) { if (over > 0) l.y -= over; l.y = Math.max(20, l.y); }
-    for (const l of g) {
-      out[l.i] = { ex: l.ex, ey: l.ey, ay: l.y, right: side, ax: forceRight ? cx + R + 44 : cx + (side ? R + 30 : -(R + 30)) };
-    }
-  }
-  return out;
-}
-
-export function PieOfPie({ shown, others, total, unit, labelMode, showTooltip }: {
-  shown: PieRow[]; others: PieRow[]; total: number; unit: string; labelMode: SliceLabelMode; showTooltip: boolean;
-}) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const [avail, setAvail] = useState(720);
-  useEffect(() => {
-    const el = boxRef.current;
-    if (!el) return;
-    setAvail(Math.max(320, el.clientWidth));
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => setAvail(Math.max(320, el.clientWidth)));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const hasSecond = others.length > 0;
-  const othersTotal = others.reduce((a, r) => a + r.value, 0);
-  const f = total > 0 ? othersTotal / total : 0;
-  const pct = (v: number) => `${((v / total) * 100).toFixed(1).replace('.', ',')} %`;
-  const line2Of = (v: number) => {
-    const val = formatValue(v, unit), p = pct(v);
-    return labelMode === 'percent' ? p : labelMode === 'value' ? val : `${val} · ${p}`;
-  };
-  const boxW = (name: string, v: number) => Math.max(name.length * 6.2, line2Of(v).length * 5.6) + 12;
-
-  // Largeur nécessaire : les étiquettes de gauche, les deux camemberts, la colonne de détail à droite.
-  // Si l'écran est plus étroit, le graphique défile horizontalement plutôt que de couper du texte.
-  const R = 95;
-  const r2 = 66;
-  const bwMain = Math.max(100, ...(hasSecond ? shown.slice(0, -1) : shown).map((d) => boxW(d.name, d.value)));
-  const bwSec = Math.max(100, ...others.map((d) => boxW(d.name, d.value)));
-  const cxMainMin = R + 34 + bwMain;
-  const required = hasSecond ? cxMainMin + R + 90 + r2 + 52 + bwSec : 2 * (R + 34 + bwMain);
-  const w = Math.max(avail, required);
-  const cy = PIE_H / 2;
-  const cxMain = hasSecond ? Math.max(cxMainMin, w * 0.27) : w / 2;
-  const cxSec = Math.max(cxMain + R + 90, Math.min(w * 0.66, w - r2 - 52 - bwSec));
-  // « Autres » est la dernière part : on tourne le camembert pour qu'elle regarde le second (à droite, 0°).
-  const startAngle = hasSecond ? 360 - 180 * f : 90;
-  const endAngle = startAngle - 360;
-  const theta = 180 * f * RAD;
-
-  const layMain = useMemo(() => layoutCallouts(shown, cxMain, cy, R, startAngle, false, hasSecond ? shown.length - 1 : -1), [shown, cxMain, cy, R, startAngle, hasSecond]);
-  const laySec = useMemo(() => layoutCallouts(others, cxSec, cy, r2, 90, true, -1), [others, cxSec, cy, r2]);
-
-  /** Étiquette encadrée avec ligne de rappel : nom (couleur de la part) puis valeur et/ou %. */
-  const callout = (lay: (CalloutLayout | null)[]) => (d: any) => {
-    const l = lay[d.index];
-    if (!l) return null; // « Autres » : décrit sous le second camembert
-    const line2 = line2Of(Number(d.value));
-    const bw = boxW(String(d.name), Number(d.value)), bh = 32;
-    const bx = l.right ? l.ax : l.ax - bw, by = l.ay - bh / 2;
-    return (
-      <g>
-        <polyline points={`${l.ex},${l.ey} ${l.ax},${l.ay}`} fill="none" stroke={d.fill} strokeDasharray="2 2" />
-        <rect x={bx} y={by} width={bw} height={bh} rx={3} fill="hsl(var(--background))" stroke={d.fill} strokeDasharray="3 2" />
-        <text x={bx + bw / 2} y={by + 13} textAnchor="middle" fontSize={10} fontWeight={700} fill={d.fill}>{d.name}</text>
-        <text x={bx + bw / 2} y={by + 26} textAnchor="middle" fontSize={10} fill="hsl(var(--foreground))">{line2}</text>
-      </g>
-    );
-  };
-
-  const connectors = () => hasSecond ? (
-    <g stroke="hsl(var(--muted-foreground))" strokeDasharray="4 3" strokeWidth={1}>
-      <line x1={cxMain + R * Math.cos(theta)} y1={cy - R * Math.sin(theta)} x2={cxSec} y2={cy - r2} />
-      <line x1={cxMain + R * Math.cos(theta)} y1={cy + R * Math.sin(theta)} x2={cxSec} y2={cy + r2} />
-    </g>
-  ) : null;
-
-  const tip = (v: number, n: string) => [`${formatValue(Number(v), unit)} · ${pct(Number(v))}`, n] as [string, string];
-
-  return (
-    <div ref={boxRef} className="w-full overflow-x-auto">
-      <PieChart width={w} height={PIE_H} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-        {showTooltip && <Tooltip contentStyle={tooltipStyle} formatter={tip} />}
-        <Pie data={shown} dataKey="value" nameKey="name" cx={cxMain} cy={cy} outerRadius={R} innerRadius={0}
-          startAngle={startAngle} endAngle={endAngle} isAnimationActive={false} stroke="hsl(var(--background))"
-          label={callout(layMain)} labelLine={false}>
-          {shown.map((d) => <Cell key={d.name} fill={d.color} />)}
-        </Pie>
-        {hasSecond && (
-          <Pie data={others} dataKey="value" nameKey="name" cx={cxSec} cy={cy} outerRadius={r2} innerRadius={0}
-            startAngle={90} endAngle={-270} isAnimationActive={false} stroke="hsl(var(--background))"
-            label={callout(laySec)} labelLine={false}>
-            {others.map((d) => <Cell key={d.name} fill={d.color} />)}
-          </Pie>
-        )}
-        <Customized component={connectors} />
-      </PieChart>
-      {hasSecond && (
-        <p className="text-xs text-center text-muted-foreground -mt-2">
-          Détail de la part « Autres » ({others.length} éléments) : {formatValue(othersTotal, unit)} · {pct(othersTotal)} du total
-        </p>
-      )}
-    </div>
-  );
-}
-
-
-/**
- * Part de chaque grandeur sur la période — le camembert qui existait dans IOT
- * et manquait ici (demande du 18/09). Une part n'a de sens que pour des
- * grandeurs cumulables : une température ou un pourcentage ne s'additionnent
- * pas, on le dit plutôt que d'afficher un camembert faux.
- */
 function RepartitionView({
   measurements, series, unit, showLegend, palette, quantityKind, siblings, dateRange, bounds,
 }: {
@@ -1057,56 +920,101 @@ function RepartitionView({
   dateRange: DateRange;
   bounds: ReturnType<typeof useTimestampBounds>;
 }) {
-  // Deux lectures possibles, du plus parlant au moins parlant :
-  //  · « Par appareil » quand plusieurs relevés cumulables sont chargés — c'est
-  //    la question de l'auditeur : quel usage pèse le plus ?
-  //  · « Par grandeur » quand un seul relevé porte plusieurs colonnes cumulables
-  //    (analyseur de réseau : actif, apparent, réactif…).
-  const byDevice = useMemo(() => {
-    const cumulables = (siblings ?? []).filter(s => s.quantityKind === 'energy' || s.quantityKind === 'power');
-    if (cumulables.length < 2) return null;
-    const rows = cumulables.map((s, i) => {
-      const pts = filterByRange(s.measurements ?? [], dateRange, bounds)
-        .map(m => ({ t: parseTs(m.timestamp).getTime(), v: m.consumption }))
-        .filter((p): p is { t: number; v: number } => typeof p.v === 'number' && isFinite(p.v) && p.v > 0 && !isNaN(p.t));
-      if (pts.length === 0) return null;
-      const value = s.quantityKind === 'power' ? integrateEnergy(pts) : pts.reduce((a, p) => a + p.v, 0);
-      const u = s.unit ?? '';
-      return { name: s.label, value, unit: s.quantityKind === 'power' ? (u ? `${u}h` : '') : u, color: seriesColor(palette, i) };
-    }).filter((r): r is { name: string; value: number; unit: string; color: string } => r !== null && r.value > 0);
-    if (rows.length < 2) return null;
-    // Des unités différentes ne s'additionnent pas : on ne mélange pas des Wh et des kWh dans une part.
-    const units = new Set(rows.map(r => r.unit));
-    if (units.size > 1) return null;
-    return { rows: rows.sort((a, b) => b.value - a.value), unit: rows[0].unit };
-  }, [siblings, dateRange, bounds, palette]);
+  const cumulable = quantityKind === 'energy' || quantityKind === 'power';
+  const primary = series[0];
 
-  const bySeries = useMemo(() => {
-    if (quantityKind === 'other') return null;
-    const rows = series.map((s, i) => {
-      let sum = 0;
-      for (const m of measurements) {
-        const v = m[s.key];
-        if (typeof v === 'number' && isFinite(v) && v > 0) sum += v;
+  const axes = useMemo(() => {
+    const out: Partial<Record<RepartAxis, RepartData>> = {};
+    const std = (u: string) => (v: number) => formatValue(v, u);
+
+    // Par appareil
+    const cumulables = (siblings ?? []).filter(x => x.quantityKind === 'energy' || x.quantityKind === 'power');
+    if (cumulables.length >= 2) {
+      const rows = cumulables.map((x, i) => {
+        const pts = filterByRange(x.measurements ?? [], dateRange, bounds)
+          .map(m => ({ t: parseTs(m.timestamp).getTime(), v: m.consumption }))
+          .filter((p): p is { t: number; v: number } => typeof p.v === 'number' && isFinite(p.v) && p.v > 0 && !isNaN(p.t));
+        if (pts.length === 0) return null;
+        const value = x.quantityKind === 'power' ? integrateEnergy(pts) : pts.reduce((a, p) => a + p.v, 0);
+        const u = x.unit ?? '';
+        return { name: x.label, value, unit: x.quantityKind === 'power' ? (u ? `${u}h` : '') : u, color: seriesColor(palette, i) };
+      }).filter((r): r is { name: string; value: number; unit: string; color: string } => r !== null && r.value > 0);
+      // Des unités différentes ne s'additionnent pas : on ne mélange pas des Wh et des kWh dans une part.
+      if (rows.length >= 2 && new Set(rows.map(r => r.unit)).size === 1) {
+        out.device = { rows: rows.sort((a, b) => b.value - a.value), unit: rows[0].unit, fmt: std(rows[0].unit),
+          description: `Part de chaque appareil dans le total mesuré sur la période — ${rows.length} relevés comparés.` };
       }
-      return { name: s.name, value: sum, unit, color: seriesColor(palette, i) };
-    }).filter(r => r.value > 0);
-    return rows.length >= 2 ? { rows: rows.sort((a, b) => b.value - a.value), unit } : null;
-  }, [measurements, series, unit, palette, quantityKind]);
+    }
 
-  const [preferDevice, setPreferDevice] = useState(true);
+    // Par grandeur
+    if (cumulable) {
+      const rows = series.map((x, i) => {
+        let sum = 0;
+        for (const m of measurements) { const v = m[x.key]; if (typeof v === 'number' && isFinite(v) && v > 0) sum += v; }
+        return { name: x.name, value: sum, color: seriesColor(palette, i) };
+      }).filter(r => r.value > 0);
+      if (rows.length >= 2) out.series = { rows: rows.sort((a, b) => b.value - a.value), unit, fmt: std(unit), description: 'Part de chaque grandeur de ce relevé sur la période.' };
+    }
+
+    // Les axes suivants portent sur la grandeur principale
+    if (!primary) return out;
+    const pts = measurements
+      .map(m => ({ t: parseTs(m.timestamp).getTime(), v: m[primary.key] }))
+      .filter((p): p is { t: number; v: number } => typeof p.v === 'number' && isFinite(p.v) && !isNaN(p.t))
+      .sort((a, b) => a.t - b.t);
+    if (pts.length < 2) return out;
+    const stepMs = detectStepMs(pts);
+    const stepH = stepMs / 3_600_000;
+
+    if (cumulable && stepH <= 3) {
+      // Énergie de chaque mesure : une énergie se somme, une puissance se multiplie par le pas de temps.
+      const energy = (v: number) => (quantityKind === 'power' ? v * stepH : v);
+      const eUnit = quantityKind === 'power' ? (unit ? `${unit}h` : '') : unit;
+      const pos = pts.filter(p => p.v > 0);
+
+      const dp = DAY_PARTS.map((d, i) => ({ name: d.name, color: seriesColor(palette, i),
+        value: pos.filter(p => { const h = new Date(p.t).getHours(); return h >= d.from && h < d.to; }).reduce((a, p) => a + energy(p.v), 0) })).filter(r => r.value > 0);
+      if (dp.length >= 2) out.daypart = { rows: dp, unit: eUnit, fmt: std(eUnit), description: `Part de chaque moment de la journée dans l'énergie de « ${primary.name} ».` };
+
+      const wd = REPART_WEEKDAYS.map((name, i) => ({ name, color: seriesColor(palette, i),
+        value: pos.filter(p => (new Date(p.t).getDay() + 6) % 7 === i).reduce((a, p) => a + energy(p.v), 0) })).filter(r => r.value > 0);
+      if (wd.length >= 2) out.weekday = { rows: wd, unit: eUnit, fmt: std(eUnit), description: `Part de chaque jour de la semaine dans l'énergie de « ${primary.name} ».` };
+    }
+
+    // Par tranches de valeurs : valable pour toute grandeur (temps passé dans chaque plage).
+    const vals = pts.map(p => p.v);
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    if (hi > lo) {
+      const n = 5, width = (hi - lo) / n;
+      const counts = new Array(n).fill(0);
+      for (const v of vals) counts[Math.min(n - 1, Math.floor((v - lo) / width))]++;
+      const inDays = stepH >= 12;
+      const per = inDays ? stepMs / 86_400_000 : stepH;
+      const tUnit = inDays ? 'jours' : 'h';
+      const u = unit ? ` ${unit}` : '';
+      const rows = counts.map((c, i) => ({
+        name: `${nfr(lo + width * i)} – ${nfr(lo + width * (i + 1))}${u}`, value: c * per, color: seriesColor(palette, i),
+      })).filter(r => r.value > 0);
+      if (rows.length >= 2) {
+        out.range = { rows, unit: tUnit, fmt: (v) => `${nfr(v)} ${tUnit}`,
+          description: `Temps passé dans chaque tranche de valeurs de « ${primary.name} » — ${vals.length} mesures, de ${nfr(lo)} à ${nfr(hi)}${u}.` };
+      }
+    }
+    return out;
+  }, [siblings, dateRange, bounds, palette, series, measurements, unit, quantityKind, cumulable, primary]);
+
+  const available = (Object.keys(AXIS_LABELS) as RepartAxis[]).filter(k => axes[k]);
+  const [pref, setPref] = useState<RepartAxis | null>(null);
   const [maxParts, setMaxParts] = useState<number>(5);
   const [labelMode, setLabelMode] = useState<SliceLabelMode>('both');
   const [showOthers, setShowOthers] = useState(false);
-  const active = (preferDevice && byDevice) ? byDevice : (bySeries ?? byDevice);
-  const isDevice = active === byDevice;
+  const axis = (pref && axes[pref]) ? pref : available[0];
+  const active = axis ? axes[axis] : undefined;
 
   if (!active) {
     return (
       <p className="text-sm text-muted-foreground py-10 text-center max-w-xl mx-auto">
-        {quantityKind === 'other'
-          ? "La répartition suppose des grandeurs qui s'additionnent (énergie, puissance). Pour une température, une humidité ou un niveau sonore, une part de camembert n'aurait pas de sens — utilisez « Profil journalier » ou « Par période »."
-          : "Rien à répartir : ce relevé ne porte qu'une grandeur, et il n'y a pas d'autre relevé d'énergie chargé à comparer. Chargez les relevés des différents appareils pour voir lequel consomme le plus."}
+        Rien à répartir : il faut au moins deux mesures différentes sur la période choisie.
       </p>
     );
   }
@@ -1116,10 +1024,11 @@ function RepartitionView({
   const pct = (v: number) => `${((v / total) * 100).toFixed(1).replace('.', ',')} %`;
   return (
     <div className="space-y-3">
-      {byDevice && bySeries && (
-        <div className="flex items-center gap-1 p-1 bg-muted rounded-lg w-fit mx-auto" data-no-export>
-          <ModeButton active={isDevice} onClick={() => setPreferDevice(true)} icon={<PieIcon className="h-3.5 w-3.5" />}>Par appareil</ModeButton>
-          <ModeButton active={!isDevice} onClick={() => setPreferDevice(false)} icon={<BarChart3 className="h-3.5 w-3.5" />}>Par grandeur</ModeButton>
+      {available.length > 1 && (
+        <div className="flex flex-wrap items-center justify-center gap-1 p-1 bg-muted rounded-lg w-fit mx-auto" data-no-export>
+          {available.map(k => (
+            <ModeButton key={k} active={axis === k} onClick={() => { setPref(k); setShowOthers(false); }} icon={<PieIcon className="h-3.5 w-3.5" />}>{AXIS_LABELS[k]}</ModeButton>
+          ))}
         </div>
       )}
       {/* Réglages d'affichage : hors de l'image exportée */}
@@ -1140,22 +1049,18 @@ function RepartitionView({
           <ModeButton active={labelMode === 'both'} onClick={() => setLabelMode('both')} icon={null}>Les deux</ModeButton>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground text-center">
-        {isDevice
-          ? `Part de chaque appareil dans le total mesuré sur la période — ${active.rows.length} relevés comparés.`
-          : 'Part de chaque grandeur de ce relevé sur la période.'}
-      </p>
-      <PieOfPie shown={shown} others={others} total={total} unit={active.unit} labelMode={labelMode} showTooltip />
+      <p className="text-xs text-muted-foreground text-center">{active.description}</p>
+      <PieOfPie shown={shown} others={others} total={total} format={active.fmt} labelMode={labelMode} />
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground justify-center">
         {shown.map(d => (
           <span key={d.name} className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: d.color }} />
-            {d.name} — {formatValue(d.value, active.unit)} ({pct(d.value)})
+            {d.name} — {active.fmt(d.value)} ({pct(d.value)})
           </span>
         ))}
       </div>
       <p className="text-xs text-center text-foreground">
-        Total : <span className="font-semibold">{formatValue(total, active.unit)}</span> (= 100 %)
+        Total : <span className="font-semibold">{active.fmt(total)}</span> (= 100 %)
       </p>
       {others.length > 0 && (
         <div className="text-xs text-muted-foreground max-w-xl mx-auto">
@@ -1167,7 +1072,7 @@ function RepartitionView({
               {others.map((r) => (
                 <li key={r.name} className="flex justify-between gap-3">
                   <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: r.color }} />{r.name}</span>
-                  <span>{formatValue(r.value, active.unit)} ({pct(r.value)})</span>
+                  <span>{active.fmt(r.value)} ({pct(r.value)})</span>
                 </li>
               ))}
             </ul>
