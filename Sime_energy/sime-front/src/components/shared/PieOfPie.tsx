@@ -76,6 +76,12 @@ function layoutCallouts(rows: PieRow[], cx: number, cy: number, R: number, start
   return out;
 }
 
+/** Nom abrégé pour l'étiquette (les noms de cause sont longs) : sans parenthèse finale, 30 caractères max. Le nom complet reste dans l'infobulle. */
+const shortName = (n: string) => {
+  const t = n.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  return t.length > 30 ? `${t.slice(0, 29)}…` : t;
+};
+
 export function PieOfPie({ shown, others, total, format, labelMode, showTooltip = true }: {
   shown: PieRow[]; others: PieRow[]; total: number; format: (v: number) => string; labelMode: SliceLabelMode; showTooltip?: boolean;
 }) {
@@ -99,7 +105,7 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
     const val = format(v), p = pct(v);
     return labelMode === 'percent' ? p : labelMode === 'value' ? val : `${val} · ${p}`;
   };
-  const boxW = (name: string, v: number) => Math.max(name.length * 6.2, line2Of(v).length * 5.6) + 12;
+  const boxW = (name: string, v: number) => Math.max(shortName(name).length * 6.2, line2Of(v).length * 5.6) + 12;
 
   // Largeur nécessaire : les étiquettes de gauche, les deux camemberts, la colonne de détail à droite.
   // Si l'écran est plus étroit, le graphique défile horizontalement plutôt que de couper du texte.
@@ -132,7 +138,7 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
       <g>
         <polyline points={`${l.ex},${l.ey} ${l.ax},${l.ay}`} fill="none" stroke={d.fill} strokeDasharray="2 2" />
         <rect x={bx} y={by} width={bw} height={bh} rx={3} fill="hsl(var(--background))" stroke={d.fill} strokeDasharray="3 2" />
-        <text x={bx + bw / 2} y={by + 13} textAnchor="middle" fontSize={10} fontWeight={700} fill={d.fill}>{d.name}</text>
+        <text x={bx + bw / 2} y={by + 13} textAnchor="middle" fontSize={10} fontWeight={700} fill={d.fill}>{shortName(String(d.name))}</text>
         <text x={bx + bw / 2} y={by + 26} textAnchor="middle" fontSize={10} fill="hsl(var(--foreground))">{line2}</text>
       </g>
     );

@@ -1,6 +1,6 @@
 import {
   Zap, BarChart2,
-  Database, Eraser, FolderOpen, LayoutDashboard, Settings,
+  Database, Eraser, FolderOpen, LayoutDashboard, Settings, ZapOff,
 } from 'lucide-react';
 import { IOTProvider, useIOT } from '@/components/iot/IOTContext';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -10,6 +10,7 @@ import { FichiersTab }       from '@/components/iot/FichiersTab';
 import { AnalyseTab }        from '@/components/iot/AnalyseTab';
 import { NettoyageTab }      from '@/components/iot/NettoyageTab';
 import { ParametresTab }     from '@/components/iot/ParametresTab';
+import { CoupuresTab }       from '@/components/iot/CoupuresTab';
 import { Badge }             from '@/components/ui/badge';
 import { TablePrefsProvider, TableDisplayToggle, useTablePrefs } from '@/components/iot/tablePrefs';
 
@@ -20,6 +21,7 @@ const TABS = [
   { id: 'fichiers',   label: 'Fichiers',    icon: FolderOpen,      description: 'Import & bibliothèque' },
   { id: 'nettoyage',  label: 'Nettoyage',   icon: Eraser,          description: 'Tri · filtre · édition' },
   { id: 'tcd',        label: 'Analyse',     icon: BarChart2,       description: 'Courbe · TCD · Heatmap · Distribution' },
+  { id: 'coupures',   label: 'Coupures',    icon: ZapOff,          description: 'Causes · énergie non distribuée' },
   { id: 'parametres', label: 'Paramètres',  icon: Settings,        description: 'Comptes Shelly Cloud' },
 ] as const;
 
@@ -116,6 +118,7 @@ function IOTInner() {
         {tabId === 'fichiers'   && <FichiersTab />}
         {tabId === 'nettoyage'  && <NettoyageTab />}
         {tabId === 'tcd'        && <AnalyseTab />}
+        {tabId === 'coupures'   && <CoupuresTab />}
         {tabId === 'parametres' && <ParametresTab />}
       </div>
     </div>

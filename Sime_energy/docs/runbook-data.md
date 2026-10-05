@@ -62,8 +62,13 @@ supabase db query --linked "update site_absences set end_at='2026-10-20 18:00+00
 
 ### Coupures SENELEC et énergie non distribuée
 
+**Tables** `coupures` (une ligne par coupure : site, début, fin, END estimée, cause déclencheur, cause aggravante, statut `proposee`/`confirmee`, indice, commentaire) et `coupure_causes` (liste des causes, modifiable par migration). **Écran** : module IOT > onglet « Coupures » (liste, confirmation des causes, camembert des causes confirmées).
+
+Cycle : `detect_coupures.py --save` enregistre les coupures détectées avec une cause **proposée** → on la confirme dans l'écran → le camembert ne compte que les causes **confirmées**. Une cause déjà confirmée n'est jamais écrasée par une nouvelle détection. Règles de proposition : tension de l'arrivée < 70 % de la normale dans les 10 min avant l'arrêt → réseau SENELEC ; dans les 6 h autour du départ ou du retour d'une absence déclarée → arrêt volontaire ; en pleine absence → « à vérifier » ; sinon cause inconnue. Pendant une absence, l'END est calculée sur la veille de la maison (~170 W), pas sur le profil habituel.
+
 ```bash
 python SHELLY_GCP_00/scripts/detect_coupures.py --site "Ma Maison" --days 35 --csv coupures.csv
+python SHELLY_GCP_00/scripts/detect_coupures.py --site "Ma Maison" --days 35 --save    # enregistre dans la table coupures
 ```
 Signature : appareils secteur muets pendant que les capteurs à pile émettent ; trous < 5 min fusionnés ; seuil 5 min ; END = Σ P_réf(heure) × durée (P_réf = moyenne de l'arrivée à la même heure, hors coupures et hors absences). Résultat de référence, Ma Maison au 01/10/2026 : **18 coupures, 12,1 h, ≈ 5,8 kWh** (dont une de 3 h le 23/09). Les coupures tombant dans une absence sont signalées et ne sont pas à attribuer à SENELEC. Pour un autre site, passer `--arrivee <device_id du compteur d'arrivée>`.
 
