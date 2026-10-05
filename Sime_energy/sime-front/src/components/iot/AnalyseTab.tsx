@@ -1486,7 +1486,7 @@ function MultiSelectFilter({ label, icon, options, selected, onChange }: {
 // COMPOSANT PRINCIPAL
 // ============================================================
 export function AnalyseTab() {
-  const { state, setActiveTab, setShellyRows, ensureFileContent } = useIOT();
+  const { state, setActiveTab, setShellyRows, setSelectedFile, ensureFileContent } = useIOT();
   const { shellyRows, joursFerier, selectedFileId, filesLoaded } = state;
 
   // ---- Profil Mi actif ----
@@ -2419,6 +2419,9 @@ export function AnalyseTab() {
                 <Button size="sm" variant="outline" className="h-8 border-white/20 text-white hover:bg-white/10"
                   onClick={() => {
                     if (activeRows.length > 0) setShellyRows(activeRows);
+                    // Sans cela, Nettoyage rechargeait le DERNIER fichier ouvert (ex. « Ma Maison - 5 pièces ») à son
+                    // arrivée, qui passait avant les données qu'on vient d'envoyer : colonnes d'énergie d'un autre jeu.
+                    setSelectedFile(null);
                     setShowQualityPanel(false);
                     setActiveTab('nettoyage');
                   }}>
