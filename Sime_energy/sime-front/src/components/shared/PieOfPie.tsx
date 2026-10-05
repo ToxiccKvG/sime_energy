@@ -44,7 +44,7 @@ export type SliceLabelMode = 'percent' | 'value' | 'both';
  * Tout est dessiné en pixels (largeur mesurée) pour que les pointillés tombent juste.
  */
 export type PieRow = { name: string; value: number; color: string };
-const PIE_H = 380;
+const PIE_H = 380; // hauteur par défaut
 const RAD = Math.PI / 180;
 
 
@@ -54,7 +54,7 @@ export type CalloutLayout = { ex: number; ey: number; ax: number; ay: number; ri
  * Place les étiquettes d'un camembert : côté (gauche/droite) selon l'angle de la part, ou colonne
  * unique à droite (second camembert) ; puis espacement vertical minimal pour qu'elles ne se chevauchent pas.
  */
-function layoutCallouts(rows: PieRow[], cx: number, cy: number, R: number, startAngle: number, forceRight: boolean, skip: number): (CalloutLayout | null)[] {
+function layoutCallouts(rows: PieRow[], cx: number, cy: number, R: number, startAngle: number, forceRight: boolean, skip: number, height: number): (CalloutLayout | null)[] {
   const sum = rows.reduce((a, r) => a + r.value, 0) || 1;
   let ang = startAngle;
   const L = rows.map((r, i) => {
@@ -67,7 +67,7 @@ function layoutCallouts(rows: PieRow[], cx: number, cy: number, R: number, start
   for (const side of [true, false]) {
     const g = L.filter((l) => l.right === side && l.i !== skip).sort((p, q) => p.y - q.y);
     for (let k = 1; k < g.length; k++) if (g[k].y - g[k - 1].y < 36) g[k].y = g[k - 1].y + 36;
-    const over = g.length ? g[g.length - 1].y - (PIE_H - 22) : 0;
+    const over = g.length ? g[g.length - 1].y - (height - 22) : 0;
     for (const l of g) { if (over > 0) l.y -= over; l.y = Math.max(20, l.y); }
     for (const l of g) {
       out[l.i] = { ex: l.ex, ey: l.ey, ay: l.y, right: side, ax: forceRight ? cx + R + 44 : cx + (side ? R + 30 : -(R + 30)) };
@@ -82,8 +82,16 @@ const shortName = (n: string) => {
   return t.length > 30 ? `${t.slice(0, 29)}…` : t;
 };
 
-export function PieOfPie({ shown, others, total, format, labelMode, showTooltip = true }: {
+export function PieOfPie({ shown, others, total, format, labelMode, showTooltip = true, height = PIE_H, onSliceClick, activeName, tooltipExtra }: {
   shown: PieRow[]; others: PieRow[]; total: number; format: (v: number) => string; labelMode: SliceLabelMode; showTooltip?: boolean;
+  /** Hauteur du graphique en pixels (380 par défaut). */
+  height?: number;
+  /** Clic sur une part (hors « Autres », qui est un regroupement) : filtre croisé, détail… */
+  onSliceClick?: (name: string) => void;
+  /** Part sélectionnée : mise en évidence (ambre), les autres s'estompent. */
+  activeName?: string | null;
+  /** Contenu complémentaire de l'infobulle d'une part (appareils, nombre de points…). */
+  tooltipExtra?: (name: string) => React.ReactNode;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [avail, setAvail] = useState(720);
@@ -116,7 +124,7 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
   const cxMainMin = R + 34 + bwMain;
   const required = hasSecond ? cxMainMin + R + 90 + r2 + 52 + bwSec : 2 * (R + 34 + bwMain);
   const w = Math.max(avail, required);
-  const cy = PIE_H / 2;
+  const cy = height / 2;
   const cxMain = hasSecond ? Math.max(cxMainMin, w * 0.27) : w / 2;
   const cxSec = Math.max(cxMain + R + 90, Math.min(w * 0.66, w - r2 - 52 - bwSec));
   // « Autres » est la dernière part : on tourne le camembert pour qu'elle regarde le second (à droite, 0°).
@@ -124,8 +132,8 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
   const endAngle = startAngle - 360;
   const theta = 180 * f * RAD;
 
-  const layMain = useMemo(() => layoutCallouts(shown, cxMain, cy, R, startAngle, false, hasSecond ? shown.length - 1 : -1), [shown, cxMain, cy, R, startAngle, hasSecond]);
-  const laySec = useMemo(() => layoutCallouts(others, cxSec, cy, r2, 90, true, -1), [others, cxSec, cy, r2]);
+  const layMain = useMemo(() => layoutCallouts(shown, cxMain, cy, R, startAngle, false, hasSecond ? shown.length - 1 : -1, height), [shown, cxMain, cy, R, startAngle, hasSecond, height]);
+  const laySec = useMemo(() => layoutCallouts(others, cxSec, cy, r2, 90, true, -1, height), [others, cxSec, cy, r2, height]);
 
   /** Étiquette encadrée avec ligne de rappel : nom (couleur de la part) puis valeur et/ou %. */
   const callout = (lay: (CalloutLayout | null)[]) => (d: any) => {
@@ -151,22 +159,39 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
     </g>
   ) : null;
 
-  const tip = (v: number, n: string) => [`${format(Number(v))} · ${pct(Number(v))}`, n] as [string, string];
+  const tipContent = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const p = payload[0];
+    return (
+      <div style={tooltipStyle} className="px-3 py-2 text-xs space-y-1 max-w-[280px]">
+        <p className="font-semibold">{String(p.name)}</p>
+        <p>{format(Number(p.value))} · {pct(Number(p.value))}</p>
+        {tooltipExtra?.(String(p.name))}
+      </div>
+    );
+  };
+  const clickable = !!onSliceClick;
+  const handleClick = (entry: any) => {
+    const n = String(entry?.name ?? '');
+    if (n && !(hasSecond && n === shown[shown.length - 1]?.name)) onSliceClick?.(n);
+  };
+  const fillOf = (d: PieRow) => (activeName && d.name === activeName ? '#f59e0b' : d.color);
+  const opacityOf = (d: PieRow) => (activeName && d.name !== activeName ? 0.35 : 1);
 
   return (
     <div ref={boxRef} className="w-full overflow-x-auto">
-      <PieChart width={w} height={PIE_H} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-        {showTooltip && <Tooltip contentStyle={tooltipStyle} formatter={tip} />}
+      <PieChart width={w} height={height} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+        {showTooltip && <Tooltip content={tipContent} />}
         <Pie data={shown} dataKey="value" nameKey="name" cx={cxMain} cy={cy} outerRadius={R} innerRadius={0}
           startAngle={startAngle} endAngle={endAngle} isAnimationActive={false} stroke="hsl(var(--background))"
-          label={callout(layMain)} labelLine={false}>
-          {shown.map((d) => <Cell key={d.name} fill={d.color} />)}
+          label={callout(layMain)} labelLine={false} onClick={clickable ? handleClick : undefined}>
+          {shown.map((d) => <Cell key={d.name} fill={fillOf(d)} opacity={opacityOf(d)} cursor={clickable ? 'pointer' : undefined} />)}
         </Pie>
         {hasSecond && (
           <Pie data={others} dataKey="value" nameKey="name" cx={cxSec} cy={cy} outerRadius={r2} innerRadius={0}
             startAngle={90} endAngle={-270} isAnimationActive={false} stroke="hsl(var(--background))"
-            label={callout(laySec)} labelLine={false}>
-            {others.map((d) => <Cell key={d.name} fill={d.color} />)}
+            label={callout(laySec)} labelLine={false} onClick={clickable ? handleClick : undefined}>
+            {others.map((d) => <Cell key={d.name} fill={fillOf(d)} opacity={opacityOf(d)} cursor={clickable ? 'pointer' : undefined} />)}
           </Pie>
         )}
         <Customized component={connectors} />

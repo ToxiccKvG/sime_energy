@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect, Fragment } from 'react';
+import { PieOfPie, groupSmallParts, MAX_PARTS_CHOICES, type SliceLabelMode } from '@/components/shared/PieOfPie';
 import { parseExcelBuffer, rowsToObjects, exportJsonToXlsx } from '@/lib/excel-utils';
 import { ChartOptions } from '@/components/shared/ChartOptions';
 import { useChartPreferences, usePalette, seriesColor, heatColor, chartTitle, type Palette } from '@/lib/chart-preferences';
@@ -8,7 +9,7 @@ import {
   ScatterChart, Scatter, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, ReferenceLine, AreaChart, Area, Legend,
-  PieChart, Pie, ComposedChart,
+  ComposedChart,
 } from 'recharts';
 import {
   Filter, BarChart2, TrendingUp, Activity, Upload,
@@ -294,6 +295,80 @@ function TcdTooltip({ active, payload, label }: {
   );
 }
 
+// Camembert du TCD : le même camembert « principal + secondaire » que le module Mesures.
+// Les plus petites parts passent dans « Autres » (détaillé dans un second camembert) ; un clic sur
+// une part filtre le TCD (filtre croisé) comme avant ; l'infobulle garde appareils / sites / pièces.
+function TcdPie({ data, primaryMetric, crossFilter, onPieClick, height }: {
+  data: Record<string, unknown>[];
+  primaryMetric: MetricKey;
+  crossFilter: string | null;
+  onPieClick: (entry: { label?: string }) => void;
+  height: number;
+}) {
+  const palette = usePalette();
+  const meta = METRIQUES.find(m => m.key === primaryMetric);
+  const unit = meta?.unit ?? '';
+  const [maxParts, setMaxParts] = useState<number>(5);
+  const [labelMode, setLabelMode] = useState<SliceLabelMode>('both');
+
+  const { rows, skipped } = useMemo(() => {
+    const all = data.map((d, i) => ({ name: String(d.label ?? ''), value: Number(d[primaryMetric]), color: seriesColor(palette, i) }));
+    // Un camembert ne représente que des parts positives (une énergie nette négative, un retour nul n'ont pas de part).
+    const pos = all.filter(r => Number.isFinite(r.value) && r.value > 0).sort((a, b) => b.value - a.value);
+    return { rows: pos, skipped: all.length - pos.length };
+  }, [data, primaryMetric, palette]);
+
+  const total = rows.reduce((a, r) => a + r.value, 0);
+  const { shown, others } = useMemo(() => groupSmallParts(rows, maxParts), [rows, maxParts]);
+  const fmtV = (v: number) => `${fmtFr(v, v < 10 ? 2 : 1)}${unit ? ` ${unit}` : ''}`;
+  const pct = (v: number) => `${fmtFr((v / total) * 100, 1)} %`;
+
+  if (rows.length === 0) return <p className="text-sm text-slate-400 py-10 text-center">Aucune valeur positive à répartir pour cette grandeur.</p>;
+
+  const extra = (name: string) => {
+    const row = data.find(d => String(d.label) === name);
+    if (!row) return null;
+    const n = typeof row.n === 'number' ? row.n : undefined;
+    const lists: [string, string[], string][] = [
+      ['Appareil', Array.isArray(row._appareils) ? (row._appareils as string[]) : [], 'text-cyan-300'],
+      ['Site', Array.isArray(row._emplacements) ? (row._emplacements as string[]) : [], 'text-yellow-300'],
+      ['Pièce', Array.isArray(row._pieces) ? (row._pieces as string[]) : [], 'text-purple-300'],
+    ];
+    return (
+      <div className="pt-1 border-t border-white/10 space-y-0.5">
+        {typeof n === 'number' && <p className="text-slate-400">{n} point{n > 1 ? 's' : ''}</p>}
+        {lists.filter(([, a]) => a.length > 0).map(([l, a, c]) => (
+          <p key={l} className="text-slate-400">{l}{a.length > 1 ? 's' : ''} : <span className={c}>{a.slice(0, 3).join(', ')}{a.length > 3 ? ` +${a.length - 3}` : ''}</span></p>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-slate-400" data-no-export>
+        <label className="flex items-center gap-1.5">
+          Parts affichées
+          <select className="h-7 rounded-md border border-white/10 bg-white/5 px-1.5 text-xs text-slate-200" value={maxParts} onChange={(e) => setMaxParts(Number(e.target.value))}>
+            {MAX_PARTS_CHOICES.map(n => <option key={n} value={n} className="text-black">{n === 0 ? 'Toutes' : `${n} max, le reste en « Autres »`}</option>)}
+          </select>
+        </label>
+        <div className="flex gap-1 p-1 bg-white/5 rounded-lg border border-white/10">
+          {([['percent', '%'], ['value', 'Valeur'], ['both', 'Les deux']] as [SliceLabelMode, string][]).map(([k, l]) => (
+            <button key={k} onClick={() => setLabelMode(k)} className={`px-2 py-0.5 rounded text-xs ${labelMode === k ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-white'}`}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <PieOfPie shown={shown} others={others} total={total} format={fmtV} labelMode={labelMode} height={Math.max(300, height)}
+        onSliceClick={(name) => onPieClick({ label: name })} activeName={crossFilter} tooltipExtra={extra} />
+      <p className="text-xs text-center text-slate-300">
+        {meta?.label ?? 'Total'} : <span className="font-semibold text-white">{fmtV(total)}</span> (= 100 %)
+        {skipped > 0 && <span className="text-slate-500"> · {skipped} valeur(s) nulle(s) ou négative(s) non représentée(s)</span>}
+      </p>
+    </div>
+  );
+}
+
 // Graphique TCD (bar/line/area/pie) — partagé entre la vue normale et la vue plein écran,
 // qui ne diffèrent que par la taille/densité (police, marges, rayons).
 function TcdChart({
@@ -334,8 +409,9 @@ function TcdChart({
   const dimOpacity = compact ? 0.3 : 0.35;
   const dotRadius = compact ? 3 : 4;
   const avgLabel = compact ? 'Moy.' : 'Moyenne';
-  const pieOuterRadius = compact ? 80 : 95;
-  const pieInnerRadius = compact ? 38 : 45;
+  if (chartType === 'pie') {
+    return <TcdPie data={data} primaryMetric={primaryMetric} crossFilter={crossFilter} onPieClick={onPieClick} height={height} />;
+  }
 
   return (
     <ResponsiveContainer key={chartType} width="100%" height={height}>
@@ -392,18 +468,7 @@ function TcdChart({
           })}
         </AreaChart>
       ) : (
-        <PieChart>
-          <Tooltip content={<TcdTooltip />} />
-          {showLegend && <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />}
-          <Pie data={data} dataKey={primaryMetric} nameKey="label" cx="50%" cy="50%" outerRadius={pieOuterRadius} innerRadius={pieInnerRadius}
-            label={(e: { name?: string; percent?: number }) => `${e.name} · ${((e.percent ?? 0) * 100).toFixed(0)}%`}
-            labelLine={false}
-            onClick={onPieClick}>
-            {data.map((entry, i) => (
-              <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : seriesColor(palette, i)} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} cursor="pointer" />
-            ))}
-          </Pie>
-        </PieChart>
+        <></>
       )}
     </ResponsiveContainer>
   );
