@@ -26,7 +26,8 @@ import { PeriodFilter, filterByRange, toDatetimeLocalValue, useTimestampBounds, 
 import {
   AlertTriangle, CalendarDays, CheckCircle2, Image as ImageIcon, Info, Loader2, Moon, PiggyBank, Scale, Sigma, Sparkles, TrendingDown, TrendingUp, Zap,
 } from 'lucide-react';
-import { KpiHint } from '@/components/shared/KpiHint';
+import { KpiInfoIcon, KpiTooltip, Term } from '@/components/shared/InfoTip';
+import type { GlossaryKey } from '@/components/shared/glossary';
 
 interface AnalysisModelsPanelProps {
   data: MeasurementData;
@@ -211,16 +212,16 @@ function ProfilTypeView({ ctx }: { ctx: SeriesContext }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {res.profiles.map((p) => (
           <StatCard key={p.dayClass} icon={<CalendarDays className="h-4 w-4" style={{ color: CLASS_COLOR[p.dayClass] }} />}
-            label={`${DAY_CLASS_LABEL[p.dayClass]} · ${p.days} j`}
+            term="jourType" label={`${DAY_CLASS_LABEL[p.dayClass]} · ${p.days} j`}
             value={fmt(p.dailyMedian, res.dailyUnit)}
-            hint={`médiane journalière · moyenne ${fmt(p.dailyMean, res.dailyUnit)}`} />
+            hint={`moyenne journalière : ${fmt(p.dailyMean, res.dailyUnit)}`} />
         ))}
         {res.profiles.length >= 2 && (() => {
           const o = res.profiles.find((p) => p.dayClass === 'ouvre');
           const w = res.profiles.find((p) => p.dayClass === 'weekend');
           if (!o || !w || !o.dailyMedian) return null;
           const ratio = (w.dailyMedian / o.dailyMedian) * 100;
-          return <StatCard icon={<Scale className="h-4 w-4 text-blue-400" />} label="Week-end / ouvré" value={fmtPct(ratio, false)}
+          return <StatCard icon={<Scale className="h-4 w-4 text-blue-400" />} term="ratioWeekend" label="Week-end / ouvré" value={fmtPct(ratio, false)}
             hint={ratio > 80 ? 'le site tourne presque autant le week-end' : ratio > 40 ? 'baisse partielle le week-end' : 'le site s\'éteint bien le week-end'} />;
         })()}
       </div>
@@ -239,7 +240,7 @@ function ProfilTypeView({ ctx }: { ctx: SeriesContext }) {
             </div>
           </div>
           <p className="text-[11px] text-slate-500 mb-2">
-            {DAY_CLASS_LABEL[dayClass]} · {profile.days} jour(s){typical ? ` · jour le plus représentatif : ${fmtDay(typical.day)}` : ''} · valeurs horaires en {res.hourlyUnit}
+            {DAY_CLASS_LABEL[dayClass]} · {profile.days} jour(s){typical ? ` · jour le plus représentatif : ${fmtDay(typical.day)}` : ''} · valeurs horaires en {res.hourlyUnit} · courbes : <Term k="mediane">médiane</Term> et <Term k="p10p90">enveloppe P10–P90</Term>
           </p>
           <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
@@ -261,7 +262,7 @@ function ProfilTypeView({ ctx }: { ctx: SeriesContext }) {
 
       <Card className="p-4 bg-white/5 border-white/10">
         <p className="text-sm font-medium text-slate-200 mb-1">Jours atypiques</p>
-        <p className="text-[11px] text-slate-500 mb-3">Jours qui s'écartent de plus de 20 % de la médiane journalière de leur classe — à recouper avec ce qui s'est passé sur site.</p>
+        <p className="text-[11px] text-slate-500 mb-3">Jours qui s'écartent de plus de 20 % de la <Term k="mediane">médiane</Term> journalière de leur <Term k="classeJour">classe de jour</Term> — à recouper avec ce qui s'est passé sur site.</p>
         {res.atypical.length === 0 ? (
           <p className="text-sm text-slate-400 flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Aucun jour ne sort du lot.</p>
         ) : (
@@ -307,14 +308,13 @@ function TalonView({ ctx }: { ctx: SeriesContext }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={<Moon className="h-4 w-4 text-red-400" />} label="Talon retenu" value={fmt(res.talon, res.hourlyUnit)}
-          hint={`médiane des minima de nuit (00h–05h) · pointe P95 ${fmt(res.peak, res.hourlyUnit)}`} />
-        <StatCard icon={<Scale className="h-4 w-4 text-blue-400" />} label="Talon / pointe" value={fmtPct(res.talonToPeak * 100, false)}
+        <StatCard icon={<Moon className="h-4 w-4 text-red-400" />} term="talon" label="Talon retenu" value={fmt(res.talon, res.hourlyUnit)}
+          hint={`pointe P95 de la période : ${fmt(res.peak, res.hourlyUnit)}`} />
+        <StatCard icon={<Scale className="h-4 w-4 text-blue-400" />} term="talonPointe" label="Talon / pointe" value={fmtPct(res.talonToPeak * 100, false)}
           hint={res.talonToPeak > 0.5 ? 'plus de la moitié de la pointe ne s\'éteint jamais' : res.talonToPeak > 0.25 ? 'charge de base notable' : 'charge de base faible'} />
-        <StatCard icon={<Sigma className="h-4 w-4 text-amber-400" />} label="Part du talon dans le cumul" value={fmtPct(res.share * 100, false)}
+        <StatCard icon={<Sigma className="h-4 w-4 text-amber-400" />} term="partTalon" label="Part du talon dans le cumul" value={fmtPct(res.share * 100, false)}
           hint={`${fmt(res.talonEnergy, res.dailyUnit)} sur ${fmt(res.totalEnergy, res.dailyUnit)} (${Math.round(res.periodHours)} h)`} />
-        <StatCard icon={<Zap className="h-4 w-4 text-purple-400" />} label="Projection annuelle du talon" value={fmt(res.yearly, res.dailyUnit)}
-          hint="talon × 8 760 h — ce que coûterait ce fond de consommation sur un an" />
+        <StatCard icon={<Zap className="h-4 w-4 text-purple-400" />} term="projectionTalon" label="Projection annuelle du talon" value={fmt(res.yearly, res.dailyUnit)} />
       </div>
 
       {o && w && Number.isFinite(o.talon) && Number.isFinite(w.talon) && (
@@ -328,7 +328,7 @@ function TalonView({ ctx }: { ctx: SeriesContext }) {
 
       <Card className="p-4 bg-white/5 border-white/10">
         <p className="text-sm font-medium text-slate-200 mb-1">Talon et pointe de chaque jour</p>
-        <p className="text-[11px] text-slate-500 mb-2">Barres : pointe horaire · trait rouge : talon du jour · ligne pointillée : talon retenu ({res.hourlyUnit})</p>
+        <p className="text-[11px] text-slate-500 mb-2">Barres : pointe horaire · trait rouge : <Term k="talon">talon</Term> du jour · ligne pointillée : talon retenu ({res.hourlyUnit})</p>
         <ResponsiveContainer width="100%" height={260}>
           <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -364,12 +364,12 @@ function AnomaliesView({ ctx }: { ctx: SeriesContext }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard icon={<CheckCircle2 className={`h-4 w-4 ${res.completeness > 0.98 ? 'text-emerald-400' : res.completeness > 0.9 ? 'text-amber-400' : 'text-red-400'}`} />}
-          label="Complétude de la collecte" value={fmtPct(res.completeness * 100, false)}
+          term="completude" label="Complétude de la collecte" value={fmtPct(res.completeness * 100, false)}
           hint={`${res.actualPoints.toLocaleString('fr-FR')} mesures sur ${res.expectedPoints.toLocaleString('fr-FR')} attendues au pas natif`} />
-        <StatCard icon={<AlertTriangle className="h-4 w-4 text-amber-400" />} label="Trous · valeurs figées" value={`${res.counts.gap} · ${res.counts.flat}`} hint="capteur muet · capteur bloqué ou arrêt" />
-        <StatCard icon={<TrendingUp className="h-4 w-4 text-red-400" />} label="Pics inhabituels" value={String(res.counts.high)}
+        <StatCard icon={<AlertTriangle className="h-4 w-4 text-amber-400" />} term="trousFigees" label="Trous · valeurs figées" value={`${res.counts.gap} · ${res.counts.flat}`} />
+        <StatCard icon={<TrendingUp className="h-4 w-4 text-red-400" />} term="pics" label="Pics inhabituels" value={String(res.counts.high)}
           hint={res.profileAvailable ? 'tranches bien au-dessus du profil habituel' : 'profil de référence indisponible (< 3 jours par classe)'} />
-        <StatCard icon={<TrendingDown className="h-4 w-4 text-blue-400" />} label="Creux inhabituels" value={String(res.counts.low)}
+        <StatCard icon={<TrendingDown className="h-4 w-4 text-blue-400" />} term="creux" label="Creux inhabituels" value={String(res.counts.low)}
           hint={res.profileAvailable ? 'tranches bien en dessous du profil habituel' : 'profil de référence indisponible (< 3 jours par classe)'} />
       </div>
 
@@ -458,24 +458,24 @@ function AvantApresView({ ctx, bounds }: { ctx: SeriesContext; bounds: { min: nu
       )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={<CalendarDays className="h-4 w-4" style={{ color: COLOR_BEFORE }} />} label={`Avant · ${res.before?.days ?? 0} j`}
+        <StatCard icon={<CalendarDays className="h-4 w-4" style={{ color: COLOR_BEFORE }} />} term="avant" label={`Avant · ${res.before?.days ?? 0} j`}
           value={fmt(res.before?.dailyMean, res.dailyUnit)} hint={res.before ? `par jour · ${fmtDay(res.before.from)} → ${fmtDay(res.before.to)}` : 'aucune journée'} />
-        <StatCard icon={<CalendarDays className="h-4 w-4" style={{ color: COLOR_AFTER }} />} label={`Après · ${res.after?.days ?? 0} j`}
+        <StatCard icon={<CalendarDays className="h-4 w-4" style={{ color: COLOR_AFTER }} />} term="apres" label={`Après · ${res.after?.days ?? 0} j`}
           value={fmt(res.after?.dailyMean, res.dailyUnit)} hint={res.after ? `par jour · ${fmtDay(res.after.from)} → ${fmtDay(res.after.to)}` : 'aucune journée'} />
         <StatCard icon={res.delta < 0 ? <TrendingDown className="h-4 w-4 text-emerald-400" /> : <TrendingUp className="h-4 w-4 text-red-400" />}
-          label="Écart après − avant" value={`${fmt(res.delta, res.dailyUnit)} (${fmtPct(res.deltaPct)})`}
+          term="ecartAvantApres" label="Écart après − avant" value={`${fmt(res.delta, res.dailyUnit)} (${fmtPct(res.deltaPct)})`}
           hint={res.robust ? 'écart net par rapport à la variabilité journalière' : 'écart du même ordre que la variabilité journalière'} />
         {res.cumulable ? (
-          <StatCard icon={<PiggyBank className="h-4 w-4 text-emerald-400" />} label="Gain sur la période après"
+          <StatCard icon={<PiggyBank className="h-4 w-4 text-emerald-400" />} term="gain" label="Gain sur la période après"
             value={<span className={gainColor(res.savedAfter)}>{fmt(res.savedAfter, res.dailyUnit)}</span>}
             hint={`projection sur un an : ${fmt(res.savedYearly, res.dailyUnit)} (à classe de jour égale)`} />
         ) : (
-          <StatCard icon={<Sparkles className="h-4 w-4 text-blue-400" />} label="Lecture" value={fmtPct(res.deltaPct)} hint="différence de moyennes journalières" />
+          <StatCard icon={<Sparkles className="h-4 w-4 text-blue-400" />} term="lecture" label="Lecture" value={fmtPct(res.deltaPct)} />
         )}
       </div>
 
       <Card className="p-4 bg-white/5 border-white/10">
-        <p className="text-sm font-medium text-slate-200 mb-3">Par classe de jour</p>
+        <p className="text-sm font-medium text-slate-200 mb-3">Par <Term k="classeJour">classe de jour</Term></p>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-slate-400 border-b border-white/10">
@@ -545,12 +545,14 @@ function AvantApresView({ ctx, bounds }: { ctx: SeriesContext; bounds: { min: nu
 
 /* ----------------------------------------------------------------- shared */
 
-function StatCard({ icon, label, value, hint }: { icon: React.ReactNode; label: string; value: React.ReactNode; hint?: string }) {
+function StatCard({ icon, label, value, hint, term }: { icon: React.ReactNode; label: string; value: React.ReactNode; hint?: string; term?: GlossaryKey }) {
   return (
-    <div className="p-3 rounded-xl border border-white/10 bg-white/5">
-      <div className="flex items-center gap-1.5 text-slate-400 text-xs">{icon}{label}<KpiHint text={hint} /></div>
-      <p className="text-lg font-semibold mt-1 leading-tight text-white">{value}</p>
-    </div>
+    <KpiTooltip term={term} hint={hint}>
+      <div className="p-3 rounded-xl border border-white/10 bg-white/5 h-full">
+        <div className="flex items-center gap-1.5 text-slate-400 text-xs">{icon}{label}{(term || hint) && <KpiInfoIcon />}</div>
+        <p className="text-lg font-semibold mt-1 leading-tight text-white">{value}</p>
+      </div>
+    </KpiTooltip>
   );
 }
 

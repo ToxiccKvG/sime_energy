@@ -26,7 +26,8 @@ import {
   Activity, AlertTriangle, ArrowLeftRight, Check, ChevronLeft, ChevronRight, Clock, Download, FileSpreadsheet,
   Image as ImageIcon, Loader2, Pencil, ScatterChart as ScatterIcon, Sigma, TrendingDown, TrendingUp, X,
 } from 'lucide-react';
-import { KpiHint } from '@/components/shared/KpiHint';
+import { KpiInfoIcon, KpiTooltip } from '@/components/shared/InfoTip';
+import type { GlossaryKey } from '@/components/shared/glossary';
 
 interface ModelComparisonPanelProps {
   measurementData: MeasurementData[];
@@ -411,20 +412,20 @@ export function ModelComparisonPanel({ measurementData, onRename }: ModelCompari
 
           {/* Résumé */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard icon={<Activity className="h-4 w-4 text-slate-300" />} label="Points comparés" value={String(cmp.rows.length)}
+            <StatCard icon={<Activity className="h-4 w-4 text-slate-300" />} term="pointsCompares" label="Points comparés" value={String(cmp.rows.length)}
               hint={cmp.onlyA + cmp.onlyB > 0 ? `${cmp.onlyA + cmp.onlyB} sans vis-à-vis` : undefined} />
             <StatCard icon={cmp.meanDelta >= 0 ? <TrendingUp className="h-4 w-4 text-emerald-400" /> : <TrendingDown className="h-4 w-4 text-red-400" />}
-              label="Biais moyen (B − A)" value={fmt(cmp.meanDelta, cmp.unit)} />
-            <StatCard icon={<Sigma className="h-4 w-4 text-purple-400" />} label="Écart absolu moyen" value={fmt(cmp.mae, cmp.unit)} hint={`RMSE ${fmt(cmp.rmse, cmp.unit)}`} />
-            <StatCard icon={<AlertTriangle className="h-4 w-4 text-amber-400" />} label="Écart max" value={fmt(cmp.maxAbsDelta, cmp.unit)} hint={fmtTime(cmp.maxAbsDeltaAt, cmp.stepMs)} />
-            <StatCard icon={<Sigma className="h-4 w-4 text-blue-400" />} label={cmp.totalUnit ? 'Écart des cumuls' : 'Écart des moyennes'} value={fmtPct(cmp.biasPct)} />
-            <StatCard icon={<Activity className="h-4 w-4 text-purple-400" />} label="Corrélation (r)" value={cmp.correlation != null ? cmp.correlation.toFixed(3) : '—'}
+              term="biais" label="Biais moyen (B − A)" value={fmt(cmp.meanDelta, cmp.unit)} />
+            <StatCard icon={<Sigma className="h-4 w-4 text-purple-400" />} term="mae" label="Écart absolu moyen" value={fmt(cmp.mae, cmp.unit)} hint={`RMSE ${fmt(cmp.rmse, cmp.unit)}`} />
+            <StatCard icon={<AlertTriangle className="h-4 w-4 text-amber-400" />} term="ecartMax" label="Écart max" value={fmt(cmp.maxAbsDelta, cmp.unit)} hint={fmtTime(cmp.maxAbsDeltaAt, cmp.stepMs)} />
+            <StatCard icon={<Sigma className="h-4 w-4 text-blue-400" />} term="ecartCumuls" label={cmp.totalUnit ? 'Écart des cumuls' : 'Écart des moyennes'} value={fmtPct(cmp.biasPct)} />
+            <StatCard icon={<Activity className="h-4 w-4 text-purple-400" />} term="correlation" label="Corrélation (r)" value={cmp.correlation != null ? cmp.correlation.toFixed(3) : '—'}
               hint={cmp.offsetBMs !== 0 ? `B décalé de ${cmp.offsetBMs > 0 ? '+' : ''}${Math.round(cmp.offsetBMs / 60_000)} min` : undefined} />
             <StatCard icon={<AlertTriangle className={`h-4 w-4 ${outCount > 0 ? 'text-red-400' : 'text-emerald-400'}`} />}
-              label={`Hors tolérance (± ${tolerancePct} %)`}
+              term="horsTolerance" label={`Hors tolérance (± ${tolerancePct} %)`}
               value={`${outCount} pas · ${cmp.rows.length ? ((outCount / cmp.rows.length) * 100).toFixed(1) : '0'} %`}
               hint={`${cmp.rows.length - outCount} pas dans la tolérance`} />
-            <StatCard icon={<ScatterIcon className="h-4 w-4 text-blue-400" />} label="Régression B = a·A + b"
+            <StatCard icon={<ScatterIcon className="h-4 w-4 text-blue-400" />} term="regression" label="Régression B = a·A + b"
               value={cmp.regression ? `a = ${cmp.regression.slope.toFixed(3)} · b = ${fmt(cmp.regression.intercept, cmp.unit, 1)}` : '—'}
               hint={cmp.regression ? `R² = ${cmp.regression.r2.toFixed(4)}${Math.abs(cmp.regression.slope - 1) > 0.02 ? ' · gain ≠ 1 : calibrage / rapport de TC ?' : Math.abs(cmp.regression.intercept) > 0.05 * Math.max(1e-9, Math.abs(cmp.a.mean)) ? ' · offset constant : charge fantôme / zéro ?' : ' · A et B concordent'}` : undefined} />
           </div>
@@ -677,11 +678,13 @@ function SidePicker({
   );
 }
 
-function StatCard({ icon, label, value, hint }: { icon: React.ReactNode; label: string; value: string; hint?: string }) {
+function StatCard({ icon, label, value, hint, term }: { icon: React.ReactNode; label: string; value: string; hint?: string; term?: GlossaryKey }) {
   return (
-    <div className="p-3 rounded-xl border border-white/10 bg-white/5">
-      <div className="flex items-center gap-1.5 text-slate-400 text-xs">{icon}{label}<KpiHint text={hint} /></div>
-      <p className="text-lg font-semibold mt-1 leading-tight text-white">{value}</p>
-    </div>
+    <KpiTooltip term={term} hint={hint}>
+      <div className="p-3 rounded-xl border border-white/10 bg-white/5 h-full">
+        <div className="flex items-center gap-1.5 text-slate-400 text-xs">{icon}{label}{(term || hint) && <KpiInfoIcon />}</div>
+        <p className="text-lg font-semibold mt-1 leading-tight text-white">{value}</p>
+      </div>
+    </KpiTooltip>
   );
 }

@@ -23,7 +23,8 @@ import {
   fetchCauses, fetchCoupures, confirmCoupure, ORIGIN_LABELS,
   type Coupure, type CoupureCause,
 } from '@/lib/coupure-service';
-import { KpiHint } from '@/components/shared/KpiHint';
+import { KpiInfoIcon, KpiTooltip, Term } from '@/components/shared/InfoTip';
+import type { GlossaryKey } from '@/components/shared/glossary';
 
 type Metric = 'nb' | 'duree' | 'end';
 type Period = '30' | '90' | '365' | 'all';
@@ -160,10 +161,10 @@ export function CoupuresTab() {
       {coupures.length > 0 && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Stat label="Coupures" value={String(totals.n)} hint="hors fausses coupures" />
-            <Stat label="Durée cumulée" value={fmtDuree(totals.minutes)} />
-            <Stat label="Énergie non distribuée" value={`${nfr(totals.end, 2)} kWh`} hint="estimation (profil habituel de l'arrivée)" />
-            <Stat label="Causes confirmées" value={`${confirmed.length} / ${real.length}`} hint={toConfirm > 0 ? `${toConfirm} à confirmer` : 'tout est confirmé'} />
+            <Stat term="coupures" label="Coupures" value={String(totals.n)} />
+            <Stat term="dureeCumulee" label="Durée cumulée" value={fmtDuree(totals.minutes)} />
+            <Stat term="end" label="Énergie non distribuée" value={`${nfr(totals.end, 2)} kWh`} />
+            <Stat term="causesConfirmees" label="Causes confirmées" value={`${confirmed.length} / ${real.length}`} hint={toConfirm > 0 ? `${toConfirm} à confirmer` : 'tout est confirmé'} />
           </div>
 
           <Card className="p-4 bg-white/5 border-white/10">
@@ -196,7 +197,7 @@ export function CoupuresTab() {
                   <TableHead>Début (UTC)</TableHead>
                   <TableHead>Site</TableHead>
                   <TableHead className="text-right">Durée</TableHead>
-                  <TableHead className="text-right">END</TableHead>
+                  <TableHead className="text-right"><Term k="end">END</Term></TableHead>
                   <TableHead>Cause (déclencheur)</TableHead>
                   <TableHead>Cause aggravante</TableHead>
                   <TableHead>Commentaire</TableHead>
@@ -252,12 +253,14 @@ export function CoupuresTab() {
   );
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Stat({ label, value, hint, term }: { label: string; value: string; hint?: string; term?: GlossaryKey }) {
   return (
-    <div className="p-3 bg-white/5 border border-white/10 rounded-lg">
-      <div className="flex items-center gap-1.5 text-xs text-slate-400">{label}<KpiHint text={hint} /></div>
-      <p className="text-lg font-semibold text-white mt-1">{value}</p>
-    </div>
+    <KpiTooltip term={term} hint={hint}>
+      <div className="p-3 bg-white/5 border border-white/10 rounded-lg h-full">
+        <div className="flex items-center gap-1.5 text-xs text-slate-400">{label}{(term || hint) && <KpiInfoIcon />}</div>
+        <p className="text-lg font-semibold text-white mt-1">{value}</p>
+      </div>
+    </KpiTooltip>
   );
 }
 

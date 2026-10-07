@@ -16,7 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Building2, GitBranch, AlertTriangle, CheckCircle2, AlertCircle, ChevronRight, HelpCircle } from 'lucide-react';
 import { MeasurementData, measurementLabel } from '@/services/measurementService';
 import { computeComparison, areUnitsCompatible, energyUnitFor, isPowerUnit, type BucketGranularity, type ComparisonResult } from '@/lib/sensor-comparison';
-import { KpiHint } from '@/components/shared/KpiHint';
+import { KpiInfoIcon, KpiTooltip } from '@/components/shared/InfoTip';
+import type { GlossaryKey } from '@/components/shared/glossary';
 
 interface SensorComparisonPanelProps {
   measurementData: MeasurementData[];
@@ -309,10 +310,11 @@ export function SensorComparisonPanel({ measurementData }: SensorComparisonPanel
 
           {result.buckets.length > 0 && (<>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard label="Couverture" hint="somme des départs ÷ arrivée" value={coverage != null ? fmtPct(coverage) : '—'} accent />
-            <StatCard label="Arrivée" hint="compteur général" value={fmt(result.masterTotal, resultUnit)} />
-            <StatCard label="Somme des départs" hint={`${slaveList.length} sous-compteur${slaveList.length > 1 ? 's' : ''}`} value={fmt(result.slavesTotal, resultUnit)} />
+            <StatCard term="couverture" label="Couverture" value={coverage != null ? fmtPct(coverage) : '—'} accent />
+            <StatCard term="arrivee" label="Arrivée" value={fmt(result.masterTotal, resultUnit)} />
+            <StatCard term="sommeDeparts" label="Somme des départs" hint={`${slaveList.length} sous-compteur${slaveList.length > 1 ? 's' : ''}`} value={fmt(result.slavesTotal, resultUnit)} />
             <StatCard
+              term={result.deltaAbs < 0 ? 'surcompte' : 'nonMesure'}
               label={missingLabel}
               hint={result.deltaAbs < 0 ? 'les départs dépassent l\'arrivée' : 'passe par des départs sans capteur'}
               value={`${fmt(Math.abs(result.deltaAbs), resultUnit)}${result.deltaPct != null ? ` (${fmtPct(Math.abs(result.deltaPct))})` : ''}`}
@@ -396,12 +398,14 @@ export function SensorComparisonPanel({ measurementData }: SensorComparisonPanel
   );
 }
 
-function StatCard({ label, hint, value, accent, tone }: { label: string; hint?: string; value: string; accent?: boolean; tone?: Tone }) {
+function StatCard({ label, hint, value, accent, tone, term }: { label: string; hint?: string; value: string; accent?: boolean; tone?: Tone; term?: GlossaryKey }) {
   const valueColor = tone === 'bad' ? 'text-red-300' : accent ? 'text-blue-200' : 'text-white';
   return (
-    <div className={`p-3 rounded-xl border ${accent ? 'border-blue-500/40 bg-blue-500/10' : 'border-white/10 bg-white/5'}`}>
-      <div className="flex items-center gap-1.5 text-slate-400 text-xs">{label}<KpiHint text={hint} /></div>
-      <p className={`text-lg font-semibold mt-1 leading-tight ${valueColor}`}>{value}</p>
-    </div>
+    <KpiTooltip term={term} hint={hint}>
+      <div className={`p-3 rounded-xl border h-full ${accent ? 'border-blue-500/40 bg-blue-500/10' : 'border-white/10 bg-white/5'}`}>
+        <div className="flex items-center gap-1.5 text-slate-400 text-xs">{label}{(term || hint) && <KpiInfoIcon />}</div>
+        <p className={`text-lg font-semibold mt-1 leading-tight ${valueColor}`}>{value}</p>
+      </div>
+    </KpiTooltip>
   );
 }
