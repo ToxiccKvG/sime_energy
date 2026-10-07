@@ -86,7 +86,7 @@ export const SENSOR_METRICS: SensorMetric[] = [
     moyenne: p => num(p.pressure_hpa_moy),
   },
   {
-    key: 'rain', label: 'Précipitations', labelCourt: 'Pluie', unite: 'mm',
+    key: 'rain', label: 'Pluie du jour (courbe : pluie par heure)', labelCourt: 'Pluie jour', unite: 'mm',
     couleur: '#60a5fa', fond: 'bg-blue-500/10', texte: 'text-blue-300', decimales: 1,
     valeur: r => num(r.precipitation_mm),
     moyenne: p => num(p.precipitation_mm),

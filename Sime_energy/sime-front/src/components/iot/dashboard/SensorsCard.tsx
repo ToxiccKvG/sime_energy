@@ -12,11 +12,12 @@
 // capter sa luminosité : il s'affichait avec sept tuiles vides.
 // ============================================================
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Thermometer, Battery, BatteryLow, Signal, SignalLow } from 'lucide-react';
 import type { ShellyClRow } from '@/lib/iot-dashboard-service';
 import { metriquesDisponibles, formatValeur, type MetricKey } from './sensorMetrics';
 import { SensorDetailDialog } from './SensorDetailDialog';
+import { fetchPluieDuJour } from '@/lib/iot-sensor-detail-service';
 
 interface Props {
   snapshot: ShellyClRow[];
@@ -25,12 +26,32 @@ interface Props {
 export function SensorsCard({ snapshot }: Props) {
   const [ouvert, setOuvert] = useState<{ capteur: ShellyClRow; metrique: MetricKey } | null>(null);
 
+  // La station renvoie un compteur de pluie cumulatif : on affiche la pluie du jour.
+  const [pluieJour, setPluieJour] = useState<Map<string, number>>(new Map());
+  const cleStations = snapshot
+    .filter(r => typeof r.precipitation_mm === 'number')
+    .map(r => `${r.device_id}:${r.precipitation_mm}`).join('|');
+  useEffect(() => {
+    const stations = snapshot
+      .filter(r => typeof r.precipitation_mm === 'number')
+      .map(r => ({ device_id: r.device_id, cumul_mm: r.precipitation_mm as number }));
+    if (stations.length === 0) { setPluieJour(new Map()); return; }
+    let annule = false;
+    fetchPluieDuJour(stations).then(m => { if (!annule) setPluieJour(m); }).catch(() => {});
+    return () => { annule = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleStations]);
+
   const sensors = useMemo(() =>
     snapshot
+      .map(r => typeof r.precipitation_mm === 'number'
+        // pas de référence → on masque la tuile plutôt que d'afficher le cumul
+        ? { ...r, precipitation_mm: pluieJour.get(r.device_id) ?? null }
+        : r)
       .filter(r => r.device_family === 'CAPTEUR_ENV' || r.temperature != null || r.humidity != null)
       .filter(r => r.temperature != null || r.humidity != null)
       .sort((a, b) => (a.room ?? '').localeCompare(b.room ?? '')),
-    [snapshot],
+    [snapshot, pluieJour],
   );
 
   if (sensors.length === 0) {

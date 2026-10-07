@@ -81,6 +81,8 @@ interface ShellyRow {
   pressure_hpa?: number | null;
   pressure_slope?: string | null;
   precipitation_mm?: number | null;
+  /** Pluie tombée (mm) : depuis le relevé précédent (brut) ou dans l'heure (horaire). */
+  pluie_mm?: number | null;
   moisture_alarm?: boolean | null;
   wind_speed_ms?: number | null;
   wind_gust_ms?: number | null;
@@ -156,6 +158,8 @@ interface ShellyHoraireRow {
   pressure_hpa_moy?: number | null;
   pressure_slope_dernier?: string | null;
   precipitation_mm?: number | null;
+  /** Pluie tombée (mm) : depuis le relevé précédent (brut) ou dans l'heure (horaire). */
+  pluie_mm?: number | null;
   moisture_alarm?: boolean | null;
   wind_speed_ms_moy?: number | null;
   wind_gust_ms_max?: number | null;
@@ -326,7 +330,9 @@ export function transformRowsToProfilMi(
       Precipitation:      m.precipitation_mm ?? null,
       // Le pluviomètre renvoie un CUMUL : la pluie d'un intervalle est la différence avec la mesure précédente
       // du même appareil. Un recul du compteur (remise à zéro) ne fabrique pas de pluie négative : 0.
-      Precipitation_Incr: typeof m.precipitation_mm === 'number'
+      // pluie_mm (calculée en base à la collecte) fait foi ; le calcul local ne sert que de secours.
+      Precipitation_Incr: typeof m.pluie_mm === 'number' ? m.pluie_mm
+        : typeof m.precipitation_mm === 'number'
         ? (prev && typeof prev.precipitation_mm === 'number' ? Math.max(0, Math.round((m.precipitation_mm - prev.precipitation_mm) * 1000) / 1000) : 0)
         : null,
       Mesure_Le:          m.measured_at ?? null,
@@ -464,7 +470,7 @@ export function transformHoraireToProfilMi(
       Pression:           m.pressure_hpa_moy ?? null,
       Tendance_Pression:  m.pressure_slope_dernier ?? null,
       Precipitation:      m.precipitation_mm ?? null,
-      Precipitation_Incr: null,
+      Precipitation_Incr: m.pluie_mm ?? null,
       Mesure_Le:          null,
       Alarme_Humidite:    m.moisture_alarm ?? null,
       Vent_Vitesse:       m.wind_speed_ms_moy ?? null,
