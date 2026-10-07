@@ -26,6 +26,7 @@ import { PeriodFilter, filterByRange, toDatetimeLocalValue, useTimestampBounds, 
 import {
   AlertTriangle, CalendarDays, CheckCircle2, Image as ImageIcon, Info, Loader2, Moon, PiggyBank, Scale, Sigma, Sparkles, TrendingDown, TrendingUp, Zap,
 } from 'lucide-react';
+import { KpiHint } from '@/components/shared/KpiHint';
 
 interface AnalysisModelsPanelProps {
   data: MeasurementData;
@@ -547,9 +548,8 @@ function AvantApresView({ ctx, bounds }: { ctx: SeriesContext; bounds: { min: nu
 function StatCard({ icon, label, value, hint }: { icon: React.ReactNode; label: string; value: React.ReactNode; hint?: string }) {
   return (
     <div className="p-3 rounded-xl border border-white/10 bg-white/5">
-      <div className="flex items-center gap-1.5 text-slate-400 text-xs">{icon}{label}</div>
+      <div className="flex items-center gap-1.5 text-slate-400 text-xs">{icon}{label}<KpiHint text={hint} /></div>
       <p className="text-lg font-semibold mt-1 leading-tight text-white">{value}</p>
-      {hint && <p className="text-[11px] text-slate-500 mt-0.5">{hint}</p>}
     </div>
   );
 }

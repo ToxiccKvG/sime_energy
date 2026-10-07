@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Building2, GitBranch, AlertTriangle, CheckCircle2, AlertCircle, ChevronRight, HelpCircle } from 'lucide-react';
 import { MeasurementData, measurementLabel } from '@/services/measurementService';
 import { computeComparison, areUnitsCompatible, energyUnitFor, isPowerUnit, type BucketGranularity, type ComparisonResult } from '@/lib/sensor-comparison';
+import { KpiHint } from '@/components/shared/KpiHint';
 
 interface SensorComparisonPanelProps {
   measurementData: MeasurementData[];
@@ -399,9 +400,8 @@ function StatCard({ label, hint, value, accent, tone }: { label: string; hint?: 
   const valueColor = tone === 'bad' ? 'text-red-300' : accent ? 'text-blue-200' : 'text-white';
   return (
     <div className={`p-3 rounded-xl border ${accent ? 'border-blue-500/40 bg-blue-500/10' : 'border-white/10 bg-white/5'}`}>
-      <div className="text-slate-400 text-xs">{label}</div>
+      <div className="flex items-center gap-1.5 text-slate-400 text-xs">{label}<KpiHint text={hint} /></div>
       <p className={`text-lg font-semibold mt-1 leading-tight ${valueColor}`}>{value}</p>
-      {hint && <p className="text-[11px] text-slate-500 mt-0.5">{hint}</p>}
     </div>
   );
 }

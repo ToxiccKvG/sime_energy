@@ -23,6 +23,7 @@ import {
   fetchCauses, fetchCoupures, confirmCoupure, ORIGIN_LABELS,
   type Coupure, type CoupureCause,
 } from '@/lib/coupure-service';
+import { KpiHint } from '@/components/shared/KpiHint';
 
 type Metric = 'nb' | 'duree' | 'end';
 type Period = '30' | '90' | '365' | 'all';
@@ -254,9 +255,8 @@ export function CoupuresTab() {
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="p-3 bg-white/5 border border-white/10 rounded-lg">
-      <p className="text-xs text-slate-400">{label}</p>
+      <div className="flex items-center gap-1.5 text-xs text-slate-400">{label}<KpiHint text={hint} /></div>
       <p className="text-lg font-semibold text-white mt-1">{value}</p>
-      {hint && <p className="text-[11px] text-slate-500 mt-0.5">{hint}</p>}
     </div>
   );
 }
