@@ -54,11 +54,18 @@ TABLES = [
 
 # Colonnes qui sont des COMPTEURS CUMULATIFS et non des mesures instantanées.
 # Pour ces colonnes, la valeur du jour est la somme des hausses, pas la moyenne.
-# (precipitation_mm : pluie cumulée de la station ; wh_* : index d'énergie.)
+# (precipitation_cumul_mm : compteur de pluie de la station, jamais à afficher
+# comme une pluie ; wh_* : index d'énergie.)
 COMPTEURS = {
-    "precipitation_mm", "wh_tot", "wh_a", "wh_b", "wh_c",
+    "precipitation_cumul_mm", "wh_tot", "wh_a", "wh_b", "wh_c",
     "wh_rtot", "wh_ra", "wh_rb", "wh_rc", "wh_counter",
 }
+
+# La base garde le compteur brut sous `precipitation_mm` : on le renomme à
+# l'export pour qu'il ne soit pas pris pour la pluie. La pluie réelle (par
+# relevé / par heure) est la colonne `pluie_mm`, additionnée par la synthèse.
+RENOMMER = {"precipitation_mm": "precipitation_cumul_mm"}
+SOMMES = {"pluie_mm"}
 
 # Colonnes de contexte, jamais agrégées.
 NON_MESURES = {
@@ -177,7 +184,11 @@ def synthese_journaliere(brut):
             continue
         if df[col].notna().sum() == 0:
             continue
-        if col in COMPTEURS:
+        if col in SOMMES:
+            calculs[f"{col}_jour"] = (col, "sum")
+        elif col == "precipitation_cumul_mm":
+            calculs[f"{col}_index_fin"] = (col, "last")   # la pluie du jour = pluie_mm_jour
+        elif col in COMPTEURS:
             # Somme des hausses : neutralise les remises à zéro du compteur.
             df[f"_var_{col}"] = df[col].diff().clip(lower=0).fillna(0)
             calculs[f"{col}_jour"] = (f"_var_{col}", "sum")
@@ -300,6 +311,7 @@ def main():
         df = pd.DataFrame(lignes)
         df[tscol] = pd.to_datetime(df[tscol], utc=True, format="ISO8601")
         df = df.sort_values(tscol).reset_index(drop=True)
+        df = df.rename(columns=RENOMMER)
         df = df[colonnes_pleines(df)]
         donnees[table] = (df, tscol, titre)
         print(f"    {len(df)} lignes, {len(df.columns)} colonnes renseignées")
@@ -333,6 +345,12 @@ def main():
         ("Filtre période", f"{args.du or 'début'} → {args.au or 'maintenant'}"),
         ("Rétention", "shelly_cl est purgée à 90 jours : au-delà, seuls les "
                       "agrégats horaires subsistent."),
+        ("Pluie", "pluie_mm = pluie tombée (mm) depuis le relevé précédent (brut) ou "
+                  "dans l'heure (horaire) ; pluie_mm_jour = total du jour (synthèse). "
+                  "precipitation_cumul_mm = compteur depuis l'installation de la station : "
+                  "à ne PAS lire comme une pluie. Station muette la nuit : la pluie "
+                  "nocturne est comptée au premier relevé du matin."
+                  if "precipitation_cumul_mm" in brut.columns else "sans objet"),
         ("Compteurs cumulatifs", "Les colonnes " + ", ".join(sorted(COMPTEURS & set(brut.columns)))
                                  + " sont des index cumulatifs ; la synthèse en donne la "
                                    "variation quotidienne (_jour)."
