@@ -24,11 +24,15 @@ Exemples
   python3 export_shelly.py --nom "Arrivée générale" --sortie ~/Desktop/mon_export
 
 Prérequis : requests, python-dotenv, pandas, xlsxwriter.
-Identifiants lus dans un fichier .env (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).
+SUPABASE_URL lu dans le .env ; la clé service_role vient du .env si c'en est bien une,
+sinon de la CLI Supabase (`supabase login` requis).
 """
 
 import argparse
+import base64
+import json
 import os
+import subprocess
 import sys
 import unicodedata
 
@@ -77,16 +81,46 @@ NON_MESURES = {
 
 # ── Accès Supabase ──────────────────────────────────────────────────────────
 
+def _role_jwt(cle):
+    """Rôle porté par un JWT Supabase ('anon', 'service_role'…), sinon None."""
+    try:
+        charge = cle.split(".")[1]
+        charge += "=" * (-len(charge) % 4)
+        return json.loads(base64.urlsafe_b64decode(charge)).get("role")
+    except Exception:
+        return None
+
+
+def cle_service_via_cli(url):
+    """Lit la clé service_role par la CLI Supabase (connexion déjà faite),
+    sans jamais l'écrire sur le disque."""
+    ref = url.split("//")[-1].split(".")[0]
+    try:
+        sortie = subprocess.run(
+            ["supabase", "projects", "api-keys", "--project-ref", ref, "-o", "json"],
+            capture_output=True, text=True, timeout=60, check=True).stdout
+        return next(k["api_key"] for k in json.loads(sortie) if k.get("name") == "service_role")
+    except Exception:
+        return None
+
+
 def connexion(chemin_env):
-    if not os.path.exists(chemin_env):
-        sys.exit(f"[!] Fichier .env introuvable : {chemin_env}\n"
-                 f"    Indiquez-le avec --env.")
-    load_dotenv(chemin_env)
+    if os.path.exists(chemin_env):
+        load_dotenv(chemin_env)
     url = os.getenv("SUPABASE_URL")
+    if not url:
+        sys.exit(f"[!] SUPABASE_URL absent (cherché dans {chemin_env}). Indiquez le .env avec --env.")
+    url = url.rstrip("/")
     cle = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not cle:
-        sys.exit(f"[!] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY absent de {chemin_env}")
-    return url.rstrip("/"), {"apikey": cle, "Authorization": f"Bearer {cle}"}
+    # Le .env porte parfois la clé anon sous ce nom : l'accès anon est fermé
+    # depuis le 14/09 (erreur 42501). On prend alors la vraie clé via la CLI.
+    if not cle or _role_jwt(cle) != "service_role":
+        cle = cle_service_via_cli(url)
+        if not cle:
+            sys.exit("[!] Pas de clé service_role : le .env contient une clé anon et la CLI "
+                     "Supabase n'a pas pu en fournir une (installée ? `supabase login` fait ?).")
+        print("[i] clé service_role obtenue via la CLI Supabase")
+    return url, {"apikey": cle, "Authorization": f"Bearer {cle}"}
 
 
 def pagine(url, entetes, table, tscol, filtres, bavard=True):
