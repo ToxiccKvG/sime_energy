@@ -100,6 +100,7 @@ Signature : appareils secteur muets pendant que les capteurs à pile émettent ;
 6. **Capteur d'ouverture / bouton** : la « dernière mesure » peut dater de plusieurs jours sans que ce soit une panne.
 7. **Câblage Académie** : 3 arrivées SENELEC (building, EPT, bureau Woyofal) ; M4 et TD désactivés ; PV Donsin en aval non mesuré ; injection M1 absente (anomalie à instruire).
 8. Les capteurs **FOUTA POIDS LOURDS** (M1/M2/M4) sont débranchés volontairement depuis fin juillet : ce n'est pas une panne.
+9. **Énergie par appareil : à partir du 18/05/2026 seulement.** Du 16/04 au 17/05, les appareils sur prise (Ma Maison : frigo, congélateur, box, chauffe-eau, lampes… ; Académie : multiprise, PC) remontaient la puissance mais pas `wh_tot` : `fn_energy_by_device` leur donne 0 kWh sur cette période. Les compteurs principaux (Ma Maison EM-SENELEC ; Académie M1, M2, M3, PV building, TGBT EPT) avaient bien `wh_tot` : **les totaux par site sont justes**. Faire démarrer toute répartition par appareil au 18/05. Si une analyse a vraiment besoin de cette période : reconstruire Σ P × Δt (trous > 5 min non comblés), validé contre `wh_tot` après le 18/05, dans une table à part marquée « reconstruit » — jamais dans `shelly_cl` (décision du 08/10/2026).
 
 ## 6. Dépannage
 
