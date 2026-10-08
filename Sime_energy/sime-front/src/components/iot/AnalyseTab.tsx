@@ -27,6 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Checkbox } from '@/components/ui/checkbox';
 import { useIOT } from './IOTContext';
 import { ProfilChargeTab } from './ProfilChargeTab';
+import { DevicePeriodsNotice } from './DevicePeriodsNotice';
 import { parseShellyRow, profilMiToShellyRow, calculerStats, detecterFormatShelly, parseShellySectionCSV } from '@/lib/iot-profil-engine';
 import { transformRowsToProfilMi, transformHoraireToProfilMi, exporterDonneesSupabase, getColonnesParGroupe, fetchDisponibles } from '@/lib/iot-supabase-service';
 import { JOURS_SEMAINE, MOIS_FR, COLONNES_PROFIL_SHELLY } from './shared';
@@ -1255,6 +1256,14 @@ function SupabaseExportPanel({
                   </select>
                 </div>
               </div>
+
+              <DevicePeriodsNotice
+                deviceIds={selectedDeviceIds.length > 0 ? selectedDeviceIds : devicesFiltres.map(d => d.device_id)}
+                deviceName={id => disponibles.devices.find(d => d.device_id === id)?.name ?? id}
+                dateDebut={dateDebut}
+                dateFin={dateFin}
+                onStartAt={setDateDebut}
+              />
             </div>
 
             <div className="bg-white/3 rounded-xl border border-white/10 p-4 space-y-3">
