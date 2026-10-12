@@ -227,7 +227,7 @@ function TableauSheet({
               const absIdx = page * ROWS_PER_PAGE + rowIdx;
               return (
                 <tr key={rowIdx} className={`hover:bg-blue-500/5 ${rowIdx % 2 === 0 ? '' : 'bg-white/[0.02]'}`}>
-                  <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none text-[10px] font-mono">{absIdx + 1}</td>
+                  <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none text-[0.625rem] font-mono">{absIdx + 1}</td>
                   {columns.map(col => {
                     const val = row[col];
                     const display = val instanceof Date
@@ -794,7 +794,7 @@ export function UploadTab() {
                               <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: PROFIL_MI_COLORS[s.profilMi] }} />
                             )}
                             {s.isShelly && (
-                              <span className="text-green-500 text-[9px]">✓</span>
+                              <span className="text-green-500 text-[0.5625rem]">✓</span>
                             )}
                             <span className="text-slate-500">{s.rowCount.toLocaleString('fr-FR')}</span>
                           </button>

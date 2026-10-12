@@ -445,7 +445,7 @@ export function ModelComparisonPanel({ measurementData, onRename }: ModelCompari
                 <span style={{ color: COLOR_A }}>A</span> {specA.label} · {specA.metricLabel} &nbsp;|&nbsp;
                 <span style={{ color: COLOR_B }}>B</span> {specB.label} · {specB.metricLabel} &nbsp;|&nbsp; {cmp.unit}
               </p>
-              <p className="text-[11px] text-slate-500 px-2 pb-1">
+              <p className="text-[0.6875rem] text-slate-500 px-2 pb-1">
                 {fmtTime(cmp.from, 0)} → {fmtTime(cmp.to, 0)} · pas {STEPS.find((s) => s.key === cmp.step)?.label} · biais {fmt(cmp.meanDelta, cmp.unit)} · {cmp.totalUnit ? 'écart des cumuls' : 'écart des moyennes'} {fmtPct(cmp.biasPct)} · r = {cmp.correlation != null ? cmp.correlation.toFixed(3) : '—'}
               </p>
               {/* Graphique du haut : A et B superposés. Graphique du bas : l'écart,
@@ -659,7 +659,7 @@ function SidePicker({
           </SelectContent>
         </Select>
       )}
-      {d?.alias && !editing && <p className="text-[11px] text-slate-500 truncate">{d.file_name}</p>}
+      {d?.alias && !editing && <p className="text-[0.6875rem] text-slate-500 truncate">{d.file_name}</p>}
       {d && keys.length > 1 && (
         <Select value={metricKey} onValueChange={onKey}>
           <SelectTrigger className="bg-white/5 border-white/20 text-slate-200 h-8 text-xs">

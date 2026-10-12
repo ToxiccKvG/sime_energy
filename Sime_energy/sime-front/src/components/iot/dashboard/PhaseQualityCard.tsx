@@ -119,14 +119,14 @@ export function PhaseQualityCard({ snapshot, plage }: Props) {
               onClick={() => ouvrir('tension', `Tensions — ${c.name}`)}
               title="Voir l'historique des tensions"
               className={`rounded-lg border bg-white/5 border-white/10 p-3 ${TUILE_CLIC}`}>
-              <p className="text-[10px] text-slate-400 uppercase">Tension Phase {PHASES[idx]}</p>
+              <p className="text-[0.625rem] text-slate-400 uppercase">Tension Phase {PHASES[idx]}</p>
               <p className="text-2xl font-bold mt-1" style={{ color }}>
                 {fmtFr(val, 1)} <span className="text-xs font-normal text-slate-400">V</span>
               </p>
               <div className="h-1 mt-2 rounded-full overflow-hidden bg-white/10">
                 <div className="h-full" style={{ width: `${Math.min(100, val / 260 * 100)}%`, backgroundColor: color }} />
               </div>
-              <p className="text-[10px] text-slate-500 mt-1">cible 220-245 V</p>
+              <p className="text-[0.625rem] text-slate-500 mt-1">cible 220-245 V</p>
             </button>
           );
         })}
@@ -139,11 +139,11 @@ export function PhaseQualityCard({ snapshot, plage }: Props) {
             ])}
             title="Voir l'historique de la charge par phase"
             className={`rounded-lg border bg-white/5 border-white/10 p-3 ${TUILE_CLIC}`}>
-            <p className="text-[10px] text-slate-400 uppercase">Courant Phase {PHASES[idx]}</p>
+            <p className="text-[0.625rem] text-slate-400 uppercase">Courant Phase {PHASES[idx]}</p>
             <p className="text-2xl font-bold mt-1" style={{ color: COLORS_V[idx] }}>
               {fmtFr(val, 1)} <span className="text-xs font-normal text-slate-400">A</span>
             </p>
-            <p className="text-[10px] text-slate-500 mt-2">{fmtFr(p[idx], 1)} W</p>
+            <p className="text-[0.625rem] text-slate-500 mt-2">{fmtFr(p[idx], 1)} W</p>
           </button>
         ))}
 
@@ -157,13 +157,13 @@ export function PhaseQualityCard({ snapshot, plage }: Props) {
           desequilibre > 2 ? 'bg-yellow-500/5 border-yellow-500/20' :
                               'bg-green-500/5 border-green-500/20'
         }`}>
-          <p className="text-[10px] text-slate-400 uppercase">Déséquilibre tension entre phases</p>
+          <p className="text-[0.625rem] text-slate-400 uppercase">Déséquilibre tension entre phases</p>
           <p className="text-xl font-bold mt-1" style={{
             color: desequilibre > 5 ? '#f59e0b' : desequilibre > 2 ? '#facc15' : '#22c55e',
           }}>
             {fmtFr(desequilibre, 2)}%
           </p>
-          <p className="text-[10px] text-slate-500 mt-1">
+          <p className="text-[0.625rem] text-slate-500 mt-1">
             (max - min) / moyenne · alerte si &gt; 5%
           </p>
         </button>

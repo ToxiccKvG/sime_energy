@@ -96,16 +96,16 @@ export function SensorsCard({ snapshot }: Props) {
               <div className="flex items-start justify-between gap-2 mb-2">
                 <div className="min-w-0">
                   <p className="text-white text-xs font-medium truncate" title={r.name}>{r.name}</p>
-                  <p className="text-slate-500 text-[10px] truncate">{r.room ?? r.site}</p>
+                  <p className="text-slate-500 text-[0.625rem] truncate">{r.room ?? r.site}</p>
                 </div>
                 <div className="shrink-0 flex items-center gap-2">
                   {rssi != null && (
-                    <span className={`flex items-center gap-0.5 text-[10px] ${weak ? 'text-amber-400' : 'text-slate-500'}`} title={`Signal : ${rssi} dBm`}>
+                    <span className={`flex items-center gap-0.5 text-[0.625rem] ${weak ? 'text-amber-400' : 'text-slate-500'}`} title={`Signal : ${rssi} dBm`}>
                       {weak ? <SignalLow className="h-3 w-3" /> : <Signal className="h-3 w-3" />}
                     </span>
                   )}
                   {bat != null && (
-                    <span className={`flex items-center gap-0.5 text-[10px] ${batLow ? 'text-amber-400' : 'text-slate-400'}`}
+                    <span className={`flex items-center gap-0.5 text-[0.625rem] ${batLow ? 'text-amber-400' : 'text-slate-400'}`}
                       title={batV != null ? `${batV.toFixed(1)} V` : undefined}>
                       {batLow ? <BatteryLow className="h-3 w-3" /> : <Battery className="h-3 w-3" />}
                       {bat}%
@@ -126,17 +126,17 @@ export function SensorsCard({ snapshot }: Props) {
                       title={`${m.label} — voir le détail`}
                       className={`rounded p-1.5 text-left transition-colors hover:ring-1 hover:ring-white/25 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${alerte ? 'bg-amber-500/10' : m.fond}`}
                     >
-                      <p className="text-[9px] text-slate-400 uppercase truncate">{m.labelCourt}</p>
+                      <p className="text-[0.5625rem] text-slate-400 uppercase truncate">{m.labelCourt}</p>
                       <p className={`text-base font-bold ${alerte ? 'text-amber-400' : m.texte}`}>
                         {formatValeur(m, valeur)}
-                        {m.unite && <span className="text-[10px] font-normal text-slate-400 ml-0.5">{m.unite}</span>}
+                        {m.unite && <span className="text-[0.625rem] font-normal text-slate-400 ml-0.5">{m.unite}</span>}
                       </p>
                       {m.key === 'wind' && (() => {
                         const gust = typeof r.wind_gust_ms === 'number' ? r.wind_gust_ms * 3.6 : null;
                         const dir  = typeof r.wind_direction_deg === 'number' ? r.wind_direction_deg : null;
                         if (gust == null && dir == null) return null;
                         return (
-                          <span className="block text-[9px] text-slate-500 mt-0.5">
+                          <span className="block text-[0.5625rem] text-slate-500 mt-0.5">
                             {gust != null && `raf. ${gust.toFixed(0)} km/h`}
                             {gust != null && dir != null && ' · '}
                             {dir != null && `${dir.toFixed(0)}°`}

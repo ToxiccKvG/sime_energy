@@ -56,7 +56,7 @@ export function HeatmapCard({ cells }: Props) {
         <h3 className="text-white font-semibold text-sm flex items-center gap-2">
           <Grid3x3 className="h-4 w-4 text-orange-400" /> Consommation par heure (moy. sur la période)
         </h3>
-        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+        <div className="flex items-center gap-2 text-[0.625rem] text-slate-400">
           <span>Faible</span>
           {[0.1, 0.3, 0.5, 0.7, 0.9].map(i => (
             <span key={i} className="w-3 h-3 rounded" style={{ backgroundColor: colorFor(i) }} />
@@ -70,9 +70,9 @@ export function HeatmapCard({ cells }: Props) {
         <table className="text-xs border-separate" style={{ borderSpacing: 2 }}>
           <thead>
             <tr>
-              <th className="text-slate-500 text-right font-normal pr-2 text-[10px]">Heure →</th>
+              <th className="text-slate-500 text-right font-normal pr-2 text-[0.625rem]">Heure →</th>
               {Array.from({ length: 24 }, (_, h) => (
-                <th key={h} className="text-slate-500 font-normal text-[9px] w-3 md:w-6">{h}</th>
+                <th key={h} className="text-slate-500 font-normal text-[0.5625rem] w-3 md:w-6">{h}</th>
               ))}
             </tr>
           </thead>

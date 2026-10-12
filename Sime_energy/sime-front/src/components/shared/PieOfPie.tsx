@@ -11,6 +11,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Cell, Customized, Pie, PieChart, Tooltip } from 'recharts';
+import { useChartZoomed } from '@/components/shared/ChartZoom';
 
 const tooltipStyle = {
   backgroundColor: 'hsl(var(--card))',
@@ -103,12 +104,18 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [avail, setAvail] = useState(720);
+  // Hauteur libre sous le camembert jusqu'au bas de l'écran : sert à la vue agrandie seulement.
+  const [availH, setAvailH] = useState(600);
   useEffect(() => {
     const el = boxRef.current;
     if (!el) return;
-    setAvail(Math.max(320, el.clientWidth));
+    const measure = () => {
+      setAvail(Math.max(320, el.clientWidth));
+      setAvailH(Math.max(240, window.innerHeight - el.getBoundingClientRect().top - 40));
+    };
+    measure();
     if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => setAvail(Math.max(320, el.clientWidth)));
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -133,8 +140,13 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
   // Entre les deux camemberts : les étiquettes de droite du principal (largeur bwMain) ne doivent pas toucher le second.
   const gapMain = R + 30 + bwMain + 24 + r2;
   const required = hasSecond ? cxMainMin + gapMain + r2 + 52 + bwSec : 2 * (R + 34 + bwMain);
-  const w = Math.max(avail, required);
-  const scale = Math.max(0.55, Math.min(1, avail / w));
+  // Vue agrandie (ChartZoom) : le dessin garde sa taille naturelle et GROSSIT jusqu'à ×1,8,
+  // dans la limite de la hauteur d'écran ; ailleurs il ne fait que rétrécir si la place manque.
+  const zoomed = useChartZoomed();
+  const w = zoomed ? Math.max(required, 640) : Math.max(avail, required);
+  const scale = zoomed
+    ? Math.max(0.55, Math.min(1.8, avail / w, availH / height))
+    : Math.max(0.55, Math.min(1, avail / w));
   const cy = height / 2;
   const cxMain = hasSecond ? Math.max(cxMainMin, w * 0.27) : w / 2;
   const cxSec = Math.max(cxMain + gapMain, Math.min(w * 0.66, w - r2 - 52 - bwSec));

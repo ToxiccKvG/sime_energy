@@ -518,7 +518,7 @@ export function ProfilChargeTab() {
                         return Object.entries(bySite).map(([site, devs]) => (
                           <div key={site}>
                             {Object.keys(bySite).length > 1 && (
-                              <p className="text-[10px] text-slate-500 uppercase tracking-wide px-2 pt-2 pb-1">{site}</p>
+                              <p className="text-[0.625rem] text-slate-500 uppercase tracking-wide px-2 pt-2 pb-1">{site}</p>
                             )}
                             {devs.map(d => (
                               <label key={d.device_id} className="flex items-center gap-2 px-2 py-1.5 rounded text-xs text-slate-300 hover:bg-white/5 cursor-pointer">
@@ -799,21 +799,21 @@ export function ProfilChargeTab() {
               <thead className="sticky top-0 bg-[#1a1d2e] z-10">
                 <tr>
                   {['Date', 'Jour', 'kWh Tot', 'kWh Ret', 'kWh Cum'].map(h => (
-                    <th key={h} className="px-2 py-2 text-left text-slate-400 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">
+                    <th key={h} className="px-2 py-2 text-left text-slate-400 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">
                       {h}
                     </th>
                   ))}
                   {/* Conso. par phase */}
-                  <th className="px-2 py-2 text-right text-purple-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Conso. A</th>
-                  <th className="px-2 py-2 text-right text-yellow-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Conso. B</th>
-                  <th className="px-2 py-2 text-right text-pink-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Conso. C</th>
-                  <th className="px-2 py-2 text-right text-cyan-400/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">kWh Net</th>
+                  <th className="px-2 py-2 text-right text-purple-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Conso. A</th>
+                  <th className="px-2 py-2 text-right text-yellow-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Conso. B</th>
+                  <th className="px-2 py-2 text-right text-pink-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Conso. C</th>
+                  <th className="px-2 py-2 text-right text-cyan-400/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">kWh Net</th>
                   {/* Puissance par phase */}
-                  <th className="px-2 py-2 text-right text-green-400/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Puiss. Tot</th>
-                  <th className="px-2 py-2 text-right text-purple-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Puiss. A</th>
-                  <th className="px-2 py-2 text-right text-yellow-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Puiss. B</th>
-                  <th className="px-2 py-2 text-right text-pink-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Puiss. C</th>
-                  <th className="px-2 py-2 text-left text-slate-400 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Profil</th>
+                  <th className="px-2 py-2 text-right text-green-400/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Puiss. Tot</th>
+                  <th className="px-2 py-2 text-right text-purple-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Puiss. A</th>
+                  <th className="px-2 py-2 text-right text-yellow-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Puiss. B</th>
+                  <th className="px-2 py-2 text-right text-pink-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Puiss. C</th>
+                  <th className="px-2 py-2 text-left text-slate-400 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Profil</th>
                 </tr>
               </thead>
               <tbody>
@@ -838,7 +838,7 @@ export function ProfilChargeTab() {
                       <td className="px-2 py-1.5 text-yellow-300 text-right">{fmtFr(r.puissKwB, 2)}</td>
                       <td className="px-2 py-1.5 text-pink-300 text-right">{fmtFr(r.puissKwC, 2)}</td>
                       <td className="px-2 py-1.5">
-                        <Badge className={`border-0 text-[10px] ${r.profil === 'CHARGE' ? 'bg-blue-500/20 text-blue-300' : 'bg-orange-500/20 text-orange-300'}`}>
+                        <Badge className={`border-0 text-[0.625rem] ${r.profil === 'CHARGE' ? 'bg-blue-500/20 text-blue-300' : 'bg-orange-500/20 text-orange-300'}`}>
                           {r.profil}
                         </Badge>
                       </td>

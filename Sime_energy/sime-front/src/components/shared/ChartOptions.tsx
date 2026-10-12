@@ -122,7 +122,7 @@ export function ChartOptions({ chartId, defaultTitle, hideTitle = false, unit, c
           </button>
           {unitOpen && (
             <div className="absolute right-0 top-7 z-50 w-64 rounded-lg border border-white/10 bg-[#0f111a] p-2 shadow-xl">
-              <p className="text-[11px] text-slate-500 px-1.5 pb-1.5">
+              <p className="text-[0.6875rem] text-slate-500 px-1.5 pb-1.5">
                 Change l'écriture des valeurs, pas les données. Les exports CSV gardent les nombres bruts.
               </p>
               <button
@@ -130,16 +130,16 @@ export function ChartOptions({ chartId, defaultTitle, hideTitle = false, unit, c
                 className={`w-full text-left px-2 py-1.5 rounded-md transition-colors ${units.mode === 'auto' ? 'bg-blue-500/15 text-white' : 'text-slate-300 hover:bg-white/5'}`}
               >
                 <span className="text-xs">Automatique</span>
-                <span className="block text-[11px] text-slate-500">Passe en k au-delà de 1 000, en M au-delà d'un million.</span>
+                <span className="block text-[0.6875rem] text-slate-500">Passe en k au-delà de 1 000, en M au-delà d'un million.</span>
               </button>
               <button
                 onClick={() => { setUnitMode('raw'); setUnitOpen(false); }}
                 className={`w-full text-left px-2 py-1.5 rounded-md transition-colors ${units.mode === 'raw' ? 'bg-blue-500/15 text-white' : 'text-slate-300 hover:bg-white/5'}`}
               >
                 <span className="text-xs">Unité du fichier ({prefixes[0].label})</span>
-                <span className="block text-[11px] text-slate-500">Jamais de multiple — pour comparer des chiffres bruts.</span>
+                <span className="block text-[0.6875rem] text-slate-500">Jamais de multiple — pour comparer des chiffres bruts.</span>
               </button>
-              <p className="text-[11px] text-slate-500 px-2 pt-1.5 pb-0.5">Imposer un multiple</p>
+              <p className="text-[0.6875rem] text-slate-500 px-2 pt-1.5 pb-0.5">Imposer un multiple</p>
               <div className="flex gap-1 px-1 pb-1">
                 {prefixes.map(p => (
                   <button
@@ -173,7 +173,7 @@ export function ChartOptions({ chartId, defaultTitle, hideTitle = false, unit, c
 
         {open && (
           <div className="absolute right-0 top-7 z-50 w-72 rounded-lg border border-white/10 bg-[#0f111a] p-2 shadow-xl">
-            <p className="text-[11px] text-slate-500 px-1.5 pb-1.5">
+            <p className="text-[0.6875rem] text-slate-500 px-1.5 pb-1.5">
               La palette s'applique à tous les graphiques, dans IOT comme dans Mesures.
             </p>
             {PALETTES.map(p => (
@@ -192,7 +192,7 @@ export function ChartOptions({ chartId, defaultTitle, hideTitle = false, unit, c
                     ))}
                   </span>
                 </span>
-                <span className="block text-[11px] text-slate-500 mt-0.5">{p.hint}</span>
+                <span className="block text-[0.6875rem] text-slate-500 mt-0.5">{p.hint}</span>
               </button>
             ))}
           </div>

@@ -276,7 +276,7 @@ export function EnergyDetailDialog({ sujet, onClose }: Props) {
     label: string; valeur: string; aide?: string; accent?: string;
   }) => (
     <div className="rounded-lg bg-white/5 border border-white/10 p-2 text-center" title={aide}>
-      <p className="text-[10px] text-slate-400 uppercase tracking-wide truncate">{label}</p>
+      <p className="text-[0.625rem] text-slate-400 uppercase tracking-wide truncate">{label}</p>
       <p className="text-sm font-semibold mt-0.5" style={{ color: accent ?? '#fff' }}>{valeur}</p>
     </div>
   );
@@ -340,7 +340,7 @@ export function EnergyDetailDialog({ sujet, onClose }: Props) {
         </div>
 
         {sujet.notes && sujet.notes.length > 0 && (
-          <div className="flex items-start gap-2 text-[11px] text-slate-400">
+          <div className="flex items-start gap-2 text-[0.6875rem] text-slate-400">
             <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-slate-500" />
             <span>{sujet.notes.join(' · ')}</span>
           </div>
@@ -534,7 +534,7 @@ export function EnergyDetailDialog({ sujet, onClose }: Props) {
                   </AreaChart>
                 )}
               </ResponsiveContainer>
-              <p className="text-slate-600 text-[10px] text-center mt-1">
+              <p className="text-slate-600 text-[0.625rem] text-center mt-1">
                 Agrégats {bucket === 'day' ? 'journaliers' : 'horaires'} · shelly_cl_horaire
               </p>
             </div>
@@ -600,7 +600,7 @@ export function EnergyDetailDialog({ sujet, onClose }: Props) {
               return (
                 <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3 space-y-1.5">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-                    <p className="text-[10px] text-slate-400 uppercase tracking-wide">
+                    <p className="text-[0.625rem] text-slate-400 uppercase tracking-wide">
                       Répartition
                       {toutes.length > lignes.length && ` · ${lignes.length} premiers sur ${toutes.length}`}
                     </p>
@@ -608,7 +608,7 @@ export function EnergyDetailDialog({ sujet, onClose }: Props) {
                       <div className="flex gap-1">
                         {axes.map(a => (
                           <button key={a.key} onClick={() => setAxe(a.key)}
-                            className={`px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                            className={`px-2 py-0.5 rounded text-[0.625rem] border transition-colors ${
                               axeActif === a.key
                                 ? 'bg-white/10 border-white/25 text-white'
                                 : 'border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
@@ -641,7 +641,7 @@ export function EnergyDetailDialog({ sujet, onClose }: Props) {
                     </div>
                   ))}
                   {(absents > 0 || muets > 0) && (
-                    <p className="text-slate-600 text-[10px] pt-1">
+                    <p className="text-slate-600 text-[0.625rem] pt-1">
                       {absents > 0 && `${absents} appareil${absents > 1 ? 's' : ''} sans aucune heure agrégée sur la période`}
                       {absents > 0 && muets > 0 && ' · '}
                       {muets > 0 && `${muets} sans relevé`}

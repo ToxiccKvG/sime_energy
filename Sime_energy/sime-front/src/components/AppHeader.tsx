@@ -1,4 +1,5 @@
-import { Search, Bell, LogOut } from "lucide-react";
+import { Search, Bell, LogOut, ALargeSmall } from "lucide-react";
+import { TEXT_SIZES, setTextSize, useTextSize, type TextSize } from "@/lib/display-preferences";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -9,6 +10,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -17,6 +21,7 @@ export function AppHeader() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const textSize = useTextSize();
 
   // Extraire les informations de l'utilisateur
   const userEmail = user?.email || "utilisateur@example.com";
@@ -74,6 +79,24 @@ export function AppHeader() {
       </div>
 
       <div className="flex items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="text-white hover:bg-white/10" title="Taille du texte">
+              <ALargeSmall className="h-5 w-5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52 border-white/10 bg-[#0b0d14]/95 text-white shadow-xl backdrop-blur">
+            <DropdownMenuLabel className="text-xs font-normal text-slate-400">Taille du texte (toute la plateforme)</DropdownMenuLabel>
+            <DropdownMenuRadioGroup value={textSize} onValueChange={(v) => setTextSize(v as TextSize)}>
+              {TEXT_SIZES.map((s) => (
+                <DropdownMenuRadioItem key={s.id} value={s.id} className="cursor-pointer hover:bg-white/10">
+                  {s.label} <span className="ml-auto text-xs text-slate-400">{Math.round(s.scale * 100)} %</span>
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         <Button variant="ghost" size="icon" className="relative text-white hover:bg-white/10">
           <Bell className="h-5 w-5" />
           <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-warning" />

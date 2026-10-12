@@ -41,6 +41,7 @@ import { detectStepMs } from '@/services/analysisModels/types';
 import { useToast } from '@/hooks/use-toast';
 import { PeriodFilter, dayRangeOf, filterByRange, singleDayOf, toDatetimeLocalValue, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
 import { ChartOptions } from '@/components/shared/ChartOptions';
+import { ChartZoom } from '@/components/shared/ChartZoom';
 import { PieOfPie, groupSmallParts, MAX_PARTS_CHOICES, type SliceLabelMode } from '@/components/shared/PieOfPie';
 import { formatQuantity, useUnitSettings } from '@/lib/unit-format';
 import { useChartPreferences, usePalette, seriesColor, chartTitle, heatColor, type Palette } from '@/lib/chart-preferences';
@@ -336,8 +337,10 @@ export function MeasurementCharts({
       </div>
 
       <Card className="p-4" ref={cardRef}>
+        {/* « Agrandir » : la vue courante seule, en plein écran sur fond blanc (remarque du manager, 12/10). */}
+        <ChartZoom title={displayTitle}>
         {/* En-tête repris dans l'image exportée */}
-        <p className="text-sm font-medium text-foreground mb-0.5">{displayTitle}</p>
+        <p className="text-sm font-medium text-foreground mb-0.5" data-zoom-hide>{displayTitle}</p>
         <p className="text-xs text-muted-foreground mb-2">
           {bounds && (
             <>{formatTick(dateRange?.start ?? toDatetimeLocalValue(bounds.min))} → {formatTick(dateRange?.end ?? toDatetimeLocalValue(bounds.max))}</>
@@ -365,6 +368,7 @@ export function MeasurementCharts({
             color={seriesColor(palette, 0)}
           />
         )}
+        </ChartZoom>
       </Card>
     </div>
   );
@@ -748,7 +752,7 @@ function DailyProfileView({ measurements, primary, unit, palette }: { measuremen
           <div className="flex">
             <div className="w-16 shrink-0" />
             {Array.from({ length: 24 }, (_, h) => (
-              <div key={h} className="flex-1 text-center text-[9px] text-muted-foreground min-w-[18px]">
+              <div key={h} className="flex-1 text-center text-[0.5625rem] text-muted-foreground min-w-[18px]">
                 {h % 3 === 0 ? `${h}h` : ''}
               </div>
             ))}

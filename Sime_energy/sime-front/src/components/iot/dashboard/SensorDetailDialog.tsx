@@ -127,7 +127,7 @@ export function SensorDetailDialog({ capteur, metriqueInitiale, onClose }: Props
 
   const Stat = ({ label, valeur }: { label: string; valeur: string }) => (
     <div className="rounded-lg bg-white/5 border border-white/10 p-2 text-center">
-      <p className="text-[10px] text-slate-400 uppercase tracking-wide">{label}</p>
+      <p className="text-[0.625rem] text-slate-400 uppercase tracking-wide">{label}</p>
       <p className="text-white text-sm font-semibold mt-0.5">{valeur}</p>
     </div>
   );
@@ -248,7 +248,7 @@ export function SensorDetailDialog({ capteur, metriqueInitiale, onClose }: Props
                   </AreaChart>
                 </ResponsiveContainer>
               )}
-              <p className="text-slate-600 text-[10px] text-center mt-1">Moyennes horaires · 24 dernières heures</p>
+              <p className="text-slate-600 text-[0.625rem] text-center mt-1">Moyennes horaires · 24 dernières heures</p>
             </div>
           </>
         )}
@@ -272,7 +272,7 @@ export function SensorDetailDialog({ capteur, metriqueInitiale, onClose }: Props
               <Cpu className="h-3.5 w-3.5" /> {capteur.firmware_version}
             </span>
           )}
-          <span className="text-slate-600 ml-auto font-mono text-[10px]">{capteur.device_id}</span>
+          <span className="text-slate-600 ml-auto font-mono text-[0.625rem]">{capteur.device_id}</span>
         </div>
       </DialogContent>
     </Dialog>

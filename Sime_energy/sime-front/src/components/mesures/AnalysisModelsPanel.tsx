@@ -162,7 +162,7 @@ export function AnalysisModelsPanel({ data, title, dateRange, onDateRangeChange 
                 ${active ? 'border-blue-500/60 bg-blue-600/15' : reason ? 'border-white/5 bg-white/[0.02] opacity-50 cursor-not-allowed' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
               <p className={`text-sm font-medium ${active ? 'text-white' : 'text-slate-200'}`}>{m.label}</p>
               <p className="text-xs text-slate-400 mt-0.5">{m.question}</p>
-              {reason && <p className="text-[11px] text-slate-500 mt-1">{reason}</p>}
+              {reason && <p className="text-[0.6875rem] text-slate-500 mt-1">{reason}</p>}
             </button>
           );
         })}
@@ -239,7 +239,7 @@ function ProfilTypeView({ ctx }: { ctx: SeriesContext }) {
               ))}
             </div>
           </div>
-          <p className="text-[11px] text-slate-500 mb-2">
+          <p className="text-[0.6875rem] text-slate-500 mb-2">
             {DAY_CLASS_LABEL[dayClass]} · {profile.days} jour(s){typical ? ` · jour le plus représentatif : ${fmtDay(typical.day)}` : ''} · valeurs horaires en {res.hourlyUnit} · courbes : <Term k="mediane">médiane</Term> et <Term k="p10p90">enveloppe P10–P90</Term>
           </p>
           <ResponsiveContainer width="100%" height={280}>
@@ -262,7 +262,7 @@ function ProfilTypeView({ ctx }: { ctx: SeriesContext }) {
 
       <Card className="p-4 bg-white/5 border-white/10">
         <p className="text-sm font-medium text-slate-200 mb-1">Jours atypiques</p>
-        <p className="text-[11px] text-slate-500 mb-3">Jours qui s'écartent de plus de 20 % de la <Term k="mediane">médiane</Term> journalière de leur <Term k="classeJour">classe de jour</Term> — à recouper avec ce qui s'est passé sur site.</p>
+        <p className="text-[0.6875rem] text-slate-500 mb-3">Jours qui s'écartent de plus de 20 % de la <Term k="mediane">médiane</Term> journalière de leur <Term k="classeJour">classe de jour</Term> — à recouper avec ce qui s'est passé sur site.</p>
         {res.atypical.length === 0 ? (
           <p className="text-sm text-slate-400 flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Aucun jour ne sort du lot.</p>
         ) : (
@@ -328,7 +328,7 @@ function TalonView({ ctx }: { ctx: SeriesContext }) {
 
       <Card className="p-4 bg-white/5 border-white/10">
         <p className="text-sm font-medium text-slate-200 mb-1">Talon et pointe de chaque jour</p>
-        <p className="text-[11px] text-slate-500 mb-2">Barres : pointe horaire · trait rouge : <Term k="talon">talon</Term> du jour · ligne pointillée : talon retenu ({res.hourlyUnit})</p>
+        <p className="text-[0.6875rem] text-slate-500 mb-2">Barres : pointe horaire · trait rouge : <Term k="talon">talon</Term> du jour · ligne pointillée : talon retenu ({res.hourlyUnit})</p>
         <ResponsiveContainer width="100%" height={260}>
           <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -343,7 +343,7 @@ function TalonView({ ctx }: { ctx: SeriesContext }) {
             <ReferenceLine y={res.talon} stroke={COLOR_TALON} strokeDasharray="4 3" />
           </ComposedChart>
         </ResponsiveContainer>
-        <p className="text-[11px] text-slate-500 mt-1">
+        <p className="text-[0.6875rem] text-slate-500 mt-1">
           Couleur des barres : <span style={{ color: CLASS_COLOR.ouvre }}>ouvré</span> · <span style={{ color: CLASS_COLOR.weekend }}>week-end</span> · <span style={{ color: CLASS_COLOR.ferie }}>férié</span>
           {res.days.some((d) => d.fromP5) && ' · jours sans mesure de nuit : talon = P5 des points du jour'}
         </p>
@@ -403,7 +403,7 @@ function AnomaliesView({ ctx }: { ctx: SeriesContext }) {
                   <tr key={i} className="border-b border-white/5 align-top">
                     <td className="py-2 pr-3 text-slate-200 whitespace-nowrap tabular-nums">{fmtDateTime(e.start)}</td>
                     <td className="py-2 px-3 text-slate-300 whitespace-nowrap">{ANOMALY_LABEL[e.kind]}</td>
-                    <td className="py-2 px-3"><span className={`inline-block text-[11px] px-1.5 py-0.5 rounded border ${SEVERITY_STYLE[e.severity]}`}>{SEVERITY_LABEL[e.severity]}</span></td>
+                    <td className="py-2 px-3"><span className={`inline-block text-[0.6875rem] px-1.5 py-0.5 rounded border ${SEVERITY_STYLE[e.severity]}`}>{SEVERITY_LABEL[e.severity]}</span></td>
                     <td className="py-2 pl-3 text-slate-400">{e.description}</td>
                   </tr>
                 ))}
@@ -498,12 +498,12 @@ function AvantApresView({ ctx, bounds }: { ctx: SeriesContext; bounds: { min: nu
             ))}
           </tbody>
         </table>
-        <p className="text-[11px] text-slate-500 mt-2">« ? » : écart du même ordre que la variabilité d'un jour à l'autre.</p>
+        <p className="text-[0.6875rem] text-slate-500 mt-2">« ? » : écart du même ordre que la variabilité d'un jour à l'autre.</p>
       </Card>
 
       <Card className="p-4 bg-white/5 border-white/10">
         <p className="text-sm font-medium text-slate-200 mb-1">Valeur de chaque jour</p>
-        <p className="text-[11px] text-slate-500 mb-2">{res.dailyUnit} par jour · <span style={{ color: COLOR_BEFORE }}>avant</span> / <span style={{ color: COLOR_AFTER }}>après</span> · lignes pointillées : moyennes de chaque côté</p>
+        <p className="text-[0.6875rem] text-slate-500 mb-2">{res.dailyUnit} par jour · <span style={{ color: COLOR_BEFORE }}>avant</span> / <span style={{ color: COLOR_AFTER }}>après</span> · lignes pointillées : moyennes de chaque côté</p>
         <ResponsiveContainer width="100%" height={240}>
           <ComposedChart data={dailyData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -517,13 +517,13 @@ function AvantApresView({ ctx, bounds }: { ctx: SeriesContext; bounds: { min: nu
             {res.after && <ReferenceLine y={res.after.dailyMean} stroke={COLOR_AFTER} strokeDasharray="4 3" />}
           </ComposedChart>
         </ResponsiveContainer>
-        <p className="text-[11px] text-slate-500 mt-1">Barres pleines : jours ouvrés · barres claires : week-ends et fériés.</p>
+        <p className="text-[0.6875rem] text-slate-500 mt-1">Barres pleines : jours ouvrés · barres claires : week-ends et fériés.</p>
       </Card>
 
       {res.subDaily && profileData.length > 0 && (
         <Card className="p-4 bg-white/5 border-white/10">
           <p className="text-sm font-medium text-slate-200 mb-1">Journée type avant / après</p>
-          <p className="text-[11px] text-slate-500 mb-2">
+          <p className="text-[0.6875rem] text-slate-500 mb-2">
             Médiane horaire ({res.hourlyUnit}) sur {res.profileClass === 'ouvre' ? 'les jours ouvrés' : 'tous les jours'} — montre à quelles heures l'action a joué.
           </p>
           <ResponsiveContainer width="100%" height={240}>

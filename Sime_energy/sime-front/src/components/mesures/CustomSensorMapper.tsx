@@ -507,7 +507,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
                   className="bg-white/5 border-white/20 text-white text-sm flex-1"
                 />
                 {fileData && ec.col && !isNumericColumn(fileData.sample, ec.col) && (
-                  <span className="text-[10px] uppercase tracking-wide text-slate-500 border border-white/10 rounded px-1.5 py-0.5 shrink-0" title="Colonne texte : tableau et export seulement">texte</span>
+                  <span className="text-[0.625rem] uppercase tracking-wide text-slate-500 border border-white/10 rounded px-1.5 py-0.5 shrink-0" title="Colonne texte : tableau et export seulement">texte</span>
                 )}
                 <button className="text-slate-500 hover:text-red-400 shrink-0"
                   onClick={() => setExtraCols((p) => p.filter((_, j) => j !== i))}>

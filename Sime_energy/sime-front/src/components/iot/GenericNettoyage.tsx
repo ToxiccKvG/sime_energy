@@ -533,7 +533,7 @@ export function GenericNettoyage({
                       <div className="flex items-center gap-2 mb-1">
                         <Eraser className="h-4 w-4 text-amber-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -561,7 +561,7 @@ export function GenericNettoyage({
                       <div className="flex items-center gap-2 mb-1">
                         <Trash2 className="h-4 w-4 text-amber-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                     </div>
                     <button onClick={() => ignoreIssue('duplicates_exact')} className="text-slate-600 hover:text-slate-400 shrink-0"><X className="h-4 w-4" /></button>
@@ -587,7 +587,7 @@ export function GenericNettoyage({
                       <div className="flex items-center gap-2 mb-1">
                         <Trash2 className="h-4 w-4 text-amber-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       <p className="text-slate-500 text-xs ml-6">Choisir une colonne “Clé” en haut pour activer ce contrôle.</p>
                     </div>
@@ -616,7 +616,7 @@ export function GenericNettoyage({
                       <div className="flex items-center gap-2 mb-1">
                         <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-red-500/20 text-red-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-red-500/20 text-red-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                     </div>
                     <button onClick={() => ignoreIssue('negatives')} className="text-slate-600 hover:text-slate-400 shrink-0"><X className="h-4 w-4" /></button>
@@ -640,7 +640,7 @@ export function GenericNettoyage({
                       <div className="flex items-center gap-2 mb-1">
                         <Wand2 className="h-4 w-4 text-orange-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-orange-500/20 text-orange-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-orange-500/20 text-orange-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                     </div>
                     <button onClick={() => ignoreIssue('outliers')} className="text-slate-600 hover:text-slate-400 shrink-0"><X className="h-4 w-4" /></button>
@@ -698,7 +698,7 @@ export function GenericNettoyage({
         <Button size="sm" variant="ghost" className="h-8 text-slate-400 hover:text-white hover:bg-white/10"
           disabled={undoStack.length === 0} onClick={doUndo}>
           <RotateCcw className="h-3.5 w-3.5 mr-1" /> Annuler
-          {undoStack.length > 0 && <Badge className="ml-1 h-4 text-[10px] bg-white/10 border-0 px-1">{undoStack.length}</Badge>}
+          {undoStack.length > 0 && <Badge className="ml-1 h-4 text-[0.625rem] bg-white/10 border-0 px-1">{undoStack.length}</Badge>}
         </Button>
       </div>
 
@@ -766,7 +766,7 @@ export function GenericNettoyage({
               <select value={trCol} onChange={e => setTrCol(e.target.value)} className="h-8 bg-white/5 border border-white/20 text-white text-sm rounded-md px-2 min-w-[180px]">
                 {columns.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-              <p className="text-slate-600 text-[11px] mt-1">Type détecté: {trColType}</p>
+              <p className="text-slate-600 text-[0.6875rem] mt-1">Type détecté: {trColType}</p>
             </div>
             <div>
               <Label className="text-slate-400 text-xs mb-1 block">Opération</Label>
@@ -796,7 +796,7 @@ export function GenericNettoyage({
                   <th key={col} className="group px-3 py-2 text-left border-b border-r border-white/10 bg-white/5 whitespace-nowrap">
                     <div className="flex items-center gap-1">
                       <span className="text-slate-300 font-medium">{col}</span>
-                      <span className="text-slate-600 ml-1 text-[10px]">{colTypes[col]}</span>
+                      <span className="text-slate-600 ml-1 text-[0.625rem]">{colTypes[col]}</span>
                       <button
                         onClick={() => setSelectedCols(prev => {
                           const base = prev.size === 0 ? new Set(Array.from(defaultVisibleCols)) : new Set(prev);
@@ -818,7 +818,7 @@ export function GenericNettoyage({
                 const idx = safePage * PAGE_SIZE + i;
                 return (
                   <tr key={idx} className={`border-t border-white/5 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'} hover:bg-white/5`}>
-                    <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 font-mono text-[10px] select-none">{idx + 1}</td>
+                    <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 font-mono text-[0.625rem] select-none">{idx + 1}</td>
                     {columns.filter(c => visibleCols.has(c)).map(col => {
                       const v = row[col];
                       const isOutlier = highlightOutliers && colTypes[col] === 'num' && (() => {

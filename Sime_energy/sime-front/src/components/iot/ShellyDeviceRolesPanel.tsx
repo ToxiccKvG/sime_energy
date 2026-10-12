@@ -287,7 +287,7 @@ export function ShellyDeviceRolesPanel() {
                             <TableRow key={a.device_id} className="border-white/5 hover:bg-white/5">
                               <TableCell className="text-white text-xs min-w-40">
                                 {a.name}
-                                {a.room && <span className="text-slate-500 block text-[10px]">{a.room}</span>}
+                                {a.room && <span className="text-slate-500 block text-[0.625rem]">{a.room}</span>}
                               </TableCell>
                               <TableCell className="text-slate-500 text-xs">
                                 {DEVICE_FAMILIES.find(f => f.value === a.device_family)?.label ?? a.device_family}
@@ -361,7 +361,7 @@ export function ShellyDeviceRolesPanel() {
                             className="data-[state=checked]:bg-amber-500 scale-75"
                           />
                           {r.sens_inverse && (
-                            <Label htmlFor={`inv-${r.device_id}`} className="text-amber-400 text-[10px]">inversé</Label>
+                            <Label htmlFor={`inv-${r.device_id}`} className="text-amber-400 text-[0.625rem]">inversé</Label>
                           )}
                         </div>
                       </TableCell>

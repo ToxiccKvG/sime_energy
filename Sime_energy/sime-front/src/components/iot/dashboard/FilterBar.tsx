@@ -116,7 +116,7 @@ function MultiPopover<T extends string>({
                 />
                 {it.color && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: it.color }} />}
                 <span className="text-white text-xs flex-1 truncate">{it.label}</span>
-                {it.sub && <span className="text-slate-500 text-[10px] truncate max-w-[120px]">{it.sub}</span>}
+                {it.sub && <span className="text-slate-500 text-[0.625rem] truncate max-w-[120px]">{it.sub}</span>}
               </label>
             ))
           )}

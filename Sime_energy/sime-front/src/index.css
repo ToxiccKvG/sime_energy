@@ -176,3 +176,35 @@ All colors MUST be HSL.
 .iot-pinned { position: sticky; z-index: 5; background-color: #12141f; }
 thead .iot-pinned { z-index: 15; background-color: #1c1e29; }
 .iot-pinned-last { box-shadow: 1px 0 0 rgba(255, 255, 255, 0.08); }
+
+/* Taille du texte (src/lib/display-preferences.ts) : le texte HTML suit la taille de base en rem ;
+   le texte SVG des graphiques et les infobulles en px, non. Agrandis ici, seulement hors « Normal ». */
+html[data-text-size]:not([data-text-size="normal"]) .recharts-cartesian-axis-tick-value,
+html[data-text-size]:not([data-text-size="normal"]) .recharts-cartesian-axis .recharts-label {
+  font-size: calc(11px * var(--ui-scale));
+}
+html[data-text-size]:not([data-text-size="normal"]) .recharts-tooltip-wrapper *,
+html[data-text-size]:not([data-text-size="normal"]) .recharts-legend-wrapper * {
+  font-size: calc(12px * var(--ui-scale)) !important;
+}
+
+/* Vue agrandie d'un graphique (src/components/shared/ChartZoom.tsx) : fond blanc, axes et textes foncés.
+   Les graphiques sont écrits pour le thème sombre (couleurs en dur) ; on les remet en clair ici, d'un coup. */
+.chart-zoom {
+  --background: 0 0% 100%;
+  --foreground: 215 28% 17%;
+  --muted-foreground: 215 16% 40%;
+  --muted: 210 40% 96%;
+  --border: 214 32% 91%;
+}
+/* Hauteur de l'écran moins l'en-tête de la vue et les réglages éventuels au-dessus du graphique. */
+.chart-zoom-body .recharts-responsive-container { height: max(400px, calc(100vh - 14rem)) !important; }
+.chart-zoom .recharts-cartesian-grid line { stroke: #e2e8f0; }
+.chart-zoom .recharts-cartesian-axis-line,
+.chart-zoom .recharts-cartesian-axis-tick-line { stroke: #94a3b8; }
+.chart-zoom .recharts-cartesian-axis-tick-value,
+.chart-zoom .recharts-cartesian-axis .recharts-label { fill: #334155; font-size: calc(13px * var(--ui-scale, 1)); }
+.chart-zoom .recharts-legend-wrapper * { font-size: calc(13px * var(--ui-scale, 1)) !important; }
+.chart-zoom .recharts-brush > rect:first-child { fill: #f8fafc; }
+/* Déjà affiché dans l'en-tête de la vue agrandie (titre du graphique). */
+.chart-zoom [data-zoom-hide] { display: none; }

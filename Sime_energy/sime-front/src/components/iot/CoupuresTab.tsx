@@ -18,6 +18,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { PieOfPie, groupSmallParts } from '@/components/shared/PieOfPie';
+import { ChartZoom } from '@/components/shared/ChartZoom';
 import { usePalette, seriesColor } from '@/lib/chart-preferences';
 import {
   fetchCauses, fetchCoupures, confirmCoupure, ORIGIN_LABELS,
@@ -178,15 +179,15 @@ export function CoupuresTab() {
               </div>
             </div>
             {pieData.total > 0 ? (
-              <>
+              <ChartZoom title={`Répartition des coupures confirmées par cause — ${{ end: 'énergie non distribuée', duree: 'durée', nb: 'nombre' }[metric]}`}>
                 <PieOfPie shown={pieData.shown} others={pieData.others} total={pieData.total} format={fmtMetric} labelMode="both" />
-                <p className="text-xs text-center text-slate-300">Total : <span className="font-semibold">{fmtMetric(pieData.total)}</span> (= 100 %)</p>
-              </>
+                <p className="text-xs text-center text-muted-foreground">Total : <span className="font-semibold">{fmtMetric(pieData.total)}</span> (= 100 %)</p>
+              </ChartZoom>
             ) : (
               <p className="text-sm text-slate-400 py-8 text-center">Aucune cause confirmée pour l'instant : confirmez les coupures dans le tableau ci-dessous.</p>
             )}
             {toConfirm > 0 && pieData.total > 0 && (
-              <p className="text-[11px] text-amber-300/80 text-center mt-1">{toConfirm} coupure(s) non confirmée(s) ne figurent pas dans ce camembert.</p>
+              <p className="text-[0.6875rem] text-amber-300/80 text-center mt-1">{toConfirm} coupure(s) non confirmée(s) ne figurent pas dans ce camembert.</p>
             )}
           </Card>
 
@@ -194,15 +195,13 @@ export function CoupuresTab() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Site</TableHead>
-                  <TableHead>Début (UTC)</TableHead>
-                  <TableHead>Fin (UTC)</TableHead>
-                  <TableHead className="text-right"><Term k="end">END</Term></TableHead>
-                  <TableHead className="text-right">Durée</TableHead>
-                  <TableHead>Cause (déclencheur)</TableHead>
-                  <TableHead>Cause aggravante</TableHead>
-                  <TableHead>Commentaire</TableHead>
-                  <TableHead />
+                  <TableHead className="whitespace-nowrap">Site</TableHead>
+                  <TableHead className="whitespace-nowrap">Début (UTC)</TableHead>
+                  <TableHead className="whitespace-nowrap">Fin (UTC)</TableHead>
+                  <TableHead className="text-right whitespace-nowrap"><Term k="end">END</Term></TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Durée</TableHead>
+                  <TableHead className="whitespace-nowrap">Cause (déclencheur)</TableHead>
+                  <TableHead className="whitespace-nowrap">Précisions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -211,34 +210,32 @@ export function CoupuresTab() {
                   const proposed = c.statut_cause === 'proposee';
                   return (
                     <TableRow key={c.id}>
-                      <TableCell>{c.site}</TableCell>
+                      <TableCell className="whitespace-nowrap">{c.site}</TableCell>
                       <TableCell className="whitespace-nowrap">{fmtDate(c.debut_at)}</TableCell>
                       <TableCell className="whitespace-nowrap">{fmtDate(c.fin_at)}</TableCell>
                       <TableCell className="text-right whitespace-nowrap">{c.end_kwh === null ? '—' : `${nfr(c.end_kwh, 2)} kWh`}</TableCell>
                       <TableCell className="text-right whitespace-nowrap">{fmtDuree(c.duree_min)}</TableCell>
-                      <TableCell className="min-w-[230px]">
+                      <TableCell className="min-w-[13rem]">
                         <CauseSelect causes={causes} value={d.cause} onChange={(v) => setDraft(c, { cause: v })} />
-                        {proposed && c.cause_indice && <p className="text-[11px] text-slate-400 mt-1">Proposition : {c.cause_indice}</p>}
+                        {proposed && c.cause_indice && <p className="text-[0.6875rem] text-slate-400 mt-1">Proposition : {c.cause_indice}</p>}
                       </TableCell>
-                      <TableCell className="min-w-[210px]">
-                        <CauseSelect causes={causes} value={d.aggravante ?? NONE} allowNone onChange={(v) => setDraft(c, { aggravante: v === NONE ? null : v })} />
-                      </TableCell>
-                      <TableCell className="min-w-[180px]">
+                      {/* Cause aggravante, commentaire et validation dans une seule colonne :
+                          le tableau tient à l'écran même en grande taille de texte. */}
+                      <TableCell className="min-w-[11rem] space-y-1.5">
+                        <CauseSelect causes={causes} value={d.aggravante ?? NONE} allowNone noneLabel="Aucune cause aggravante" onChange={(v) => setDraft(c, { aggravante: v === NONE ? null : v })} />
                         <input
                           value={d.commentaire}
                           onChange={(e) => setDraft(c, { commentaire: e.target.value })}
                           placeholder="Commentaire…"
                           className="h-8 w-full px-2 rounded-md bg-white/5 border border-white/10 text-xs text-slate-200"
                         />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
                         {proposed ? (
-                          <Button size="sm" className="h-8" disabled={saving === c.id} onClick={() => void confirm(c)}>
+                          <Button size="sm" className="h-8 w-full" disabled={saving === c.id} onClick={() => void confirm(c)}>
                             {saving === c.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5 mr-1" />}
                             Confirmer
                           </Button>
                         ) : isDirty(c) ? (
-                          <Button size="sm" variant="outline" className="h-8" disabled={saving === c.id} onClick={() => void confirm(c)}>Enregistrer</Button>
+                          <Button size="sm" variant="outline" className="h-8 w-full" disabled={saving === c.id} onClick={() => void confirm(c)}>Enregistrer</Button>
                         ) : (
                           <Badge className="bg-emerald-600/30 text-emerald-300 border-0">Confirmée</Badge>
                         )}
@@ -266,17 +263,18 @@ function Stat({ label, value, hint, term }: { label: string; value: string; hint
   );
 }
 
-function CauseSelect({ causes, value, onChange, allowNone = false }: {
-  causes: CoupureCause[]; value: string; onChange: (v: string) => void; allowNone?: boolean;
+function CauseSelect({ causes, value, onChange, allowNone = false, noneLabel = '— aucune —' }: {
+  causes: CoupureCause[]; value: string; onChange: (v: string) => void; allowNone?: boolean; noneLabel?: string;
 }) {
   const groups = (['externe', 'interne', 'a_qualifier', 'non_retenue'] as const)
     .map((o) => ({ o, items: causes.filter((c) => c.origine === o) }))
     .filter((g) => g.items.length > 0);
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-8 bg-white/5 border-white/10 text-xs text-slate-200"><SelectValue /></SelectTrigger>
+      {/* Libellé sur plusieurs lignes plutôt que tronqué (« À qualifier · Caus… ») */}
+      <SelectTrigger className="h-auto min-h-8 py-1.5 text-left bg-white/5 border-white/10 text-xs text-slate-200 [&>span]:line-clamp-none"><SelectValue /></SelectTrigger>
       <SelectContent>
-        {allowNone && <SelectItem value={NONE}>— aucune —</SelectItem>}
+        {allowNone && <SelectItem value={NONE}>{noneLabel}</SelectItem>}
         {groups.map((g) => g.items.map((c) => (
           <SelectItem key={c.code} value={c.code}>{ORIGIN_LABELS[g.o]} · {c.libelle}</SelectItem>
         )))}

@@ -425,7 +425,7 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
                   {meta?.label ?? k}
                 </div>
                 <p className="text-lg font-semibold mt-1 leading-tight">{value}</p>
-                {quand && <p className="text-muted-foreground text-[10px] mt-0.5 leading-tight truncate" title={quand}>{quand}</p>}
+                {quand && <p className="text-muted-foreground text-[0.625rem] mt-0.5 leading-tight truncate" title={quand}>{quand}</p>}
               </div>
             );
           })}

@@ -755,7 +755,7 @@ function PollStatusLine({ account }: { account: ShellyAccount }) {
           <span>Relevé en erreur · {elapsedLabel}</span>
         </div>
         {account.last_error_msg && (
-          <p className="text-red-500 text-[10px] pl-5 leading-tight truncate" title={account.last_error_msg}>
+          <p className="text-red-500 text-[0.625rem] pl-5 leading-tight truncate" title={account.last_error_msg}>
             {account.last_error_msg.slice(0, 80)}
           </p>
         )}

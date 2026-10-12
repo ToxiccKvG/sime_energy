@@ -130,10 +130,10 @@ function FichierCard({
             </div>
           )}
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <Badge className={`text-[10px] border-0 px-1.5 py-0 ${TYPE_COLORS[file.type] ?? TYPE_COLORS.autre}`}>
+            <Badge className={`text-[0.625rem] border-0 px-1.5 py-0 ${TYPE_COLORS[file.type] ?? TYPE_COLORS.autre}`}>
               {file.type}
             </Badge>
-            <Badge className={`text-[10px] border-0 px-1.5 py-0 ${STATUT_COLORS[statut]}`}>
+            <Badge className={`text-[0.625rem] border-0 px-1.5 py-0 ${STATUT_COLORS[statut]}`}>
               {statut === 'original' && <AlertCircle className="h-2.5 w-2.5 mr-0.5 inline" />}
               {statut !== 'original' && <CheckCircle2 className="h-2.5 w-2.5 mr-0.5 inline" />}
               {statut}
@@ -162,12 +162,12 @@ function FichierCard({
       {file.columns.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {file.columns.slice(0, 6).map(col => (
-            <span key={col} className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500 font-mono">
+            <span key={col} className="text-[0.625rem] px-1.5 py-0.5 rounded bg-white/5 text-slate-500 font-mono">
               {col}
             </span>
           ))}
           {file.columns.length > 6 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-600">
+            <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-white/5 text-slate-600">
               +{file.columns.length - 6}
             </span>
           )}

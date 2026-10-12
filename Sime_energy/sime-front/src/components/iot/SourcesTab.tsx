@@ -251,8 +251,8 @@ export function SourcesTab() {
               <Building2 className="h-4 w-4 text-blue-400" />
               <span className="text-white font-medium">{s.site}</span>
               <span className="text-slate-500 text-xs">{s.total} appareil{s.total > 1 ? 's' : ''}</span>
-              {s.proposed > 0 && <Badge className="bg-amber-500/15 text-amber-300 border-0 text-[11px]">{s.proposed} à confirmer</Badge>}
-              {s.unclassified > 0 && <Badge className="bg-white/10 text-slate-400 border-0 text-[11px]">{s.unclassified} non classé{s.unclassified > 1 ? 's' : ''}</Badge>}
+              {s.proposed > 0 && <Badge className="bg-amber-500/15 text-amber-300 border-0 text-[0.6875rem]">{s.proposed} à confirmer</Badge>}
+              {s.unclassified > 0 && <Badge className="bg-white/10 text-slate-400 border-0 text-[0.6875rem]">{s.unclassified} non classé{s.unclassified > 1 ? 's' : ''}</Badge>}
             </div>
             {isOpen(s.site) ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
           </button>
@@ -270,7 +270,7 @@ export function SourcesTab() {
                     <div className="flex-1 min-w-[14rem]">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-white text-sm font-medium">{g.meta.label}</span>
-                        {g.meta.bilan && <span className="text-[10px] uppercase tracking-wide text-slate-500">{g.meta.short}</span>}
+                        {g.meta.bilan && <span className="text-[0.625rem] uppercase tracking-wide text-slate-500">{g.meta.short}</span>}
                         <span className="text-slate-500 text-xs">
                           {g.devices.length} appareil{g.devices.length > 1 ? 's' : ''}
                           {g.proposed.length > 0 && <> · <span className="text-amber-400">{g.proposed.length} à confirmer</span></>}
@@ -347,7 +347,7 @@ export function SourcesTab() {
                       <span className="w-6 h-6 rounded bg-blue-500/15 text-blue-300 text-xs font-bold flex items-center justify-center shrink-0">{s.code}</span>
                       <div className="min-w-0">
                         <p className="text-slate-300 truncate">{s.label}</p>
-                        <p className="text-slate-600 text-[10px]">{s.roles}</p>
+                        <p className="text-slate-600 text-[0.625rem]">{s.roles}</p>
                       </div>
                     </div>
                   </SchemaPreview>

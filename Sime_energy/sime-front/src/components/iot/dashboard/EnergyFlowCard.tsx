@@ -66,8 +66,8 @@ function NodeVide({ icon: Icon, name, sub, motif, onClick }: {
       </div>
       <p className="text-slate-400 text-xs font-semibold">{name}</p>
       <p className="text-xl font-bold mt-1 text-slate-600">—</p>
-      <p className="text-amber-500/80 text-[10px] mt-0.5">{motif}</p>
-      {sub && <p className="text-slate-600 text-[10px]">{sub}</p>}
+      <p className="text-amber-500/80 text-[0.625rem] mt-0.5">{motif}</p>
+      {sub && <p className="text-slate-600 text-[0.625rem]">{sub}</p>}
     </div>
   );
 }
@@ -90,12 +90,12 @@ function NodeLive({ icon: Icon, color, name, power, energy, sub, onClick }: {
       </div>
       <p className="text-white text-xs font-semibold">{name}</p>
       <p className="text-xl font-bold mt-1" style={{ color }}>
-        {fmtFr(power, 2)} <span className="text-[10px] text-slate-400 font-normal">kW</span>
+        {fmtFr(power, 2)} <span className="text-[0.625rem] text-slate-400 font-normal">kW</span>
       </p>
       {typeof energy === 'number' && energy > 0 && (
-        <p className="text-slate-500 text-[10px] mt-0.5">{fmtFr(energy, 0)} kWh cumulés</p>
+        <p className="text-slate-500 text-[0.625rem] mt-0.5">{fmtFr(energy, 0)} kWh cumulés</p>
       )}
-      {sub && <p className="text-slate-500 text-[10px]">{sub}</p>}
+      {sub && <p className="text-slate-500 text-[0.625rem]">{sub}</p>}
     </div>
   );
 }
@@ -117,9 +117,9 @@ function NodeHist({ icon: Icon, color, name, kwh, sub, onClick }: {
       </div>
       <p className="text-white text-xs font-semibold">{name}</p>
       <p className="text-xl font-bold mt-1" style={{ color }}>
-        {fmtFr(kwh, kwh >= 100 ? 1 : 2)} <span className="text-[10px] text-slate-400 font-normal">kWh</span>
+        {fmtFr(kwh, kwh >= 100 ? 1 : 2)} <span className="text-[0.625rem] text-slate-400 font-normal">kWh</span>
       </p>
-      {sub && <p className="text-slate-500 text-[10px] mt-0.5">{sub}</p>}
+      {sub && <p className="text-slate-500 text-[0.625rem] mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -131,7 +131,7 @@ function Arrow({ value, unit = 'kW', color = '#64748b', dim = false }: {
   return (
     <div className={`flex flex-col items-center justify-center ${dim || inconnu ? 'opacity-30' : ''}`}>
       <ArrowRight className="h-5 w-5" style={{ color }} />
-      <p className="text-[10px] font-semibold mt-0.5" style={{ color }}>
+      <p className="text-[0.625rem] font-semibold mt-0.5" style={{ color }}>
         {inconnu ? '—' : `${fmtFr(value, value >= 100 ? 1 : 2)} ${unit}`}
       </p>
     </div>
@@ -156,9 +156,9 @@ function AutoConsoBloc({ pct, valeur, unite, manquants, onClick }: {
   if (pct == null) {
     return (
       <div {...clic} className={`rounded-xl border border-dashed border-slate-600/50 bg-slate-500/5 p-3 text-center ${clic.className}`}>
-        <p className="text-slate-400 text-[10px] uppercase tracking-wide">Autoconsommation</p>
+        <p className="text-slate-400 text-[0.625rem] uppercase tracking-wide">Autoconsommation</p>
         <p className="text-2xl font-bold text-slate-600 mt-1">—</p>
-        <p className="text-amber-500/80 text-[10px] mt-0.5">
+        <p className="text-amber-500/80 text-[0.625rem] mt-0.5">
           incalculable · {manquants || 'compteur'} sans données
         </p>
       </div>
@@ -166,9 +166,9 @@ function AutoConsoBloc({ pct, valeur, unite, manquants, onClick }: {
   }
   return (
     <div {...clic} className={`rounded-xl border p-3 text-center bg-green-500/5 border-green-500/30 ${clic.className}`}>
-      <p className="text-green-400 text-[10px] uppercase tracking-wide">Autoconsommation</p>
+      <p className="text-green-400 text-[0.625rem] uppercase tracking-wide">Autoconsommation</p>
       <p className="text-2xl font-bold text-green-400 mt-1">{fmtFr(pct, 0)}%</p>
-      <p className="text-slate-500 text-[10px] mt-0.5">
+      <p className="text-slate-500 text-[0.625rem] mt-0.5">
         {fmtFr(valeur ?? 0, 2)} {unite} utilisés sur place
       </p>
     </div>
@@ -362,7 +362,7 @@ function SiteFlow({ site, snapshot, energyAgg, isHistoric, roles, allDevices, pl
         </h3>
         <div className="flex items-center gap-2">
           {aConfirmer > 0 && (
-            <span className="text-amber-400/90 text-[11px] flex items-center gap-1" title="Rattachements appareil → rôle proposés automatiquement, pas encore validés">
+            <span className="text-amber-400/90 text-[0.6875rem] flex items-center gap-1" title="Rattachements appareil → rôle proposés automatiquement, pas encore validés">
               <AlertTriangle className="h-3 w-3" />
               {aConfirmer} rattachement{aConfirmer > 1 ? 's' : ''} à confirmer
             </span>

@@ -1456,7 +1456,7 @@ export function NettoyageTab() {
                     <tbody>
                       {pageRows.map((row, ri) => (
                         <tr key={ri} className={`hover:bg-blue-500/5 ${ri % 2 === 0 ? '' : 'bg-white/[0.02]'}`}>
-                          <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none font-mono text-[10px]">{pg * FILE_PAGE_SIZE + ri + 1}</td>
+                          <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none font-mono text-[0.625rem]">{pg * FILE_PAGE_SIZE + ri + 1}</td>
                           {f.columns.map(col => {
                             const val = String(row[col] ?? '');
                             const ct  = detectColType(col, viewRows);
@@ -1750,7 +1750,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <Copy className="h-4 w-4 text-amber-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -1783,7 +1783,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <Copy className="h-4 w-4 text-amber-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -1811,7 +1811,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <Copy className="h-4 w-4 text-sky-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-sky-500/20 text-sky-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-sky-500/20 text-sky-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                       <p className="text-slate-500 text-xs ml-6 mt-0.5">Le cumul de pluie n'est jamais modifié : la première ligne de chaque séquence garde la vraie valeur.</p>
@@ -1844,7 +1844,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <Square className="h-4 w-4 text-slate-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-slate-500/20 text-slate-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-slate-500/20 text-slate-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -1885,7 +1885,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <TrendingDown className="h-4 w-4 text-orange-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-orange-500/20 text-orange-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-orange-500/20 text-orange-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -1917,7 +1917,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <ArrowDown className="h-4 w-4 text-red-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-red-500/20 text-red-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-red-500/20 text-red-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -1949,13 +1949,13 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <GitBranch className="h-4 w-4 text-yellow-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-yellow-500/20 text-yellow-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-yellow-500/20 text-yellow-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                       {showGapDates && iss.gapDates && (
                         <div className="mt-3 ml-6 flex flex-wrap gap-1.5">
                           {iss.gapDates.slice(0, 30).map((d, i) => (
-                            <Badge key={i} className="bg-yellow-500/10 text-yellow-300 border border-yellow-500/20 text-[10px]">
+                            <Badge key={i} className="bg-yellow-500/10 text-yellow-300 border border-yellow-500/20 text-[0.625rem]">
                               {d.toLocaleDateString('fr-FR')}
                             </Badge>
                           ))}
@@ -1988,7 +1988,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <AlertTriangle className="h-4 w-4 text-purple-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-purple-500/20 text-purple-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-purple-500/20 text-purple-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -2041,7 +2041,7 @@ export function NettoyageTab() {
           onClick={() => setShowFilters(v => !v)}>
           <Filter className="h-3.5 w-3.5 mr-1" /> Filtres
           {(filters.typeJour.length + (filters.dateFrom ? 1 : 0) + (filters.kwhMin || filters.kwhMax ? 1 : 0)) > 0 && (
-            <Badge className="ml-1 h-4 min-w-4 text-[10px] bg-white/20 border-0 px-1">
+            <Badge className="ml-1 h-4 min-w-4 text-[0.625rem] bg-white/20 border-0 px-1">
               {filters.typeJour.length + (filters.dateFrom ? 1 : 0) + (filters.kwhMin || filters.kwhMax ? 1 : 0)}
             </Badge>
           )}
@@ -2085,7 +2085,7 @@ export function NettoyageTab() {
           onClick={doUndo}
           title={`Annuler (${undoStack.length} action${undoStack.length > 1 ? 's' : ''})`}>
           <RotateCcw className="h-3.5 w-3.5 mr-1" /> Annuler
-          {undoStack.length > 0 && <Badge className="ml-1 h-4 text-[10px] bg-white/10 border-0 px-1">{undoStack.length}</Badge>}
+          {undoStack.length > 0 && <Badge className="ml-1 h-4 text-[0.625rem] bg-white/10 border-0 px-1">{undoStack.length}</Badge>}
         </Button>
 
         {/* Export ▾ */}
@@ -2377,7 +2377,7 @@ export function NettoyageTab() {
                     <td className="px-2 py-1 border-r border-white/5 text-center">
                       <input type="checkbox" checked={isSelected} onChange={() => doSelectRow(sortedIdx)} className="accent-blue-500 cursor-pointer" />
                     </td>
-                    <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 font-mono text-[10px] select-none">{sortedIdx + 1}</td>
+                    <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 font-mono text-[0.625rem] select-none">{sortedIdx + 1}</td>
                     {COLUMNS.filter(c => visibleCols.has(c.key as string)).map(col => {
                       const isEditing     = editCell?.filteredIdx === sortedIdx && editCell?.col === col.key;
                       const isOutlierCell = highlightOutliers && col.key === 'kwhNet' && row.kwhNet > outlierThreshold;
@@ -2423,9 +2423,9 @@ export function NettoyageTab() {
                           }}
                           title={col.editable ? 'Double-clic pour modifier' : undefined}>
                           {col.key === 'jourActivites' ? (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${row.jourActivites === 'Jour férié' ? 'bg-purple-500/20 text-purple-300' : row.jourActivites === 'Weekend' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-blue-500/15 text-blue-300'}`}>{displayVal}</span>
+                            <span className={`text-[0.625rem] px-1.5 py-0.5 rounded ${row.jourActivites === 'Jour férié' ? 'bg-purple-500/20 text-purple-300' : row.jourActivites === 'Weekend' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-blue-500/15 text-blue-300'}`}>{displayVal}</span>
                           ) : col.key === 'profil' ? (
-                            <Badge className={`border-0 text-[10px] py-0 ${row.profil === 'CHARGE' ? 'bg-blue-500/15 text-blue-300' : 'bg-orange-500/15 text-orange-300'}`}>{displayVal}</Badge>
+                            <Badge className={`border-0 text-[0.625rem] py-0 ${row.profil === 'CHARGE' ? 'bg-blue-500/15 text-blue-300' : 'bg-orange-500/15 text-orange-300'}`}>{displayVal}</Badge>
                           ) : displayVal}
                         </td>
                       );

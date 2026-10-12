@@ -5,6 +5,7 @@ import { ChartOptions } from '@/components/shared/ChartOptions';
 import { useChartPreferences, usePalette, seriesColor, heatColor, chartTitle, type Palette } from '@/lib/chart-preferences';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { ChartZoom } from '@/components/shared/ChartZoom';
 import {
   ScatterChart, Scatter, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -590,11 +591,11 @@ function EnvHeatmapView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetric
         <div className="inline-grid gap-px" style={{ gridTemplateColumns: `2.4rem repeat(${days.length}, minmax(1.4rem, 1fr))`, minWidth: '100%' }}>
           <div />
           {days.map((d, i) => (
-            <div key={i} className="text-[10px] text-slate-500 text-center pb-1 whitespace-nowrap">{d}</div>
+            <div key={i} className="text-[0.625rem] text-slate-500 text-center pb-1 whitespace-nowrap">{d}</div>
           ))}
           {Array.from({ length: 24 }, (_, h) => (
             <Fragment key={h}>
-              <div className="text-[10px] text-slate-500 pr-1.5 text-right leading-4">{String(h).padStart(2, '0')}h</div>
+              <div className="text-[0.625rem] text-slate-500 pr-1.5 text-right leading-4">{String(h).padStart(2, '0')}h</div>
               {grid.map((day, di) => (
                 <div key={di} className="h-4 rounded-[2px]"
                   style={{ backgroundColor: colorFor(day[h]) }}
@@ -1094,7 +1095,7 @@ function SupabaseExportPanel({
                       </button>
                     ))}
                   </div>
-                  <p className="text-slate-500 text-[11px] mt-1">
+                  <p className="text-slate-500 text-[0.6875rem] mt-1">
                     {granulariteAuto
                       ? (granularite === 'minute' ? 'Auto — relevés bruts des capteurs sélectionnés' : 'Auto — moyennes horaires, capteurs inclus')
                       : (granularite === 'horaire' ? 'Recommandé pour l’analyse' : 'Plus lourd, données brutes')}
@@ -1147,7 +1148,7 @@ function SupabaseExportPanel({
                     ))}
                   </select>
                   {roomOptions.length === 0 && (
-                    <p className="text-slate-600 text-[11px] mt-1">Aucune pièce renseignée pour ce filtre</p>
+                    <p className="text-slate-600 text-[0.6875rem] mt-1">Aucune pièce renseignée pour ce filtre</p>
                   )}
                 </div>
 
@@ -1390,7 +1391,7 @@ function SupabaseExportPanel({
                               ? <CheckSquare className="h-3 w-3 shrink-0" />
                               : <Square className="h-3 w-3 shrink-0" />}
                             {col.label}
-                            {col.unite && <span className="text-slate-600 text-[10px]">({col.unite})</span>}
+                            {col.unite && <span className="text-slate-600 text-[0.625rem]">({col.unite})</span>}
                           </button>
                         );
                       })}
@@ -1422,7 +1423,7 @@ function SupabaseExportPanel({
                                     ? <CheckSquare className="h-3 w-3 shrink-0" />
                                     : <Square className="h-3 w-3 shrink-0" />}
                                   {col.label}
-                                  {col.unite && <span className="text-slate-600 text-[10px]">({col.unite})</span>}
+                                  {col.unite && <span className="text-slate-600 text-[0.625rem]">({col.unite})</span>}
                                 </button>
                               );
                             })}
@@ -2485,7 +2486,7 @@ export function AnalyseTab() {
                                 <div className="flex items-center gap-2">
                                   <span className="text-white text-sm font-medium">{sol.title}</span>
                                   {issue && (
-                                    <Badge className="bg-white/10 text-slate-300 border-0 text-[10px]">
+                                    <Badge className="bg-white/10 text-slate-300 border-0 text-[0.625rem]">
                                       {issue.count}
                                     </Badge>
                                   )}
@@ -2773,7 +2774,7 @@ export function AnalyseTab() {
                     <div className="flex items-center gap-1 flex-wrap">
                       {METRIQUES.filter(m => serieMetrics.has(m.key)).slice(0, 5).map(m => (
                         <span key={m.key}
-                          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full"
+                          className="inline-flex items-center gap-1 text-[0.625rem] px-2 py-0.5 rounded-full"
                           style={{ backgroundColor: m.color + '25', color: m.color }}
                           title={`${m.label} (${m.unit})`}
                         >
@@ -2783,7 +2784,7 @@ export function AnalyseTab() {
                         </span>
                       ))}
                       {serieMetrics.size > 5 && (
-                        <span className="text-[10px] text-slate-500">+{serieMetrics.size - 5}</span>
+                        <span className="text-[0.625rem] text-slate-500">+{serieMetrics.size - 5}</span>
                       )}
                     </div>
 
@@ -2812,7 +2813,7 @@ export function AnalyseTab() {
                             if (groupMetrics.length === 0) return null;
                             return (
                               <div key={group}>
-                                <div className="text-[10px] text-slate-500 uppercase tracking-wide px-2 mb-1">{group}</div>
+                                <div className="text-[0.625rem] text-slate-500 uppercase tracking-wide px-2 mb-1">{group}</div>
                                 {groupMetrics.map(m => {
                                   const checked = serieMetrics.has(m.key);
                                   return (
@@ -2823,7 +2824,7 @@ export function AnalyseTab() {
                                       <Checkbox checked={checked} onCheckedChange={() => toggleSerieMetric(m.key)} />
                                       <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
                                       <span className="text-white text-xs flex-1 truncate">{m.label}</span>
-                                      <span className="text-slate-500 text-[10px]">{m.unit}</span>
+                                      <span className="text-slate-500 text-[0.625rem]">{m.unit}</span>
                                     </label>
                                   );
                                 })}
@@ -2910,6 +2911,8 @@ export function AnalyseTab() {
                       <h3 className="text-white font-semibold text-sm">Série temporelle</h3>
                       <span className="text-slate-500 text-xs">{serieMetrics.size} métrique{serieMetrics.size > 1 ? 's' : ''}</span>
                     </div>
+                    {/* « Agrandir » : la courbe seule, en plein écran sur fond blanc (remarque du manager, 12/10). */}
+                    <ChartZoom title={`Série temporelle — ${displayChartTitle}`} className="pt-7">
                     <ResponsiveContainer width="100%" height={520}>
                       <AreaChart data={serieData} margin={{ top: 10, right: 30, bottom: 35, left: 45 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -2937,6 +2940,7 @@ export function AnalyseTab() {
                         ))}
                       </AreaChart>
                     </ResponsiveContainer>
+                    </ChartZoom>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
                     {[
@@ -2950,7 +2954,7 @@ export function AnalyseTab() {
                       <div key={s.label} className="bg-white/5 rounded-xl border border-white/10 p-3 text-center">
                         <p className="text-slate-500 text-xs">{s.label}</p>
                         <p className={`${s.color} font-bold text-sm mt-1`}>{s.value}</p>
-                        {s.qui && <p className="text-slate-500 text-[10px] mt-0.5 leading-tight truncate" title={s.qui}>{s.qui}</p>}
+                        {s.qui && <p className="text-slate-500 text-[0.625rem] mt-0.5 leading-tight truncate" title={s.qui}>{s.qui}</p>}
                       </div>
                     ))}
                   </div>

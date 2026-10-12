@@ -204,7 +204,7 @@ export function DashboardTab() {
             <h2 className="text-white font-bold text-base flex items-center gap-2">
               {isHistoric ? 'Historique de consommation' : 'Dashboard temps réel'}
               {isHistoric && (
-                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[10px] px-1.5 py-0">
+                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[0.625rem] px-1.5 py-0">
                   Wh / kWh
                 </Badge>
               )}

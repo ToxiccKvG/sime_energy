@@ -200,7 +200,7 @@ export function ShellyDeviceChannelsPanel() {
                 <TableRow key={c.id} className="border-white/10">
                   <TableCell className="text-white text-sm">
                     {devices.find(d => d.device_id === c.parent_device_id)?.name ?? c.parent_device_id}
-                    <span className="block text-slate-600 font-mono text-[10px]">{c.parent_device_id}</span>
+                    <span className="block text-slate-600 font-mono text-[0.625rem]">{c.parent_device_id}</span>
                   </TableCell>
                   <TableCell className="text-slate-300 text-sm">{c.channel_number}</TableCell>
                   <TableCell className="text-slate-300 text-sm">{c.channel_name}</TableCell>

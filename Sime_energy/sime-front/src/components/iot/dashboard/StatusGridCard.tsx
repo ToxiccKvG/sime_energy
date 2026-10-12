@@ -127,8 +127,8 @@ export function StatusGridCard({ snapshot, allDevices, alertDeviceIds }: Props) 
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-xs font-medium truncate">{t.device.name}</p>
-                    <p className="text-slate-500 text-[10px] truncate">{t.device.room ?? t.device.site}</p>
-                    <p className={`text-[10px] font-medium ${s.text}`}>{t.detail}</p>
+                    <p className="text-slate-500 text-[0.625rem] truncate">{t.device.room ?? t.device.site}</p>
+                    <p className={`text-[0.625rem] font-medium ${s.text}`}>{t.detail}</p>
                   </div>
                   {t.status === 'alert' && <AlertTriangle className="h-3 w-3 text-red-400 shrink-0" />}
                   <span className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${s.ring}`} />
