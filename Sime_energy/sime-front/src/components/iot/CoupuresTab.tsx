@@ -194,10 +194,11 @@ export function CoupuresTab() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Début (UTC)</TableHead>
                   <TableHead>Site</TableHead>
-                  <TableHead className="text-right">Durée</TableHead>
+                  <TableHead>Début (UTC)</TableHead>
+                  <TableHead>Fin (UTC)</TableHead>
                   <TableHead className="text-right"><Term k="end">END</Term></TableHead>
+                  <TableHead className="text-right">Durée</TableHead>
                   <TableHead>Cause (déclencheur)</TableHead>
                   <TableHead>Cause aggravante</TableHead>
                   <TableHead>Commentaire</TableHead>
@@ -210,10 +211,11 @@ export function CoupuresTab() {
                   const proposed = c.statut_cause === 'proposee';
                   return (
                     <TableRow key={c.id}>
-                      <TableCell className="whitespace-nowrap">{fmtDate(c.debut_at)}</TableCell>
                       <TableCell>{c.site}</TableCell>
-                      <TableCell className="text-right whitespace-nowrap">{fmtDuree(c.duree_min)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{fmtDate(c.debut_at)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{fmtDate(c.fin_at)}</TableCell>
                       <TableCell className="text-right whitespace-nowrap">{c.end_kwh === null ? '—' : `${nfr(c.end_kwh, 2)} kWh`}</TableCell>
+                      <TableCell className="text-right whitespace-nowrap">{fmtDuree(c.duree_min)}</TableCell>
                       <TableCell className="min-w-[230px]">
                         <CauseSelect causes={causes} value={d.cause} onChange={(v) => setDraft(c, { cause: v })} />
                         {proposed && c.cause_indice && <p className="text-[11px] text-slate-400 mt-1">Proposition : {c.cause_indice}</p>}

@@ -34,8 +34,10 @@ export interface Coupure {
   confirme_at: string | null;
 }
 
+// Externe = le courant manque côté réseau (coupure) ; interne = le site
+// coupe lui-même, volontairement ou non (mise hors tension). Remarque du manager, 12/10.
 export const ORIGIN_LABELS: Record<CauseOrigin, string> = {
-  externe: 'Externe', interne: 'Interne', a_qualifier: 'À qualifier', non_retenue: 'Non retenue',
+  externe: 'Coupure réseau', interne: 'Mise hors tension (site)', a_qualifier: 'À qualifier', non_retenue: 'Pas une coupure',
 };
 
 export async function fetchCauses(): Promise<CoupureCause[]> {

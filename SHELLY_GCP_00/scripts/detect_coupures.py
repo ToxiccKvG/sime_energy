@@ -56,7 +56,8 @@ def propose(r, volt, absences):
 
 def save(site, E):
     """Enregistre les coupures (idempotent : une coupure = un (site, début)). Une cause déjà CONFIRMÉE n'est jamais écrasée."""
-    q = lambda x: "null" if x is None else "'" + str(x).replace("'", "''") + "'"
+    # pd.isna : une colonne pandas transforme None en NaN, qui s'écrivait « nan » en base.
+    q = lambda x: "null" if x is None or pd.isna(x) else "'" + str(x).replace("'", "''") + "'"
     values = ",\n".join(
         f"({q(site)}, {q(r.debut.isoformat() + '+00')}, {q(r.fin.isoformat() + '+00')}, {r.END_kWh}, {q(r.cause_proposee)}, {q(r.indice)})"
         for _, r in E.iterrows())
