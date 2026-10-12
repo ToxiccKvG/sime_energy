@@ -28,11 +28,11 @@ import {
   Pie,
   PieChart,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { integrateEnergy, type QuantityKind } from '@/services/measurementStats';

@@ -2,8 +2,9 @@ import { useMemo, useState, useEffect } from 'react';
 import { exportMultiSheetXlsx } from '@/lib/excel-utils';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, ReferenceLine,
+  Tooltip, Legend, ReferenceLine,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { Download, Zap, Calendar, Database, RefreshCw, ChevronDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -133,8 +134,12 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
     <div style={{ backgroundColor: '#1a1d2e', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: '8px 12px', minWidth: 190 }}>
       <p style={{ color: '#e2e8f0', marginBottom: 6, fontSize: 12, fontWeight: 600 }}>{label}</p>
       {payload.map((entry) => (
-        <p key={entry.name} style={{ color: entry.color || entry.fill || '#94a3b8', fontSize: 12, margin: '3px 0', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-          <span>{entry.name}</span>
+        // Texte clair + pastille de couleur : le texte coloré était illisible avec les palettes foncées.
+        <p key={entry.name} style={{ color: '#e2e8f0', fontSize: 12, margin: '3px 0', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 9999, flexShrink: 0, backgroundColor: entry.color || entry.fill || '#94a3b8', boxShadow: '0 0 0 1px rgba(255,255,255,0.5)' }} />
+            {entry.name}
+          </span>
           <span style={{ fontWeight: 700 }}>{entry.value}{entry.unit ? ` ${entry.unit}` : ''}</span>
         </p>
       ))}

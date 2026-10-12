@@ -11,8 +11,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import { isHoverArtifact } from '@/lib/chart-export';
 import {
-  Area, Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, Tooltip, XAxis, YAxis,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

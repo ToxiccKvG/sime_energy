@@ -9,8 +9,9 @@
 
 import { useMemo, useState } from 'react';
 import {
-  Area, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, CartesianGrid, ComposedChart, Legend, Line, Tooltip, XAxis, YAxis,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Building2, GitBranch, AlertTriangle, CheckCircle2, AlertCircle, ChevronRight, HelpCircle } from 'lucide-react';

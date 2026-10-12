@@ -8,10 +8,10 @@ import html2canvas from 'html2canvas';
 import { ChartZoom } from '@/components/shared/ChartZoom';
 import {
   ScatterChart, Scatter, BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  Cell, ReferenceLine, AreaChart, Area, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, AreaChart, Area, Legend,
   ComposedChart,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import {
   Filter, BarChart2, TrendingUp, Activity, Upload,
   FileSpreadsheet, X, ChevronDown, ChevronUp, Download,

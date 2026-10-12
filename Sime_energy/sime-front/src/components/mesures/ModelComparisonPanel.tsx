@@ -10,8 +10,9 @@ import { useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import { isHoverArtifact } from '@/lib/chart-export';
 import {
-  Area, Brush, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis,
+  Area, Brush, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, Scatter, Tooltip, XAxis, YAxis, ZAxis,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';

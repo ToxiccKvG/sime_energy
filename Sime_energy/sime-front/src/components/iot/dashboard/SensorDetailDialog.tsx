@@ -14,7 +14,8 @@
 // ============================================================
 
 import { useEffect, useState } from 'react';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { Battery, BatteryLow, Signal, Clock, Cpu, WifiOff, Activity } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { ShellyClRow } from '@/lib/iot-dashboard-service';

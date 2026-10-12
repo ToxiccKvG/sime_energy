@@ -208,3 +208,23 @@ html[data-text-size]:not([data-text-size="normal"]) .recharts-legend-wrapper * {
 .chart-zoom .recharts-brush > rect:first-child { fill: #f8fafc; }
 /* Déjà affiché dans l'en-tête de la vue agrandie (titre du graphique). */
 .chart-zoom [data-zoom-hide] { display: none; }
+
+/* Bulles des graphiques (survol) : toujours sombres, texte clair, pastille de la couleur de la série.
+   Le texte ne prend plus la couleur de la courbe : illisible avec les palettes foncées (« Sobre »,
+   « Daltonisme ») et, dans la vue agrandie, texte foncé sur fond sombre. Choix validé le 12/10. */
+.recharts-default-tooltip {
+  background-color: #0f172a !important;
+  border: 1px solid rgba(148, 163, 184, 0.35) !important;
+  border-radius: 8px !important;
+  color: #e2e8f0 !important;
+}
+.recharts-default-tooltip .recharts-tooltip-label { color: #f8fafc !important; font-weight: 600; }
+.recharts-default-tooltip .recharts-tooltip-item::before {
+  content: '●';
+  margin-right: 6px;
+  -webkit-text-stroke: 0.5px rgba(255, 255, 255, 0.6); /* pastille visible même si la série est très foncée */
+}
+.recharts-default-tooltip .recharts-tooltip-item-name,
+.recharts-default-tooltip .recharts-tooltip-item-separator,
+.recharts-default-tooltip .recharts-tooltip-item-value,
+.recharts-default-tooltip .recharts-tooltip-item-unit { color: #e2e8f0 !important; }

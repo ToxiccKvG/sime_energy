@@ -5,7 +5,8 @@
 
 import { useMemo } from 'react';
 import { TrendingUp } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import type { ShellyClRow, EnergyAgg, Period } from '@/lib/iot-dashboard-service';
 
 const fmtFr = (n: number, d = 1) => n.toFixed(d).replace('.', ',');
@@ -86,7 +87,8 @@ export function TopConsumersCard({ snapshot, energyAgg, period }: Props) {
                 if (!active || !payload?.length) return null;
                 const d = payload[0].payload as typeof top10[number];
                 return (
-                  <div className="px-3 py-2 text-xs space-y-1">
+                  // Fond explicite : une bulle « faite main » ne reprend pas contentStyle, elle était transparente.
+                  <div className="px-3 py-2 text-xs space-y-1 rounded-lg border border-slate-400/35 bg-[#0f172a] shadow-lg">
                     <p className="text-white font-semibold">{d.fullName}</p>
                     <p className="text-slate-400">Site : <span className="text-blue-300">{d.site}</span></p>
                     {d.room && <p className="text-slate-400">Pièce : <span className="text-purple-300">{d.room}</span></p>}

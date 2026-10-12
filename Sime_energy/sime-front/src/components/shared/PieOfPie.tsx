@@ -11,13 +11,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Cell, Customized, Pie, PieChart, Tooltip } from 'recharts';
-import { useChartZoomed } from '@/components/shared/ChartZoom';
+import { ChartZoom, useChartZoomed, useInsideChartZoom } from '@/components/shared/ChartZoom';
 
+// Bulle toujours sombre à texte clair (comme toutes les bulles, voir index.css) : les couleurs
+// du thème ne conviennent pas dans la vue agrandie sur fond blanc (texte foncé sur fond sombre).
 const tooltipStyle = {
-  backgroundColor: 'hsl(var(--card))',
-  border: '1px solid hsl(var(--border))',
+  backgroundColor: '#0f172a',
+  border: '1px solid rgba(148,163,184,0.35)',
   borderRadius: '8px',
   fontSize: '12px',
+  color: '#e2e8f0',
 };
 
 export const OTHERS_COLOR = '#94a3b8';
@@ -91,7 +94,14 @@ const nameLines = (n: string): string[] => {
   return [first, rest.length > 24 ? `${rest.slice(0, 23)}…` : rest];
 };
 
-export function PieOfPie({ shown, others, total, format, labelMode, showTooltip = true, height = PIE_H, onSliceClick, activeName, tooltipExtra }: {
+/** Camembert avec bouton « Agrandir » (sauf s'il est déjà sous un ChartZoom posé à la main). */
+export function PieOfPie(props: Parameters<typeof PieOfPieChart>[0]) {
+  const inside = useInsideChartZoom();
+  const pie = <PieOfPieChart {...props} />;
+  return inside ? pie : <ChartZoom>{pie}</ChartZoom>;
+}
+
+function PieOfPieChart({ shown, others, total, format, labelMode, showTooltip = true, height = PIE_H, onSliceClick, activeName, tooltipExtra }: {
   shown: PieRow[]; others: PieRow[]; total: number; format: (v: number) => string; labelMode: SliceLabelMode; showTooltip?: boolean;
   /** Hauteur du graphique en pixels (380 par défaut). */
   height?: number;
@@ -190,7 +200,10 @@ export function PieOfPie({ shown, others, total, format, labelMode, showTooltip 
     const p = payload[0];
     return (
       <div style={tooltipStyle} className="px-3 py-2 text-xs space-y-1 max-w-[280px]">
-        <p className="font-semibold">{String(p.name)}</p>
+        <p className="font-semibold flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/50" style={{ backgroundColor: p.payload?.color ?? p.payload?.fill }} />
+          {String(p.name)}
+        </p>
         <p>{format(Number(p.value))} · {pct(Number(p.value))}</p>
         {tooltipExtra?.(String(p.name))}
       </div>
