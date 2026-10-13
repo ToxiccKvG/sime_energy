@@ -16,6 +16,7 @@
 // ============================================================
 
 import { supabase } from '@/lib/supabase';
+import { fetchDevicePeriodes, periodeAt } from '@/lib/shelly-device-period-service';
 import { COLONNES_PROFIL_SHELLY } from '@/components/iot/shared';
 
 // ── Nom de la table ───────────────────────────────────────────
@@ -662,6 +663,55 @@ function describeError(err: unknown): string {
   return 'Erreur inconnue';
 }
 
+// ── Appareil réellement mesuré par chaque relevé ──────────────
+/**
+ * Chaque relevé de la base garde le nom (et le site) en vigueur à sa date : un appareil renommé
+ * (« Lampe Chevet_Chambre » → « Lampe chevet ») ou nommé un temps par son identifiant brut
+ * apparaissait en plusieurs appareils dans le TCD et le profil de charge, totaux éclatés.
+ * On rattache donc chaque relevé à l'appareil réellement mesuré à sa date :
+ *  1. période d'affectation (shelly_device_periodes) si le capteur a été déplacé ;
+ *  2. sinon nom et site actuels du catalogue ;
+ *  3. capteur retiré du catalogue : son nom le plus fréquent (hors identifiant brut).
+ * La base n'est pas modifiée. En cas d'échec de lecture, les relevés restent tels quels.
+ */
+async function reconcilierAppareils<T extends { device_id: string; name?: string | null; site?: string | null }>(
+  rows: T[],
+  tsOf: (r: T) => string | undefined,
+): Promise<T[]> {
+  if (rows.length === 0) return rows;
+  try {
+    const [{ data: catalogue, error }, periodes] = await Promise.all([
+      supabase.from('shelly_devices_catalog').select('device_id,name,site'),
+      fetchDevicePeriodes(),
+    ]);
+    if (error) throw error;
+    const parId = new Map((catalogue ?? []).map(c => [c.device_id as string, c as { name: string | null; site: string | null }]));
+    const deplaces = new Set(periodes.map(p => p.device_id));
+
+    // Capteurs absents du catalogue : nom le plus fréquent dans les relevés chargés.
+    const frequences = new Map<string, Map<string, number>>();
+    for (const r of rows) {
+      if (parId.has(r.device_id) || !r.name || r.name === r.device_id) continue;
+      const f = frequences.get(r.device_id) ?? new Map<string, number>();
+      f.set(r.name, (f.get(r.name) ?? 0) + 1);
+      frequences.set(r.device_id, f);
+    }
+    const nomRetenu = new Map(Array.from(frequences, ([id, f]) => [id, [...f].sort((a, b) => b[1] - a[1])[0][0]]));
+
+    return rows.map(r => {
+      const t = tsOf(r);
+      const p = deplaces.has(r.device_id) && t ? periodeAt(periodes, r.device_id, new Date(t)) : null;
+      if (p) return { ...r, name: p.libelle, site: p.site };
+      const c = parId.get(r.device_id);
+      if (c) return { ...r, name: c.name ?? r.name, site: c.site ?? r.site };
+      const nom = nomRetenu.get(r.device_id);
+      return nom ? { ...r, name: nom } : r;
+    });
+  } catch {
+    return rows;
+  }
+}
+
 // ── Fonction principale d'export ──────────────────────────────
 export async function exporterDonneesSupabase(
   options: SupabaseExportOptions,
@@ -723,7 +773,7 @@ export async function exporterDonneesSupabase(
       for (const r of roomData ?? []) {
         if (r.room && !roomMap.has(r.device_id)) roomMap.set(r.device_id, r.room);
       }
-      const enriched = data.map(m => ({
+      const enriched = (await reconcilierAppareils(data, m => m.ts_heure)).map(m => ({
         ...m,
         room: m.room ?? roomMap.get(m.device_id) ?? null,
       }));
@@ -749,7 +799,7 @@ export async function exporterDonneesSupabase(
       }
       const data = await fetchAllDevicesKeyset<ShellyRow>(buildMinuteQuery, ids, limit, dateDebut);
 
-      const rows = transformRowsToProfilMi(data, colonnesValides);
+      const rows = transformRowsToProfilMi(await reconcilierAppareils(data, m => m.ts), colonnesValides);
       return { rows, total: rows.length };
     }
   } catch (err) {
