@@ -15,17 +15,20 @@ import { Badge }             from '@/components/ui/badge';
 import { TablePrefsProvider, TableDisplayToggle, useTablePrefs } from '@/components/iot/tablePrefs';
 
 // ---- Définition des onglets ----
-const TABS = [
+// disabled : onglet en pause — grisé, non cliquable, jamais affiché (réactiver = retirer le drapeau)
+const TABS: readonly { id: string; label: string; icon: typeof Zap; description: string; disabled?: boolean }[] = [
   { id: 'dashboard',  label: 'Dashboard',   icon: LayoutDashboard, description: 'Vue temps réel multi-sites' },
   { id: 'sources',    label: 'Sources',     icon: Database,        description: 'Rôles électriques par site' },
   { id: 'fichiers',   label: 'Fichiers',    icon: FolderOpen,      description: 'Import & bibliothèque' },
   { id: 'nettoyage',  label: 'Nettoyage',   icon: Eraser,          description: 'Tri · filtre · édition' },
   { id: 'tcd',        label: 'Analyse',     icon: BarChart2,       description: 'Courbe · TCD · Heatmap · Distribution' },
-  { id: 'coupures',   label: 'Coupures',    icon: ZapOff,          description: 'Causes · énergie non distribuée' },
+  { id: 'coupures',   label: 'Coupures',    icon: ZapOff,          description: 'Causes · énergie non distribuée', disabled: true },
   { id: 'parametres', label: 'Paramètres',  icon: Settings,        description: 'Comptes Shelly Cloud' },
-] as const;
+];
 
-type TabId = (typeof TABS)[number]['id'];
+type TabId = 'dashboard' | 'sources' | 'fichiers' | 'nettoyage' | 'tcd' | 'coupures' | 'parametres';
+
+const DISABLED_TABS = new Set(TABS.filter(t => t.disabled).map(t => t.id));
 
 // ---- Page intérieure (accès au contexte) ----
 function IOTInner() {
@@ -33,7 +36,9 @@ function IOTInner() {
   const { activeTab, shellyRows, files } = state;
   const { fit, density } = useTablePrefs();
 
-  const tabId = (activeTab as TabId) ?? 'dashboard';
+  // Un onglet en pause mémorisé dans le navigateur renvoie au Dashboard
+  const savedTab = (activeTab as TabId) ?? 'dashboard';
+  const tabId: TabId = DISABLED_TABS.has(savedTab) ? 'dashboard' : savedTab;
 
   // Les sources vivent en base (shelly_device_roles) : pas de badge local.
   const badges: Partial<Record<TabId, number>> = {
@@ -82,8 +87,24 @@ function IOTInner() {
         <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-max min-w-full sm:w-fit">
           {TABS.map(tab => {
             const Icon = tab.icon;
-            const badge = badges[tab.id];
+            const badge = badges[tab.id as TabId];
             const isActive = tabId === tab.id;
+            if (tab.disabled) {
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  disabled
+                  aria-disabled="true"
+                  title="Module en pause — bientôt disponible"
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium relative whitespace-nowrap text-slate-600 opacity-60 cursor-not-allowed"
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="hidden md:inline">{tab.label}</span>
+                  <Badge className="ml-1 h-5 text-[10px] px-1.5 bg-slate-700/60 text-slate-400 border-0">En pause</Badge>
+                </button>
+              );
+            }
             return (
               <button
                 key={tab.id}
