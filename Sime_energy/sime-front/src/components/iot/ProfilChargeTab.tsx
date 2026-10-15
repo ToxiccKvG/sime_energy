@@ -17,6 +17,7 @@ import { analyserDonneesShelly, calculerStats } from '@/lib/iot-profil-engine';
 import type { ShellyRow } from './shared';
 import { supabase } from '@/lib/supabase';
 import { fetchDisponibles } from '@/lib/iot-supabase-service';
+import { fetchAccounts } from '@/lib/shelly-account-service';
 
 // Format français : remplace . par ,
 const fmtFr = (n: number, digits = 2) => n.toFixed(digits).replace('.', ',');
@@ -125,7 +126,8 @@ function KPICard({ label, value, unit, sub, color = 'blue' }: {
   );
 }
 
-const SITES = ['Ma Maison', 'Académie CER2E'];
+// Secours si la lecture des comptes Shelly échoue ; sinon les sites viennent de shelly_accounts
+const SITES_SECOURS = ['Académie CER2E', 'Donsin', 'Ma Maison'];
 
 interface TooltipEntry { name: string; value: number | string; unit?: string; color?: string; fill?: string }
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: TooltipEntry[]; label?: string }) {
@@ -155,7 +157,16 @@ export function ProfilChargeTab() {
   const [sourceMode, setSourceMode] = useState<'csv' | 'supabase'>('csv');
   const [supabaseRows, setSupabaseRows] = useState<ShellyRow[]>([]);
   // Filtres multi-sélection
-  const [sbSelectedSites, setSbSelectedSites] = useState<string[]>(['Académie CER2E']);
+  const [sbSelectedSites, setSbSelectedSites] = useState<string[]>(['Ma Maison']);
+  const [sbSites, setSbSites] = useState<string[]>(SITES_SECOURS);
+  useEffect(() => {
+    fetchAccounts()
+      .then(accounts => {
+        const sites = Array.from(new Set(accounts.map(a => a.site).filter(Boolean))).sort();
+        if (sites.length > 0) setSbSites(sites);
+      })
+      .catch(() => { /* liste de secours conservée */ });
+  }, []);
   const [sbSelectedRooms, setSbSelectedRooms] = useState<string[]>([]);
   const [sbSelectedDeviceIds, setSbSelectedDeviceIds] = useState<string[]>([]);
   // Catalogues disponibles (chargés depuis Supabase)
@@ -461,7 +472,7 @@ export function ProfilChargeTab() {
                   </button>
                 </PopoverTrigger>
                 <PopoverContent className="w-56 p-2 bg-[#1a1d2e] border-white/20" align="start">
-                  {SITES.map(s => (
+                  {sbSites.map(s => (
                     <label key={s} className="flex items-center gap-2 px-2 py-1.5 rounded text-sm text-slate-300 hover:bg-white/5 cursor-pointer">
                       <input type="checkbox" checked={sbSelectedSites.includes(s)} onChange={() => toggleSite(s)} className="accent-violet-500" />
                       {s}
