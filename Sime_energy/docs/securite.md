@@ -24,6 +24,7 @@ ouverts de la section 4 deviennent alors exploitables.
 | `auth_key` des comptes Shelly invisible du navigateur | migration `20260720` | oui — voir 3.1 |
 | Invitations par RPC `accept_invitation` | 15/09 | oui |
 | Buckets `iot-files` et `measurement-files` isolés par utilisateur | 16 et 17/09 | oui |
+| Vue `shelly_cl_journalier` aux droits du lecteur (`security_invoker`), sans droits d'écriture | migration `20261015` | oui — même résultat pour un utilisateur connecté, `401` en anonyme |
 | JWT exigé sur `test-shelly-account` | — | oui |
 | `poll-shelly` et `alert-shelly-auth` : secret `x-cron-secret` (ou, pour `poll-shelly`, un utilisateur connecté) | 15/10 | oui — `401` sans secret, voir 3.4 |
 | Helpers RLS non récursifs `user_org_ids()`, `user_admin_org_ids()`, `is_org_creator()` | migration `20260915` | oui |
