@@ -24,7 +24,8 @@ ouverts de la section 4 deviennent alors exploitables.
 | `auth_key` des comptes Shelly invisible du navigateur | migration `20260720` | oui — voir 3.1 |
 | Invitations par RPC `accept_invitation` | 15/09 | oui |
 | Buckets `iot-files` et `measurement-files` isolés par utilisateur | 16 et 17/09 | oui |
-| JWT exigé sur `poll-shelly` et `test-shelly-account` | — | oui |
+| JWT exigé sur `test-shelly-account` | — | oui |
+| `poll-shelly` et `alert-shelly-auth` : secret `x-cron-secret` (ou, pour `poll-shelly`, un utilisateur connecté) | 15/10 | oui — `401` sans secret, voir 3.4 |
 | Helpers RLS non récursifs `user_org_ids()`, `user_admin_org_ids()`, `is_org_creator()` | migration `20260915` | oui |
 
 ## 3. Ce qui a été corrigé pendant le chantier
@@ -186,6 +187,57 @@ réellement appliqués, puis en testant depuis la page :
 du backend hébergé, puisque la décision 1 n'est pas prise. **Sans cet ajout, toute
 la Facturation cassera en production** : les 8 routes du backend seront bloquées par
 le navigateur. Ajouter l'URL de l'hébergeur et retirer les deux entrées `localhost`.
+
+### 3.4 `poll-shelly` et `alert-shelly-auth` — appelables par n'importe qui
+
+**Le problème.** Les deux fonctions sont déployées avec `--no-verify-jwt`, car
+`pg_cron` n'a pas de session. Sans autre contrôle, n'importe qui connaissant l'URL
+pouvait déclencher des collectes en rafale (risque de blocage des comptes Shelly
+pour excès d'appels, charge inutile sur la base). Le cron 1 portait en plus une clé
+en clair dans son en-tête `Authorization`.
+
+**Le correctif (15/10/2026).**
+- `alert-shelly-auth` exige l'en-tête `x-cron-secret` égal au secret `CRON_SECRET` ;
+  sans secret configuré, tout est refusé.
+- `poll-shelly` accepte le cron (`x-cron-secret`) **ou** un utilisateur connecté (JWT
+  vérifié par `auth.getUser`), pour le bouton « Forcer le rafraîchissement » du front.
+- Les crons `poll-shelly-every-minute` et `alert-shelly-auth-every-5min` lisent le
+  secret dans le Vault à chaque appel ; il n'apparaît pas dans `cron.job`.
+  Migration `SHELLY_GCP_00/supabase/migrations/20261015_cron_secret_header.sql`.
+- Comparaison à temps constant, comme pour le webhook.
+
+**Où est le secret (la valeur n'est jamais dans git).**
+1. Fichier local du responsable : `~/Documents/CER2E-SIME/Secrets/CRON_SECRET.txt`
+   (droits `600`).
+2. Vault Supabase : Dashboard → Integrations → Vault, nom `cron_secret`.
+3. Secret Edge Functions `CRON_SECRET` (non relisible, seulement remplaçable).
+
+Le perdre ne bloque rien : on en génère un nouveau.
+
+**Changer le secret** (les trois copies doivent rester identiques) :
+
+```bash
+S=$(openssl rand -hex 32)
+supabase secrets set CRON_SECRET=$S
+supabase db query --linked "select vault.update_secret((select id from vault.secrets where name='cron_secret'), '$S');"
+# puis mettre à jour le fichier local
+```
+
+Entre les deux commandes, un appel du cron peut être refusé (une minute de collecte
+au plus).
+
+**Redéployer** (toujours avec le drapeau, sinon le cron est refusé) :
+
+```bash
+supabase functions deploy poll-shelly --no-verify-jwt
+supabase functions deploy alert-shelly-auth --no-verify-jwt
+```
+
+**Vérifié le 15/10.** Un appel sans secret ou avec un faux secret renvoie `401` sur les
+deux fonctions. Après déploiement, les trois comptes sont en `ok`, les données ont moins
+d'une minute et le cron 6 reçoit `200`. Les « Timeout of 5000 ms » de
+`net._http_response` sur le cron 1 sont normaux et antérieurs : `pg_net` n'attend pas
+la fin d'une collecte, qui dure plus de 5 s.
 
 ## 4. Ce qui reste ouvert
 

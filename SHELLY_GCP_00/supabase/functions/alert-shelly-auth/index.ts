@@ -1,7 +1,8 @@
 // Alerte email quand un compte Shelly renvoie 401 (auth_key révoquée, p.ex. après
 // un changement de mot de passe). Appelée toutes les 5 min par pg_cron.
-// Déployée avec --no-verify-jwt (comme poll-shelly).
-// Secrets : RESEND_API_KEY, ALERT_EMAIL_TO (optionnel : ALERT_EMAIL_FROM).
+// Déployée avec --no-verify-jwt (comme poll-shelly) : l'appel doit porter
+// l'en-tête x-cron-secret égal au secret CRON_SECRET (lu dans le Vault par le cron).
+// Secrets : CRON_SECRET, RESEND_API_KEY, ALERT_EMAIL_TO (optionnel : ALERT_EMAIL_FROM).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const supabase = createClient(
@@ -29,7 +30,27 @@ async function sendMail(subject: string, text: string) {
   if (!res.ok) throw new Error(`Resend ${res.status}: ${await res.text()}`);
 }
 
-Deno.serve(async () => {
+/** Comparaison à temps constant (même logique que shelly-webhook). */
+function secretsMatch(given: string | null, expected: string): boolean {
+  if (!given) return false;
+  const a = new TextEncoder().encode(given);
+  const b = new TextEncoder().encode(expected);
+  let diff = a.length ^ b.length;
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  return diff === 0;
+}
+
+Deno.serve(async (req: Request) => {
+  // Secret obligatoire : sans CRON_SECRET configuré, on refuse tout.
+  const expected = Deno.env.get("CRON_SECRET");
+  if (!expected || !secretsMatch(req.headers.get("x-cron-secret"), expected)) {
+    if (!expected) console.error("[alert] CRON_SECRET absent — toute requête est refusée.");
+    return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   try {
     const { data: accounts, error } = await supabase
       .from("shelly_accounts")

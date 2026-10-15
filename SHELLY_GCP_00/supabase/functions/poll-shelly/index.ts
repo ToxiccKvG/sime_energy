@@ -696,10 +696,34 @@ async function writePollStatus(site: string, status: "ok" | "error", errorMsg?: 
     .eq("site", site);
 }
 
+/** Comparaison à temps constant (même logique que shelly-webhook). */
+function secretsMatch(given: string | null, expected: string): boolean {
+  if (!given) return false;
+  const a = new TextEncoder().encode(given);
+  const b = new TextEncoder().encode(expected);
+  let diff = a.length ^ b.length;
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  return diff === 0;
+}
+
+/** Appel autorisé : le cron (x-cron-secret = CRON_SECRET) ou un utilisateur connecté (bouton du front). */
+async function isAuthorized(req: Request): Promise<boolean> {
+  const expected = Deno.env.get("CRON_SECRET");
+  if (expected && secretsMatch(req.headers.get("x-cron-secret"), expected)) return true;
+  const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!token) return false;
+  const { data, error } = await supabase.auth.getUser(token);
+  return !error && !!data?.user;
+}
+
 Deno.serve(async (req: Request) => {
-  // Déployé avec --no-verify-jwt : le cron pg_cron peut appeler sans JWT valide.
-  // La sécurité des données est assurée par RLS sur shelly_cl (lecture = authenticated).
-  // Écriture par service_role dans le client Supabase ci-dessus → bypass RLS OK.
+  // Déployé avec --no-verify-jwt : le cron pg_cron n'a pas de session, il prouve
+  // son droit par l'en-tête x-cron-secret. Tout autre appel doit porter le JWT
+  // d'un utilisateur connecté. Écriture par service_role → bypass RLS OK.
+  if (!(await isAuthorized(req))) {
+    return new Response(JSON.stringify({ok:false,error:"unauthorized"}),{status:401,headers:{"Content-Type":"application/json"}});
+  }
   let forceOverride = false;
   try { const body = await req.json(); forceOverride = body?.forceMetaRefresh === true; } catch { /* body vide (cron) */ }
   try {
