@@ -88,7 +88,7 @@ Signature : appareils secteur muets pendant que les capteurs à pile émettent ;
 
 **Tâches planifiées (pg_cron)** : `poll-shelly-every-minute` (`* * * * *`), `aggregate-shelly-hourly` (`0 * * * *`), `aggregate-shelly-cl-horaire` (`5 * * * *`), `aggregate-shelly-cl-horaire-env` (`7 * * * *`), `refresh-shelly-devices-catalog` (`10 * * * *`, vue matérialisée).
 
-**Edge Functions déployées** : `poll-shelly` (v25), `shelly-webhook` (v5, durcie), `test-shelly-account`. Deux fonctions orphelines subsistent (`swift-processor`, `shelly-web-hook`, avril 2026) : à supprimer ou à trancher.
+**Edge Functions déployées** : `poll-shelly`, `shelly-webhook` (durcie), `test-shelly-account`, `alert-shelly-auth`. Les deux fonctions orphelines d'avril 2026 (`swift-processor`, `shelly-web-hook`) ont été supprimées le 15/10/2026 (aucun appel sur 7 jours, aucun cron ni code ne les référençait).
 
 ## 5. Règles d'interprétation (à ne pas oublier)
 

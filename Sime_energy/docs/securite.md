@@ -238,7 +238,7 @@ Et `processHierarchy` vit dans `measurementService.ts` mais n'est appelée que p
 | ~~`run_migration.mjs`~~ | **Supprimé le 28/09.** La clé qui s'y trouvait en dur était la clé **anon publique**, identique à celle que le front embarque déjà dans le navigateur : ce n'était donc pas une fuite, seulement un mauvais signal. Le script était mort par ailleurs — il visait un fichier de migration qui n'existe plus, n'était référencé nulle part, et ne pouvait pas fonctionner : l'API Management exige un jeton personnel, pas une clé anon. Le chemin qui marche est `supabase db query --linked` (section 5). |
 | Session Supabase | en `localStorage`, donc lisible par un script injecté. Atténué par la CSP `script-src 'self'` (section 3.3), qui bloque le chargement d'un script tiers. |
 | Dépendances | non auditées. |
-| Fonctions déployées orphelines | `shelly-web-hook` (v6 du 20/04) et `poll-shelly` sous le slug **`swift-processor`** (v8 du 20/04) : absentes du dépôt, source perdue. `shelly-web-hook` est protégée par JWT, donc pas une porte ouverte. **À supprimer ou non : décision en attente.** |
+| Fonctions déployées orphelines | `shelly-web-hook` (v6 du 20/04) et `poll-shelly` sous le slug **`swift-processor`** (v8 du 20/04) : absentes du dépôt, source perdue. `shelly-web-hook` est protégée par JWT, donc pas une porte ouverte. **Supprimées le 15/10/2026** : aucun appel sur 7 jours (journaux Supabase), aucun cron ni code ne les appelait. |
 
 ### 4.3 Écarté volontairement
 
