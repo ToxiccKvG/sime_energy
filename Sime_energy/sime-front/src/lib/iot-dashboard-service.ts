@@ -6,16 +6,30 @@
 // ============================================================
 
 import { supabase } from '@/lib/supabase';
+import { fetchAccounts } from '@/lib/shelly-account-service';
 
-// ── Compte Shelly Cloud (inféré du site) ─────────────────────
-export const ACCOUNT_BY_SITE: Record<string, string> = {
-  'Ma Maison':      'Compte 1 — Ma Maison',
-  'Académie CER2E': 'Compte 2 — Académie CER2E',
-};
+// ── Comptes Shelly Cloud (lus depuis shelly_accounts) ────────
+// Le site et le libellé de compte viennent de la table des comptes :
+// un nouveau compte apparaît dans les filtres sans toucher au code.
+// Secours si la table est illisible : les sites connus à ce jour.
+const SITES_SECOURS = ['Académie CER2E', 'Donsin', 'Ma Maison'];
 
-// Sites connus statiquement — garantit leur présence dans le filtre
-// même si le polling est inactif depuis plus de CATALOG_WINDOW_HOURS
-const STATIC_KNOWN_SITES = ['Académie CER2E', 'Ma Maison'];
+// Promesse partagée : FilterBar et KPIBand ne déclenchent qu'une requête.
+let accountLabelsPromise: Promise<Record<string, string>> | null = null;
+
+/** Libellé du compte Shelly par site (« Compte 3 — Donsin (PV) »…). */
+export function fetchAccountLabels(): Promise<Record<string, string>> {
+  if (!accountLabelsPromise) {
+    accountLabelsPromise = fetchAccounts()
+      .then(accounts => {
+        const out: Record<string, string> = {};
+        for (const a of accounts) if (a.site) out[a.site] = a.label || a.site;
+        return out;
+      })
+      .catch(err => { accountLabelsPromise = null; throw err; });
+  }
+  return accountLabelsPromise;
+}
 
 export type DeviceFamily =
   | 'ENERGIE_3PH' | 'ENERGIE_2PH' | 'ENERGIE_1PH'
@@ -196,10 +210,13 @@ export async function fetchSites(): Promise<string[]> {
     .order('ts', { ascending: false })
     .limit(10000);
   if (error) throw error;
-  // Fusionner avec les sites statiquement connus — garantit leur présence
-  // même si le polling est inactif plus de CATALOG_WINDOW_HOURS
+  // Sites des comptes Shelly + sites vus dans les relevés récents :
+  // un site muet (station de Donsin la nuit) reste dans le filtre.
   const fromDb = (data ?? []).map(r => r.site).filter(Boolean) as string[];
-  return Array.from(new Set([...STATIC_KNOWN_SITES, ...fromDb])).sort();
+  const fromAccounts = await fetchAccountLabels()
+    .then(labels => Object.keys(labels))
+    .catch(() => SITES_SECOURS);
+  return Array.from(new Set([...fromAccounts, ...fromDb])).sort();
 }
 
 // ── 2. Liste des pièces (par site) ───────────────────────────

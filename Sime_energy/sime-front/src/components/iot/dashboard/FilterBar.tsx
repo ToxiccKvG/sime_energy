@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   fetchSites, fetchRooms, fetchDevices,
-  ACCOUNT_BY_SITE, DEFAULT_FILTERS,
+  fetchAccountLabels, DEFAULT_FILTERS,
   type Device, type Filters, type Period, type DeviceFamily,
 } from '@/lib/iot-dashboard-service';
 
@@ -157,6 +157,10 @@ export function FilterBar({ filters, onChange }: Props) {
   // Charger sites une fois
   useEffect(() => { fetchSites().then(setSites).catch(() => {}); }, []);
 
+  // Libellé du compte Shelly par site, lu depuis shelly_accounts
+  const [accountLabels, setAccountLabels] = useState<Record<string, string>>({});
+  useEffect(() => { fetchAccountLabels().then(setAccountLabels).catch(() => {}); }, []);
+
   // Charger rooms quand sites change
   useEffect(() => {
     fetchRooms(filters.sites.length > 0 ? filters.sites : undefined).then(setRooms).catch(() => {});
@@ -175,24 +179,24 @@ export function FilterBar({ filters, onChange }: Props) {
     const seen = new Set<string>();
     const out: { value: string; label: string; sub?: string }[] = [];
     for (const s of sites) {
-      const acc = ACCOUNT_BY_SITE[s] ?? s;
+      const acc = accountLabels[s] ?? s;
       if (!seen.has(acc)) {
         seen.add(acc);
         out.push({ value: acc, label: acc, sub: s });
       }
     }
     return out;
-  }, [sites]);
+  }, [sites, accountLabels]);
 
   // Comptes actuellement actifs = ceux dont au moins un site est sélectionné
   const selectedAccounts = useMemo(() => {
-    return Array.from(new Set(filters.sites.map(s => ACCOUNT_BY_SITE[s] ?? s)));
-  }, [filters.sites]);
+    return Array.from(new Set(filters.sites.map(s => accountLabels[s] ?? s)));
+  }, [filters.sites, accountLabels]);
 
   // ── Setters atomiques (un seul onChange par action) ─────────
   const setSites_ = (next: string[]) => onChange({ ...filters, sites: next, rooms: [], deviceIds: [] });
   const setAccounts_ = (next: string[]) => {
-    const sitesForAccounts = sites.filter(s => next.includes(ACCOUNT_BY_SITE[s] ?? s));
+    const sitesForAccounts = sites.filter(s => next.includes(accountLabels[s] ?? s));
     onChange({ ...filters, sites: sitesForAccounts, rooms: [], deviceIds: [] });
   };
   const setFamilies_ = (next: DeviceFamily[]) => onChange({ ...filters, families: next, deviceIds: [] });
@@ -223,7 +227,7 @@ export function FilterBar({ filters, onChange }: Props) {
 
         <MultiPopover
           label="Site"
-          items={sites.map(s => ({ value: s, label: s, sub: ACCOUNT_BY_SITE[s]?.split(' — ')[0] }))}
+          items={sites.map(s => ({ value: s, label: s, sub: accountLabels[s]?.split(' — ')[0] }))}
           selected={filters.sites}
           onSetSelected={setSites_}
         />

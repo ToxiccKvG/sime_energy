@@ -2,9 +2,9 @@
 // Dashboard IOT — KPIs globaux par site (puissance, énergie, coût)
 // ============================================================
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Activity, Zap, CheckCircle2, AlertTriangle, BatteryCharging, Sun } from 'lucide-react';
-import { ACCOUNT_BY_SITE, isMainMeter, isPVMeter, type ShellyClRow, type Device, type EnergyAgg, type Period } from '@/lib/iot-dashboard-service';
+import { fetchAccountLabels, isMainMeter, isPVMeter, type ShellyClRow, type Device, type EnergyAgg, type Period } from '@/lib/iot-dashboard-service';
 import type { ShellyDeviceRole } from '@/lib/shelly-device-role-service';
 import { indexLieux, type PlageDetail } from '@/lib/iot-energy-detail-service';
 import { EnergyDetailDialog, type EnergySubject } from './EnergyDetailDialog';
@@ -63,6 +63,10 @@ function classer(deviceId: string, name: string, roles: Map<string, ShellyDevice
 export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg, roles, plage }: Props) {
   const isHistoric = period !== 'live';
   const [detail, setDetail] = useState<EnergySubject | null>(null);
+
+  // Libellé du compte Shelly par site, lu depuis shelly_accounts
+  const [accountLabels, setAccountLabels] = useState<Record<string, string>>({});
+  useEffect(() => { fetchAccountLabels().then(setAccountLabels).catch(() => {}); }, []);
 
   // Site et pièce de chaque appareil : `fn_energy_by_device` ne renvoie pas la
   // pièce, seul le catalogue la porte.
@@ -216,7 +220,7 @@ export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg,
   return (
     <div className={`grid gap-3 ${sites.length === 1 ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
       {sites.map(s => {
-        const account = ACCOUNT_BY_SITE[s.site] ?? s.site;
+        const account = accountLabels[s.site] ?? s.site;
         const alerts = alertsBySite[s.site] ?? 0;
 
         if (isHistoric) {

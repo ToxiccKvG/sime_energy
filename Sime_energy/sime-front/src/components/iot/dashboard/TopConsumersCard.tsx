@@ -11,10 +11,20 @@ import type { ShellyClRow, EnergyAgg, Period } from '@/lib/iot-dashboard-service
 
 const fmtFr = (n: number, d = 1) => n.toFixed(d).replace('.', ',');
 
+// Couleurs historiques conservées ; tout autre site (Donsin, futurs
+// comptes) reçoit une couleur stable déduite de son nom.
 const SITE_COLORS: Record<string, string> = {
   'Ma Maison':       '#3b82f6',
   'Académie CER2E':  '#a855f7',
 };
+const SITE_PALETTE = ['#10b981', '#f59e0b', '#06b6d4', '#f43f5e', '#84cc16', '#f97316'];
+
+function siteColor(site: string): string {
+  if (SITE_COLORS[site]) return SITE_COLORS[site];
+  let h = 0;
+  for (const c of site) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return SITE_PALETTE[h % SITE_PALETTE.length];
+}
 
 interface Props {
   snapshot: ShellyClRow[];
@@ -101,7 +111,7 @@ export function TopConsumersCard({ snapshot, energyAgg, period }: Props) {
             />
             <Bar dataKey="value" radius={[0, 4, 4, 0]}>
               {top10.map((d, i) => (
-                <Cell key={i} fill={SITE_COLORS[d.site] ?? '#06b6d4'} />
+                <Cell key={i} fill={siteColor(d.site)} />
               ))}
             </Bar>
           </BarChart>
