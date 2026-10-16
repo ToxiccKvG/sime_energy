@@ -2191,7 +2191,7 @@ export function AnalyseTab() {
 
   const serieData = useMemo(() =>
     filteredRows.map(r => {
-      const obj: Record<string, unknown> = {
+      const obj: Record<string, unknown> & { appareil: string; emplacement: string; piece: string } = {
         date: toDate(r.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
         consommation: +(r.kwhTotal ?? 0).toFixed(3),
         isWeekend: r.isWeekend,
