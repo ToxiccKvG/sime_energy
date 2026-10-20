@@ -1,7 +1,8 @@
 /**
  * Onglet « Analyse » du module Mesures.
- * Affiche les KPIs en cartes lisibles + une table de mesures recherchable,
- * paginée et exportable en CSV. S'adapte au capteur via les clés des mesures.
+ * Synthèse du relevé, une fiche d'indicateurs par grandeur adaptée à sa
+ * nature (services/measurementIndicators.ts), le résumé et ses exports, puis
+ * les tableaux (vue par jour, statistiques, détail des mesures) repliés.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -10,23 +11,16 @@ import { Input } from '@/components/ui/input';
 import { computeMeasurementKpis, groupMeasurementsByDay, toDate, type ColumnStat, type QuantityKind } from '@/services/measurementStats';
 import { exportReportToDocx, exportReportToPdf, type MeasurementReport } from '@/services/measurementReportExport';
 import { PeriodFilter, dayRangeOf, filterByRange, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
-import { formatQuantity, useUnitSettings } from '@/lib/unit-format';
+import { formatQuantity } from '@/lib/unit-format';
+import { ficheGrandeur, syntheseReleve, uniteDe, type FicheGrandeur } from '@/services/measurementIndicators';
 import {
-  Activity,
   AlertTriangle,
-  ArrowDownUp,
   Clock,
   Download,
   FileDown,
   FileText,
-  Gauge,
-  Hash,
-  RotateCcw,
   Search,
-  Sigma,
   Sparkles,
-  TrendingDown,
-  TrendingUp,
 } from 'lucide-react';
 
 interface AnalysisData {
@@ -40,26 +34,18 @@ interface AnalysisData {
 
 const PAGE_SIZE = 25;
 
-/** Libellés FR + icône pour les clés de KPI renvoyées par le backend. */
-const KPI_META: Record<string, { label: string; icon: React.ReactNode; withUnit?: boolean }> = {
-  duration: { label: 'Durée', icon: <Clock className="h-4 w-4" /> },
-  measurementCount: { label: 'Nombre de mesures', icon: <Hash className="h-4 w-4" /> },
-  avgConsumption: { label: 'Moyenne (hors zéros)', icon: <Gauge className="h-4 w-4" />, withUnit: true },
-  peakConsumption: { label: 'Maximum', icon: <TrendingUp className="h-4 w-4" />, withUnit: true },
-  minConsumption: { label: 'Minimum', icon: <TrendingDown className="h-4 w-4" />, withUnit: true },
-  totalConsumption: { label: 'Cumul total', icon: <Sigma className="h-4 w-4" />, withUnit: true },
-  stdConsumption: { label: 'Écart-type', icon: <ArrowDownUp className="h-4 w-4" />, withUnit: true },
+const NATURE_LIBELLE: Record<FicheGrandeur['nature'], string> = {
+  energie: 'énergie', puissance: 'puissance', son: 'niveau sonore', temperature: 'température',
+  humidite: 'humidité', co2: 'CO₂', tension: 'tension', courant: 'courant', frequence: 'fréquence',
+  cosphi: 'facteur de puissance', autre: 'grandeur',
 };
 
-const KPI_ORDER = [
-  'duration',
-  'avgConsumption',
-  'peakConsumption',
-  'minConsumption',
-  'totalConsumption',
-  'stdConsumption',
-  'measurementCount',
-];
+function fmtPas(sec: number): string {
+  if (sec < 60) return `${Math.round(sec)} s`;
+  if (sec < 3600) return `${Math.round(sec / 60)} min`;
+  if (sec < 86400) return `${Math.round(sec / 3600)} h`;
+  return `${Math.round(sec / 86400)} j`;
+}
 
 const STAT_COLUMNS: { key: keyof ColumnStat; label: string }[] = [
   { key: 'mean', label: 'Moyenne' },
@@ -186,26 +172,19 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
     [columns, selectedSet],
   );
 
-  const unitSettings = useUnitSettings();
-
-  /** Moment où le maximum et le minimum ont été atteints. */
-  const extremesInner = useMemo(() => {
-    let hi: { v: number; t: string } | null = null;
-    let lo: { v: number; t: string } | null = null;
-    for (const m of dateFiltered) {
-      const v = m.consumption;
-      if (typeof v !== 'number' || !isFinite(v)) continue;
-      if (!hi || v > hi.v) hi = { v, t: String(m.timestamp) };
-      if (!lo || v < lo.v) lo = { v, t: String(m.timestamp) };
-    }
-    const fmt = (x: { t: string } | null) => {
-      if (!x) return null;
-      const d = toDate(x.t);
-      return isNaN(d.getTime()) ? null : d.toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-    };
-    return { max: fmt(hi), min: fmt(lo) };
-  }, [dateFiltered]);
-  const extremes = extremesInner;
+  // ── Synthèse et fiches par grandeur ──
+  const synthese = useMemo(() => syntheseReleve(dateFiltered), [dateFiltered]);
+  const [seuils, setSeuils] = useState<Record<string, number | null>>({});
+  useEffect(() => { setSeuils({}); }, [data]);
+  const fiches = useMemo<FicheGrandeur[]>(() => {
+    const cles = allMeasureKeys.filter((k) => selectedSet.has(k))
+      .sort((a, b) => Number(b === 'consumption') - Number(a === 'consumption'));
+    return cles
+      .map((k) => k === 'consumption'
+        ? ficheGrandeur(dateFiltered, k, metricLabel, unit, { kind: quantityKind, seuil: seuils[k] })
+        : ficheGrandeur(dateFiltered, k, k, uniteDe(k, k), { seuil: seuils[k] }))
+      .filter((f): f is FicheGrandeur => f !== null);
+  }, [allMeasureKeys, selectedSet, dateFiltered, metricLabel, unit, quantityKind, seuils]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return dateFiltered;
@@ -250,15 +229,11 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
     const quarantineText = (data as { quarantineNote?: string }).quarantineNote ?? null;
     const measuresText = `Grandeurs : ${Array.from(selectedSet).map((k) => columnLabel(k, metricLabel)).join(', ') || 'aucune'}`;
 
-    const kpiRows: [string, string][] = selectedSet.has('consumption')
-      ? KPI_ORDER.filter((k) => (kpis as Record<string, any>)[k] !== undefined && (kpis as Record<string, any>)[k] !== null).map((k) => {
-          const meta = KPI_META[k];
-          const raw = (kpis as Record<string, any>)[k];
-          const cardUnit = k === 'totalConsumption' ? (kpis.totalUnit ?? unit) : unit;
-          const value = meta?.withUnit && typeof raw === 'number' ? formatQuantity(raw, cardUnit, unitSettings) : fmtNumber(raw);
-          return [meta?.label ?? k, value];
-        })
-      : [];
+    // Indicateurs des fiches, tels qu'affichés (nature de chaque grandeur)
+    const kpiRows: [string, string][] = fiches.flatMap((f) => f.indicateurs.map((i): [string, string] => [
+      `${columnLabel(f.cle, metricLabel)} — ${i.label}`,
+      i.detail ? `${i.valeur} (${i.detail})` : i.valeur,
+    ]));
 
     const statsHeaders = ['Grandeur', ...STAT_COLUMNS.map((c) => c.label), 'Amplitude'];
     const statsRows: string[][] = [];
@@ -311,13 +286,139 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
       statsTable: { headers: statsHeaders, rows: statsRows },
       dailyTable,
     };
-  }, [kpis, selectedSet, metricLabel, unit, dailyGroups, dailyMetricKey, isRangeFiltered, dateRange, data]);
+  }, [kpis, selectedSet, metricLabel, unit, dailyGroups, dailyMetricKey, isRangeFiltered, dateRange, data, fiches]);
 
   return (
     <div className="space-y-6">
       {/* Filtre de période : recalcule stats, tableau et rapport sur la plage choisie (partagé avec Visualisation) */}
       <PeriodFilter bounds={timestampBounds} value={dateRange} onChange={setDateRange} />
 
+      {/* Synthèse du relevé : de quoi parle-t-on, avec quelle qualité */}
+      {synthese.nbMesures > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border bg-card px-4 py-3 text-sm">
+          <span className="flex items-center gap-1.5 font-medium"><Clock className="h-4 w-4 text-muted-foreground" />
+            {synthese.debut?.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })} → {synthese.fin?.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+          </span>
+          <span className="text-muted-foreground">{kpis?.duration ?? ''}</span>
+          {synthese.pasSecondes && <span className="text-muted-foreground">1 mesure toutes les {fmtPas(synthese.pasSecondes)}</span>}
+          <span className="text-muted-foreground">{synthese.nbMesures.toLocaleString('fr-FR')} mesures</span>
+          {synthese.couverture !== null && (
+            <span className={synthese.couverture < 0.9 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}
+              title="Mesures présentes / mesures attendues au pas habituel du relevé">
+              couverture {Math.round(synthese.couverture * 100)} %
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Sélecteur de grandeur(s) : filtre les stats et le tableau ci-dessous */}
+      {allMeasureKeys.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground mr-1">Grandeurs affichées :</span>
+          {allMeasureKeys.map((key) => {
+            const active = selectedSet.has(key);
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => toggleMeasure(key)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  active
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-transparent text-muted-foreground border-input hover:bg-muted'
+                }`}
+              >
+                {columnLabel(key, metricLabel)}
+              </button>
+            );
+          })}
+          {selectedMeasures !== null && (
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelectedMeasures(null)}>
+              Tout afficher
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Une fiche par grandeur : indicateurs adaptés à sa nature (énergie, puissance, son, température…) */}
+      {fiches.length > 0 && (
+        <div className="space-y-3">
+          {fiches.map((f) => (
+            <div key={f.cle} className="rounded-xl border bg-card p-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h4 className="font-medium text-sm">{columnLabel(f.cle, metricLabel)}{f.unite ? ` (${f.unite})` : ''}</h4>
+                <span className="text-[0.6875rem] text-muted-foreground rounded-full border px-2 py-0.5">{NATURE_LIBELLE[f.nature]}</span>
+                {f.seuil !== null && (
+                  <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+                    Seuil
+                    <Input type="number" value={f.seuil} className="h-7 w-20 text-xs"
+                      onChange={(e) => setSeuils((prev) => ({ ...prev, [f.cle]: e.target.value === '' ? null : Number(e.target.value) }))} />
+                    {f.unite}
+                  </label>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+                {f.indicateurs.map((ind) => (
+                  <div key={ind.label} title={ind.aide}
+                    className={`p-2.5 rounded-lg border ${ind.alerte ? 'border-amber-500/40 bg-amber-500/10' : 'bg-muted/30'}`}>
+                    <p className="text-muted-foreground text-xs">{ind.label}</p>
+                    <p className="text-base font-semibold leading-tight mt-0.5 tabular-nums">{ind.valeur}</p>
+                    {ind.detail && <p className="text-muted-foreground text-[0.625rem] mt-0.5 truncate" title={ind.detail}>{ind.detail}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Résumé global + points d'attention */}
+      {kpis?.interpretation && report && (
+        <div className="rounded-lg border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h4 className="font-medium flex items-center gap-1.5">
+              <Sparkles className="h-4 w-4 text-blue-500" /> Résumé de l'analyse
+            </h4>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" className="h-8" onClick={() => exportReportToPdf(report)}>
+                <FileDown className="h-4 w-4 mr-1" /> PDF
+              </Button>
+              <Button variant="outline" size="sm" className="h-8" onClick={() => exportReportToDocx(report)}>
+                <FileText className="h-4 w-4 mr-1" /> Word
+              </Button>
+            </div>
+          </div>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            {kpis.interpretation.summary}
+          </p>
+          {kpis.interpretation.insights?.length > 0 && (
+            <div className="space-y-1.5 pt-1">
+              {kpis.interpretation.insights.map((msg: string, i: number) => (
+                <div key={i} className="flex items-start gap-2 text-sm px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{msg}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Interprétation par grandeur : une phrase par colonne sélectionnée, basée sur ses stats détaillées */}
+          {kpis.interpretation.perColumn && Object.keys(kpis.interpretation.perColumn).length > 0 && (
+            <div className="pt-2 space-y-1.5">
+              <h5 className="text-sm font-medium">Détail par grandeur</h5>
+              <ul className="space-y-1">
+                {Object.entries(kpis.interpretation.perColumn)
+                  .filter(([label]) => selectedSet.has(label))
+                  .map(([label, text]) => (
+                    <li key={label} className="text-sm text-muted-foreground leading-relaxed pl-3 border-l-2 border-border">
+                      {text}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
       {/* Vue par jour : récap quotidien + drill-down (réutilise le filtre de période ci-dessus) */}
       {dailyGroups.length > 1 && (
         <details className="rounded-lg border bg-card">
@@ -378,60 +479,6 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
         </details>
       )}
 
-      {/* Sélecteur de grandeur(s) : filtre les stats et le tableau ci-dessous */}
-      {allMeasureKeys.length > 1 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground mr-1">Grandeurs affichées :</span>
-          {allMeasureKeys.map((key) => {
-            const active = selectedSet.has(key);
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => toggleMeasure(key)}
-                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
-                  active
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-transparent text-muted-foreground border-input hover:bg-muted'
-                }`}
-              >
-                {columnLabel(key, metricLabel)}
-              </button>
-            );
-          })}
-          {selectedMeasures !== null && (
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelectedMeasures(null)}>
-              Tout afficher
-            </Button>
-          )}
-        </div>
-      )}
-
-      {/* KPIs en cartes : décrivent la grandeur principale, affichées seulement si elle est sélectionnée */}
-      {kpis && selectedSet.has('consumption') && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          {KPI_ORDER.filter((k) => (kpis as Record<string, any>)[k] !== undefined && (kpis as Record<string, any>)[k] !== null).map((k) => {
-            const meta = KPI_META[k];
-            const raw = (kpis as Record<string, any>)[k];
-            const cardUnit = k === 'totalConsumption' ? (kpis.totalUnit ?? unit) : unit;
-            const value = meta?.withUnit && typeof raw === 'number' ? formatQuantity(raw, cardUnit, unitSettings) : fmtNumber(raw);
-            // Un extremum sans son moment n'est pas exploitable dans un rapport :
-            // on indique quand il a été atteint (demande du 18/09).
-            const quand = k === 'peakConsumption' ? extremes.max : k === 'minConsumption' ? extremes.min : null;
-            return (
-              <div key={k} className="p-3 rounded-xl border bg-card">
-                <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
-                  {meta?.icon ?? <Activity className="h-4 w-4" />}
-                  {meta?.label ?? k}
-                </div>
-                <p className="text-lg font-semibold mt-1 leading-tight">{value}</p>
-                {quand && <p className="text-muted-foreground text-[0.625rem] mt-0.5 leading-tight truncate" title={quand}>{quand}</p>}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
       {/* Statistiques détaillées par colonne (grandeur principale + colonnes additionnelles) */}
       {kpis && (
         <details className="rounded-lg border bg-card">
@@ -489,9 +536,12 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
 
       {/* Table */}
       {dateFiltered.length > 0 ? (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="font-medium">Détail des mesures</h4>
+        <details className="rounded-lg border bg-card">
+          <summary className="cursor-pointer select-none px-4 py-3 font-medium text-sm">
+            Détail des mesures ({dateFiltered.length.toLocaleString('fr-FR')})
+          </summary>
+          <div className="space-y-3 px-4 pb-4">
+          <div className="flex items-center justify-end flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -554,60 +604,14 @@ export function MeasurementAnalysis({ data, dateRange: controlledRange, onDateRa
               </Button>
             </div>
           </div>
-        </div>
+          </div>
+        </details>
       ) : (
         <div className="text-center py-8 text-muted-foreground">
           {isRangeFiltered ? 'Aucune mesure sur cette période.' : 'Aucune mesure à afficher pour ce fichier.'}
         </div>
       )}
 
-      {/* Résumé global + points d'attention */}
-      {kpis?.interpretation && report && (
-        <div className="rounded-lg border bg-card p-4 space-y-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="font-medium flex items-center gap-1.5">
-              <Sparkles className="h-4 w-4 text-blue-500" /> Résumé de l'analyse
-            </h4>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="h-8" onClick={() => exportReportToPdf(report)}>
-                <FileDown className="h-4 w-4 mr-1" /> PDF
-              </Button>
-              <Button variant="outline" size="sm" className="h-8" onClick={() => exportReportToDocx(report)}>
-                <FileText className="h-4 w-4 mr-1" /> Word
-              </Button>
-            </div>
-          </div>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            {kpis.interpretation.summary}
-          </p>
-          {kpis.interpretation.insights?.length > 0 && (
-            <div className="space-y-1.5 pt-1">
-              {kpis.interpretation.insights.map((msg: string, i: number) => (
-                <div key={i} className="flex items-start gap-2 text-sm px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <span>{msg}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Interprétation par grandeur : une phrase par colonne sélectionnée, basée sur ses stats détaillées */}
-          {kpis.interpretation.perColumn && Object.keys(kpis.interpretation.perColumn).length > 0 && (
-            <div className="pt-2 space-y-1.5">
-              <h5 className="text-sm font-medium">Détail par grandeur</h5>
-              <ul className="space-y-1">
-                {Object.entries(kpis.interpretation.perColumn)
-                  .filter(([label]) => selectedSet.has(label))
-                  .map(([label, text]) => (
-                    <li key={label} className="text-sm text-muted-foreground leading-relaxed pl-3 border-l-2 border-border">
-                      {text}
-                    </li>
-                  ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
