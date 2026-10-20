@@ -53,13 +53,17 @@ export async function fetchAccounts(): Promise<ShellyAccount[]> {
   return (data ?? []) as unknown as ShellyAccount[];
 }
 
-// ── Création / mise à jour ────────────────────────────────────
+// ── Création ──────────────────────────────────────────────────
 // auth_key est requise à la création (vérifié côté UI avant l'appel).
+// INSERT simple, pas d'upsert : ON CONFLICT DO UPDATE exige le droit de
+// LIRE auth_key, que `authenticated` n'a pas (column-level GRANT) — Postgres
+// refusait alors toute création (« permission denied for table »). Un site
+// déjà existant se modifie via updateAccount.
 
-export async function upsertAccount(account: ShellyAccountInput): Promise<ShellyAccount> {
+export async function createAccount(account: ShellyAccountInput): Promise<ShellyAccount> {
   const { data, error } = await supabase
     .from('shelly_accounts')
-    .upsert(account, { onConflict: 'site' })
+    .insert(account)
     .select(SAFE_COLUMNS)
     .single();
   if (error) throw error;
@@ -125,6 +129,16 @@ export async function testNewAccount(auth_key: string, server_url: string): Prom
 }
 
 // ── Utilitaire affichage ──────────────────────────────────────
+
+// Message lisible pour une erreur Supabase/PostgREST (objet, pas une Error :
+// String(e) donnait « [object Object] »).
+export function accountErrorMessage(e: unknown): string {
+  const err = e as { code?: string; message?: string } | null;
+  if (err?.code === '23505') return 'Ce nom de site existe déjà : choisis un autre nom, ou modifie le compte existant.';
+  if (err?.code === '42501') return 'Droits insuffisants : seul un administrateur peut gérer les connexions Shelly.';
+  if (err?.message) return err.message;
+  return String(e);
+}
 
 export function maskAuthKey(last6: string | null): string {
   if (!last6) return '••••••••••••';

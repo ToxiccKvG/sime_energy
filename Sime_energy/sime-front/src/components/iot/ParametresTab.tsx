@@ -24,8 +24,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import {
-  fetchAccounts, upsertAccount, updateAccount, deleteAccount,
-  toggleAccount, testSavedAccount, testNewAccount, maskAuthKey,
+  fetchAccounts, createAccount, updateAccount, deleteAccount,
+  toggleAccount, testSavedAccount, testNewAccount, maskAuthKey, accountErrorMessage,
   type ShellyAccount, type ShellyAccountInput, type TestResult,
 } from '@/lib/shelly-account-service';
 import { forceMetadataRefresh } from '@/lib/shelly-device-config-service';
@@ -139,7 +139,7 @@ export function ParametresTab() {
     try {
       setAccounts(await fetchAccounts());
     } catch (e) {
-      setError(String(e));
+      setError(accountErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -189,12 +189,12 @@ export function ParametresTab() {
       if (editingId) {
         await updateAccount(editingId, payload);
       } else {
-        await upsertAccount(payload);
+        await createAccount(payload);
       }
       setModalOpen(false);
       await load();
     } catch (e) {
-      setError(String(e));
+      setError(accountErrorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -207,7 +207,7 @@ export function ParametresTab() {
       setDeleteId(null);
       await load();
     } catch (e) {
-      setError(String(e));
+      setError(accountErrorMessage(e));
     }
   }
 
@@ -217,7 +217,7 @@ export function ParametresTab() {
       await toggleAccount(id, !current);
       setAccounts(prev => prev.map(a => a.id === id ? { ...a, actif: !current } : a));
     } catch (e) {
-      setError(String(e));
+      setError(accountErrorMessage(e));
     }
   }
 
