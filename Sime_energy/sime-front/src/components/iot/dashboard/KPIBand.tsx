@@ -1,5 +1,5 @@
 // ============================================================
-// Dashboard IOT — KPIs globaux par site (puissance, énergie, coût)
+// Dashboard IOT — KPIs globaux par site (puissance, énergie)
 // ============================================================
 
 import { useEffect, useMemo, useState } from 'react';
@@ -163,7 +163,7 @@ export function KPIBand({ snapshot, allDevices, alertsBySite, period, energyAgg,
   }, [snapshot, allDevices, roles]);
 
   // Mode historique : séparer compteurs principaux et sous-appareils
-  // ─ kwhImport   = M1 SENELEC (import réseau) → base du coût facturé
+  // ─ kwhImport   = M1 SENELEC (import réseau) → énergie soutirée au réseau
   // ─ kwhCharges  = M3 Charges (consommation totale) → affiché comme "conso"
   // ─ kwhPV       = M5 PV (production solaire)
   // ─ kwhFallback = somme des compteurs principaux si M1/M3 absents

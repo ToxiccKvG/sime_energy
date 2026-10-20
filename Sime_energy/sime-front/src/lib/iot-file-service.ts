@@ -29,13 +29,14 @@ interface IotFileRow {
   parent_id: string | null;
   device_location: string | null;
   device_room: string | null;
+  lecture: ImportedFile['lecture'] | null;
   storage_path: string | null;
   content_encoding: ContentEncoding;
   uploaded_at: string;
 }
 
 const ROW_COLUMNS =
-  'id,name,type,statut,row_count,columns,preview,taille,parent_id,device_location,device_room,storage_path,content_encoding,uploaded_at';
+  'id,name,type,statut,row_count,columns,preview,taille,parent_id,device_location,device_room,lecture,storage_path,content_encoding,uploaded_at';
 
 // ---- Conversions ligne ↔ ImportedFile ----
 
@@ -56,6 +57,7 @@ function rowToFile(r: IotFileRow): ImportedFile {
     parentId: r.parent_id ?? undefined,
     deviceLocation: r.device_location ?? undefined,
     deviceRoom: r.device_room ?? undefined,
+    lecture: r.lecture ?? undefined,
   };
 }
 
@@ -72,6 +74,7 @@ function fileToRow(f: Partial<ImportedFile>): Partial<IotFileRow> {
   if (f.parentId !== undefined)       row.parent_id = f.parentId ?? null;
   if (f.deviceLocation !== undefined) row.device_location = f.deviceLocation ?? null;
   if (f.deviceRoom !== undefined)     row.device_room = f.deviceRoom ?? null;
+  if (f.lecture !== undefined)        row.lecture = f.lecture ?? null;
   if (f.uploadedAt !== undefined)     row.uploaded_at = f.uploadedAt.toISOString();
   return row;
 }

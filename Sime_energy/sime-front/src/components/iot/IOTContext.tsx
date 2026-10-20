@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useOrganization } from '@/context/OrganizationContext';
 import { toast } from '@/hooks/use-toast';
 import * as fileService from '@/lib/iot-file-service';
+import type { SupabaseExportOptions } from '@/lib/iot-supabase-service';
 
 // ---- Persistance ----
 //
@@ -87,6 +88,10 @@ interface IOTState {
   selectedFileId: string | null;
   // Profil de charge / données Shelly
   shellyRows: ShellyRow[];
+  // Comment ces lignes ont été chargées depuis Supabase (null : fichier ou
+  // inconnu). Permet au Nettoyage d'interroger le moteur de qualité sur le
+  // même périmètre et d'enregistrer une recette rejouable. Non persisté.
+  chargementShelly: SupabaseExportOptions | null;
   // Données techniques (généralités, hors facturation)
   donneesTechniques: DonneesTechniques;
   // Calendrier
@@ -127,6 +132,7 @@ const DEFAULT_CALENDRIER: CalendrierSite = {
 
 const initialState: IOTState = {
   analysePreset: null,
+  chargementShelly: null,
   files: [],
   filesLoading: false,
   filesLoaded: false,
@@ -150,7 +156,7 @@ type Action =
   | { type: 'UPDATE_FILE'; id: string; data: Partial<ImportedFile> }
   | { type: 'REMOVE_FILE'; id: string }
   | { type: 'SET_SELECTED_FILE'; id: string | null }
-  | { type: 'SET_SHELLY_ROWS'; rows: ShellyRow[] }
+  | { type: 'SET_SHELLY_ROWS'; rows: ShellyRow[]; chargement?: SupabaseExportOptions | null }
   | { type: 'UPDATE_DONNEES_TECHNIQUES'; data: Partial<DonneesTechniques> }
   // Calendrier
   | { type: 'ADD_JOUR_FERIE'; jour: JourFerie }
@@ -185,7 +191,7 @@ function reducer(state: IOTState, action: Action): IOTState {
     case 'SET_SELECTED_FILE':
       return { ...state, selectedFileId: action.id };
     case 'SET_SHELLY_ROWS':
-      return { ...state, shellyRows: action.rows };
+      return { ...state, shellyRows: action.rows, chargementShelly: action.chargement ?? null };
     case 'UPDATE_DONNEES_TECHNIQUES':
       return { ...state, donneesTechniques: { ...state.donneesTechniques, ...action.data } };
     case 'ADD_JOUR_FERIE':
@@ -240,7 +246,7 @@ interface IOTContextValue {
    */
   ensureFileContent: (id: string) => Promise<ImportedFile | null>;
   setSelectedFile: (id: string | null) => void;
-  setShellyRows: (rows: ShellyRow[]) => void;
+  setShellyRows: (rows: ShellyRow[], chargement?: SupabaseExportOptions | null) => void;
   updateDonneesTechniques: (data: Partial<DonneesTechniques>) => void;
   // Calendrier
   addJourFerie: (jour: JourFerie) => void;
@@ -356,7 +362,10 @@ export function IOTProvider({ children }: { children: React.ReactNode }) {
     return p;
   }, [notifyError]);
   const setSelectedFile = useCallback((id: string | null) => dispatch({ type: 'SET_SELECTED_FILE', id }), []);
-  const setShellyRows = useCallback((rows: ShellyRow[]) => dispatch({ type: 'SET_SHELLY_ROWS', rows }), []);
+  const setShellyRows = useCallback(
+    (rows: ShellyRow[], chargement?: SupabaseExportOptions | null) => dispatch({ type: 'SET_SHELLY_ROWS', rows, chargement }),
+    [],
+  );
   const updateDonneesTechniques = useCallback((data: Partial<DonneesTechniques>) => dispatch({ type: 'UPDATE_DONNEES_TECHNIQUES', data }), []);
 
   const addJourFerie = useCallback((jour: JourFerie) => dispatch({ type: 'ADD_JOUR_FERIE', jour }), []);

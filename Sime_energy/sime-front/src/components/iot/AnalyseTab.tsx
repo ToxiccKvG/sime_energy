@@ -1,43 +1,45 @@
-import { useMemo, useState, useRef, useCallback, useEffect, Fragment } from 'react';
+import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { PieOfPie, groupSmallParts, MAX_PARTS_CHOICES, type SliceLabelMode } from '@/components/shared/PieOfPie';
-import { parseExcelBuffer, rowsToObjects, exportJsonToXlsx } from '@/lib/excel-utils';
+import { exportJsonToXlsx } from '@/lib/excel-utils';
+import { appliquerLecture, proposerLecture, lireFichierImporte } from '@/lib/iot-lecture-fichier';
 import { ChartOptions } from '@/components/shared/ChartOptions';
-import { useChartPreferences, usePalette, seriesColor, heatColor, chartTitle, type Palette } from '@/lib/chart-preferences';
+import { useChartPreferences, usePalette, seriesColor, chartTitle } from '@/lib/chart-preferences';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { ChartZoom } from '@/components/shared/ChartZoom';
 import {
   ScatterChart, Scatter, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, AreaChart, Area, Legend,
-  ComposedChart,
 } from 'recharts';
 import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import {
   Filter, BarChart2, TrendingUp, Activity, Upload,
   FileSpreadsheet, X, ChevronDown, ChevronUp, Download,
-  Database, CheckSquare, Square, RefreshCw, Zap,
-  Maximize2, Minimize2, ChevronRight, Layers, FileText,
+  Database, Zap,
+  Maximize2, Minimize2, ChevronRight, Layers, FileText, AlertTriangle,
 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useIOT } from './IOTContext';
 import { ProfilChargeTab } from './ProfilChargeTab';
-import { DevicePeriodsNotice } from './DevicePeriodsNotice';
+import { METRIQUES, METRIQUES_ENV, colorForMetric, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, fmtFr, grandeursDisponibles, type MetricKey, type MetricGroup } from './analyse/communs';
+import { EnvCourbeView, EnvBandeView, EnvHeatmapView, EnvProfil24View, SignatureView } from './analyse/VuesEnvironnement';
+import { PerimetreBar, type PerimetreAnalyse } from './PerimetreBar';
+import { useQualiteMoteur, QualiteLigne } from './QualiteMoteurPanel';
 import { parseShellyRow, profilMiToShellyRow, calculerStats, detecterFormatShelly, parseShellySectionCSV } from '@/lib/iot-profil-engine';
-import { transformRowsToProfilMi, transformHoraireToProfilMi, exporterDonneesSupabase, getColonnesParGroupe, fetchDisponibles } from '@/lib/iot-supabase-service';
+import { transformRowsToProfilMi, transformHoraireToProfilMi, type SupabaseExportOptions } from '@/lib/iot-supabase-service';
 import { JOURS_SEMAINE, MOIS_FR, COLONNES_PROFIL_SHELLY } from './shared';
 import type { ShellyRow } from './shared';
 
 type AnalyseMode = 'courbe' | 'tcd' | 'profil_semaine' | 'distribution' | 'correlation' | 'serie'
-  | 'env_bande' | 'env_heatmap' | 'env_profil24' | 'signature';
+  | 'env_courbe' | 'env_bande' | 'env_heatmap' | 'env_profil24' | 'signature';
 
-const ENV_MODES: AnalyseMode[] = ['env_bande', 'env_heatmap', 'env_profil24'];
+const ENV_MODES: AnalyseMode[] = ['env_courbe', 'env_bande', 'env_heatmap', 'env_profil24'];
 type ChartType = 'bar' | 'line' | 'area' | 'pie';
 
 const COULEURS = ['#a78bfa', '#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#f97316', '#06b6d4'];
@@ -50,80 +52,14 @@ const MODE_LABELS: Record<string, string> = {
   profil_semaine: 'Profil de semaine',
   distribution: 'Distribution',
   correlation: 'Corrélation',
+  env_courbe: 'Courbe',
   env_bande: 'Min / Max par jour',
   env_heatmap: 'Carte de chaleur',
   env_profil24: 'Profil 24 h',
   signature: 'Signature énergétique',
 };
 
-/**
- * Couleur d'une grandeur, prise dans la palette choisie par l'utilisateur
- * (lib/chart-preferences, commune avec le module Mesures). Les couleurs
- * écrites dans METRIQUES / METRIQUES_ENV restent le repli : elles servent
- * encore aux pastilles hors graphique et si une clé est inconnue.
- */
-function colorForMetric(palette: Palette, key: string): string {
-  const iE = METRIQUES.findIndex(m => m.key === key);
-  if (iE >= 0) return seriesColor(palette, iE);
-  const iV = METRIQUES_ENV.findIndex(m => m.key === key);
-  if (iV >= 0) return seriesColor(palette, iV);
-  return seriesColor(palette, 0);
-}
 
-type MetricKey =
-  | 'kwhTotal' | 'kwhNet' | 'kwhRetourTotal'
-  | 'kwhA' | 'kwhB' | 'kwhC'
-  | 'kwhRetourA' | 'kwhRetourB' | 'kwhRetourC'
-  | 'puissKwTotal' | 'puissKwA' | 'puissKwB' | 'puissKwC'
-  | 'montantEnergie' | 'montantEnergieRetour';
-
-type MetricGroup = 'Énergie' | 'Phase A' | 'Phase B' | 'Phase C' | 'Puissance' | 'Coût' ;
-
-const METRIQUES: { key: MetricKey; label: string; unit: string; color: string; group: MetricGroup }[] = [
-  // ÉNERGIE — Totaux
-  { key: 'kwhTotal',             label: 'Consommation totale',       unit: 'kWh',  color: '#3b82f6', group: 'Énergie' },
-  { key: 'kwhNet',               label: 'Énergie nette',             unit: 'kWh',  color: '#a78bfa', group: 'Énergie' },
-  { key: 'kwhRetourTotal',       label: 'Énergie injectée (retour)', unit: 'kWh',  color: '#ec4899', group: 'Énergie' },
-  // PAR PHASE — Soutirage
-  { key: 'kwhA',                 label: 'Phase A — Consommation',    unit: 'kWh',  color: '#22c55e', group: 'Phase A' },
-  { key: 'kwhB',                 label: 'Phase B — Consommation',    unit: 'kWh',  color: '#f59e0b', group: 'Phase B' },
-  { key: 'kwhC',                 label: 'Phase C — Consommation',    unit: 'kWh',  color: '#ec4899', group: 'Phase C' },
-  // PAR PHASE — Retour réseau
-  { key: 'kwhRetourA',           label: 'Phase A — Retour réseau',   unit: 'kWh',  color: '#34d399', group: 'Phase A' },
-  { key: 'kwhRetourB',           label: 'Phase B — Retour réseau',   unit: 'kWh',  color: '#fbbf24', group: 'Phase B' },
-  { key: 'kwhRetourC',           label: 'Phase C — Retour réseau',   unit: 'kWh',  color: '#f472b6', group: 'Phase C' },
-  // PUISSANCE
-  { key: 'puissKwTotal',         label: 'Puissance totale',          unit: 'kW',   color: '#06b6d4', group: 'Puissance' },
-  { key: 'puissKwA',             label: 'Puissance — Phase A',       unit: 'kW',   color: '#67e8f9', group: 'Puissance' },
-  { key: 'puissKwB',             label: 'Puissance — Phase B',       unit: 'kW',   color: '#fde047', group: 'Puissance' },
-  { key: 'puissKwC',             label: 'Puissance — Phase C',       unit: 'kW',   color: '#fda4af', group: 'Puissance' },
-  // COÛT
-  { key: 'montantEnergie',       label: 'Coût consommation',         unit: 'FCFA', color: '#facc15', group: 'Coût' },
-  { key: 'montantEnergieRetour', label: 'Crédit retour réseau',      unit: 'FCFA', color: '#a3e635', group: 'Coût' },
-];
-
-// ── Grandeurs environnementales (CAPTEUR_ENV / ETAT) ──────────
-// Contrairement aux kWh, ces grandeurs ne se somment pas : elles s'observent
-// en min / max / moyenne. Les vues env_* utilisent donc leurs propres agrégats.
-type EnvMetricKey =
-  | 'temperature' | 'humidite' | 'ressenti' | 'pointRosee'
-  | 'uvIndex' | 'luminosite' | 'pression' | 'precipitation'
-  | 'ventVitesse' | 'ventRafale' | 'batterie' | 'signal';
-
-const METRIQUES_ENV: { key: EnvMetricKey; label: string; unit: string; color: string }[] = [
-  { key: 'temperature',   label: 'Température',     unit: '°C',  color: '#f97316' },
-  { key: 'humidite',      label: 'Humidité',        unit: '%',   color: '#3b82f6' },
-  { key: 'ressenti',      label: 'Ressenti',        unit: '°C',  color: '#fb923c' },
-  { key: 'pointRosee',    label: 'Point de rosée',  unit: '°C',  color: '#22d3ee' },
-  { key: 'uvIndex',       label: 'Indice UV',       unit: '',    color: '#a855f7' },
-  { key: 'luminosite',    label: 'Luminosité',      unit: 'lux', color: '#eab308' },
-  { key: 'pression',      label: 'Pression',        unit: 'hPa', color: '#94a3b8' },
-  { key: 'precipitation', label: 'Précipitations',  unit: 'mm',  color: '#38bdf8' },
-  { key: 'ventVitesse',   label: 'Vent',            unit: 'm/s', color: '#34d399' },
-  { key: 'ventRafale',    label: 'Rafale',          unit: 'm/s', color: '#10b981' },
-  { key: 'batterie',      label: 'Batterie',        unit: '%',   color: '#84cc16' },
-  { key: 'signal',        label: 'Signal',          unit: 'dBm', color: '#64748b' },
-];
 
 const ACCENT_COLOR = '#3b82f6';
 
@@ -174,23 +110,6 @@ function recommendedColumns(families: Set<string>): string[] {
   return Array.from(cols);
 }
 
-const DEFAULT_SUPABASE_COLUMNS = recommendedColumns(new Set());
-
-const DEFAULT_COLUMN_GROUPS = {
-  entree: ['Temps', ...ENV_COLUMNS, ...ETAT_COLUMNS],
-  calcule: ENERGIE_COLUMNS,
-  classifieur: CLASSIFIEUR_COLUMNS,
-} as const;
-
-const TOOLTIP_STYLE = {
-  backgroundColor: '#0f172a',
-  border: '1px solid rgba(148,163,184,0.35)',
-  borderRadius: 10,
-  color: '#e2e8f0',
-};
-
-const TOOLTIP_LABEL_STYLE = { color: '#f8fafc', fontWeight: 600 };
-
 const tcdFormatter = (value: number | string, name: string): [string, string] => {
   const meta = METRIQUES.find(m => m.label === name) ?? METRIQUES.find(m => m.key === name);
   const n = typeof value === 'number' ? value : parseFloat(String(value));
@@ -236,11 +155,10 @@ const TCD_LIGNE_LABEL: Record<'mois' | 'jouSemaine' | 'typeJour' | 'appareil' | 
   piece: 'Pièce',
 };
 
-// Libellé d'axe lisible par unité (pour les axes double échelle kWh / kW / FCFA)
+// Libellé d'axe lisible par unité (pour les axes double échelle kWh / kW)
 const UNIT_AXIS_LABEL: Record<string, string> = {
   kWh: 'Énergie (kWh)',
   kW: 'Puissance (kW)',
-  FCFA: 'Montant (FCFA)',
 };
 function axisLabelForUnit(unit?: string): string {
   return unit ? (UNIT_AXIS_LABEL[unit] ?? unit) : '';
@@ -480,286 +398,6 @@ function TcdChart({
 // VUES ENVIRONNEMENTALES
 // ============================================================
 
-interface EnvDayAgg { jour: string; ts: number; range: [number, number]; moy: number; n: number }
-
-function aggEnvByDay(rows: ShellyRow[], metric: EnvMetricKey): EnvDayAgg[] {
-  const byDay = new Map<string, { ts: number; vals: number[] }>();
-  for (const r of rows) {
-    const v = r[metric];
-    if (typeof v !== 'number' || !isFinite(v)) continue;
-    const d = r.date instanceof Date ? r.date : new Date(r.date);
-    const key = d.toISOString().slice(0, 10);
-    const cur = byDay.get(key) ?? { ts: new Date(key).getTime(), vals: [] };
-    cur.vals.push(v);
-    byDay.set(key, cur);
-  }
-  return [...byDay.entries()]
-    .map(([key, { ts, vals }]) => ({
-      jour: new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
-      ts,
-      range: [Math.min(...vals), Math.max(...vals)] as [number, number],
-      moy: vals.reduce((s, v) => s + v, 0) / vals.length,
-      n: vals.length,
-    }))
-    .sort((a, b) => a.ts - b.ts);
-}
-
-// Vue 1 — Bande min/max journalière + moyenne
-function EnvBandeView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
-  const meta = METRIQUES_ENV.find(m => m.key === metric)!;
-  const envPalette = usePalette();
-  const envColor = colorForMetric(envPalette, metric);
-  const data = useMemo(() => aggEnvByDay(rows, metric), [rows, metric]);
-  if (data.length === 0) {
-    return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
-  }
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between px-1">
-        <p className="text-slate-300 text-sm font-medium">{meta.label} — min / max / moyenne par jour</p>
-        <span className="text-slate-500 text-xs">{data.length} jour{data.length > 1 ? 's' : ''}</span>
-      </div>
-      <ResponsiveContainer width="100%" height={340}>
-        <ComposedChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-          <XAxis dataKey="jour" tick={{ fill: '#cbd5e1', fontSize: 11 }} />
-          <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} domain={['auto', 'auto']}
-            label={{ value: meta.unit ? `${meta.label} (${meta.unit})` : meta.label, angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11 }} />
-          <Tooltip
-            contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
-            formatter={(value: number | [number, number], name: string) => {
-              if (Array.isArray(value)) return [`${fmtFr(value[0], 1)} → ${fmtFr(value[1], 1)} ${meta.unit}`, 'Min → Max'];
-              return [`${fmtFr(value, 1)} ${meta.unit}`, name];
-            }} />
-          <Area dataKey="range" name="Min → Max" stroke="none" fill={envColor} fillOpacity={0.18} connectNulls />
-          <Line dataKey="moy" name="Moyenne" stroke={envColor} strokeWidth={2} dot={{ r: 3 }} connectNulls />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-// Vue 2 — Heatmap heures × jours (couleur = moyenne horaire)
-function EnvHeatmapView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
-  const meta = METRIQUES_ENV.find(m => m.key === metric)!;
-  const envPalette = usePalette();
-  const envColor = colorForMetric(envPalette, metric);
-  const { days, grid, vmin, vmax } = useMemo(() => {
-    // (jour, heure) → moyenne
-    const acc = new Map<string, { ts: number; sums: number[]; counts: number[] }>();
-    for (const r of rows) {
-      const v = r[metric];
-      if (typeof v !== 'number' || !isFinite(v)) continue;
-      const d = r.date instanceof Date ? r.date : new Date(r.date);
-      const key = d.toISOString().slice(0, 10);
-      const cur = acc.get(key) ?? { ts: new Date(key).getTime(), sums: Array(24).fill(0), counts: Array(24).fill(0) };
-      cur.sums[d.getHours()] += v;
-      cur.counts[d.getHours()]++;
-      acc.set(key, cur);
-    }
-    const entries = [...acc.entries()].sort((a, b) => a[1].ts - b[1].ts);
-    const days = entries.map(([key]) => new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }));
-    const grid = entries.map(([, { sums, counts }]) =>
-      sums.map((s, h) => (counts[h] > 0 ? s / counts[h] : null)));
-    const flat = grid.flat().filter((v): v is number => v !== null);
-    return { days, grid, vmin: Math.min(...flat), vmax: Math.max(...flat) };
-  }, [rows, metric]);
-
-  if (days.length === 0) {
-    return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
-  }
-
-  // Dégradé de la palette choisie (commun avec le module Mesures).
-  const colorFor = (v: number | null): string => {
-    if (v === null) return 'rgba(255,255,255,0.03)';
-    const t = vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5;
-    return heatColor(envPalette, t);
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between px-1 flex-wrap gap-2">
-        <p className="text-slate-300 text-sm font-medium">{meta.label} — moyenne par heure et par jour</p>
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          {fmtFr(vmin, 1)} {meta.unit}
-          <span className="inline-block h-2.5 w-24 rounded-full"
-            style={{ background: `linear-gradient(90deg, ${envPalette.heat[0]}, ${envPalette.heat[1]}, ${envPalette.heat[2]})` }} />
-          {fmtFr(vmax, 1)} {meta.unit}
-        </div>
-      </div>
-      <div className="overflow-x-auto pb-1">
-        <div className="inline-grid gap-px" style={{ gridTemplateColumns: `2.4rem repeat(${days.length}, minmax(1.4rem, 1fr))`, minWidth: '100%' }}>
-          <div />
-          {days.map((d, i) => (
-            <div key={i} className="text-[0.625rem] text-slate-500 text-center pb-1 whitespace-nowrap">{d}</div>
-          ))}
-          {Array.from({ length: 24 }, (_, h) => (
-            <Fragment key={h}>
-              <div className="text-[0.625rem] text-slate-500 pr-1.5 text-right leading-4">{String(h).padStart(2, '0')}h</div>
-              {grid.map((day, di) => (
-                <div key={di} className="h-4 rounded-[2px]"
-                  style={{ backgroundColor: colorFor(day[h]) }}
-                  title={day[h] !== null ? `${days[di]} ${String(h).padStart(2, '0')}h — ${fmtFr(day[h]!, 1)} ${meta.unit}` : `${days[di]} ${String(h).padStart(2, '0')}h — pas de données`} />
-              ))}
-            </Fragment>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Vue 4 — Profil journalier moyen sur 24 h (moyenne par heure + bande ±1σ)
-function EnvProfil24View({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
-  const meta = METRIQUES_ENV.find(m => m.key === metric)!;
-  const envPalette = usePalette();
-  const envColor = colorForMetric(envPalette, metric);
-  const data = useMemo(() => {
-    const byHour: number[][] = Array.from({ length: 24 }, () => []);
-    for (const r of rows) {
-      const v = r[metric];
-      if (typeof v !== 'number' || !isFinite(v)) continue;
-      const d = r.date instanceof Date ? r.date : new Date(r.date);
-      byHour[d.getHours()].push(v);
-    }
-    return byHour.map((vals, h) => {
-      if (vals.length === 0) return { heure: `${String(h).padStart(2, '0')}h`, moy: null, range: null, n: 0 };
-      const moy = vals.reduce((s, v) => s + v, 0) / vals.length;
-      const std = Math.sqrt(vals.reduce((s, v) => s + (v - moy) ** 2, 0) / vals.length);
-      return {
-        heure: `${String(h).padStart(2, '0')}h`,
-        moy: +moy.toFixed(2),
-        range: [+(moy - std).toFixed(2), +(moy + std).toFixed(2)] as [number, number],
-        n: vals.length,
-      };
-    });
-  }, [rows, metric]);
-
-  if (data.every(d => d.n === 0)) {
-    return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
-  }
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between px-1">
-        <p className="text-slate-300 text-sm font-medium">{meta.label} — cycle journalier moyen (bande ±1σ)</p>
-        <span className="text-slate-500 text-xs">{data.reduce((s, d) => s + d.n, 0).toLocaleString('fr-FR')} relevés</span>
-      </div>
-      <ResponsiveContainer width="100%" height={340}>
-        <ComposedChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-          <XAxis dataKey="heure" tick={{ fill: '#cbd5e1', fontSize: 11 }} interval={1} />
-          <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} domain={['auto', 'auto']}
-            label={{ value: meta.unit ? `${meta.label} (${meta.unit})` : meta.label, angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11 }} />
-          <Tooltip
-            contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
-            formatter={(value: number | [number, number], name: string) => {
-              if (Array.isArray(value)) return [`${fmtFr(value[0], 1)} → ${fmtFr(value[1], 1)} ${meta.unit}`, '±1σ'];
-              return [`${fmtFr(value, 1)} ${meta.unit}`, name];
-            }} />
-          <Area dataKey="range" name="±1σ" stroke="none" fill={envColor} fillOpacity={0.18} connectNulls />
-          <Line dataKey="moy" name="Moyenne" stroke={envColor} strokeWidth={2} dot={{ r: 3 }} connectNulls />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-// Vue 3 — Signature énergétique : consommation journalière vs température
-// moyenne extérieure. Nuage de points + droite de régression : la pente
-// (kWh/°C) mesure la sensibilité thermique du site (clim/chauffage).
-function SignatureView({ envRows, energyRows }: { envRows: ShellyRow[]; energyRows: ShellyRow[] }) {
-  const { points, reg } = useMemo(() => {
-    const byDay = new Map<string, { temps: number[]; kwh: number }>();
-    for (const r of envRows) {
-      if (typeof r.temperature !== 'number' || !isFinite(r.temperature)) continue;
-      const key = (r.date instanceof Date ? r.date : new Date(r.date)).toISOString().slice(0, 10);
-      const cur = byDay.get(key) ?? { temps: [], kwh: 0 };
-      cur.temps.push(r.temperature);
-      byDay.set(key, cur);
-    }
-    for (const r of energyRows) {
-      const key = (r.date instanceof Date ? r.date : new Date(r.date)).toISOString().slice(0, 10);
-      const cur = byDay.get(key);
-      if (cur) cur.kwh += r.kwhTotal ?? 0;
-    }
-    const points = [...byDay.entries()]
-      .filter(([, v]) => v.temps.length > 0 && v.kwh > 0)
-      .map(([key, v]) => ({
-        x: +(v.temps.reduce((s, t) => s + t, 0) / v.temps.length).toFixed(2),
-        y: +v.kwh.toFixed(3),
-        jour: new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
-      }))
-      .sort((a, b) => a.x - b.x);
-
-    // Régression linéaire y = a·x + b, et R²
-    let reg: { a: number; b: number; r2: number; line: { x: number; y: number }[] } | null = null;
-    if (points.length >= 3) {
-      const n = points.length;
-      const mx = points.reduce((s, p) => s + p.x, 0) / n;
-      const my = points.reduce((s, p) => s + p.y, 0) / n;
-      const sxy = points.reduce((s, p) => s + (p.x - mx) * (p.y - my), 0);
-      const sxx = points.reduce((s, p) => s + (p.x - mx) ** 2, 0);
-      const syy = points.reduce((s, p) => s + (p.y - my) ** 2, 0);
-      if (sxx > 0 && syy > 0) {
-        const a = sxy / sxx;
-        const b = my - a * mx;
-        const r2 = (sxy * sxy) / (sxx * syy);
-        const xMin = points[0].x, xMax = points[points.length - 1].x;
-        reg = { a, b, r2, line: [{ x: xMin, y: a * xMin + b }, { x: xMax, y: a * xMax + b }] };
-      }
-    }
-    return { points, reg };
-  }, [envRows, energyRows]);
-
-  if (points.length === 0) {
-    return (
-      <p className="text-slate-500 text-sm py-10 text-center">
-        Aucun jour ne combine température et consommation — vérifiez que la période chargée couvre les deux types d'appareils.
-      </p>
-    );
-  }
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between px-1 flex-wrap gap-2">
-        <p className="text-slate-300 text-sm font-medium">Consommation journalière vs température moyenne</p>
-        {reg && (
-          <div className="flex items-center gap-2 text-xs">
-            <Badge className="bg-orange-500/20 text-orange-300 border-0">
-              Pente : {fmtFr(reg.a, 2)} kWh/°C
-            </Badge>
-            <Badge className={`border-0 ${reg.r2 >= 0.5 ? 'bg-green-500/20 text-green-300' : 'bg-white/10 text-slate-400'}`}>
-              R² = {fmtFr(reg.r2, 2)}{reg.r2 < 0.5 ? ' (corrélation faible)' : ''}
-            </Badge>
-          </div>
-        )}
-      </div>
-      <ResponsiveContainer width="100%" height={360}>
-        <ComposedChart data={points} margin={{ top: 5, right: 20, bottom: 15, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-          <XAxis dataKey="x" type="number" domain={['auto', 'auto']} tick={{ fill: '#cbd5e1', fontSize: 11 }}
-            label={{ value: 'Température moyenne du jour (°C)', position: 'insideBottom', offset: -8, fill: '#94a3b8', fontSize: 11 }} />
-          <YAxis dataKey="y" tick={{ fill: '#cbd5e1', fontSize: 10 }} domain={['auto', 'auto']}
-            label={{ value: 'Consommation (kWh/jour)', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11 }} />
-          <Tooltip
-            contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
-            formatter={(value: number, name: string) =>
-              name === 'Consommation' ? [`${fmtFr(value, 2)} kWh`, name] : [`${fmtFr(value, 1)} °C`, name]}
-            labelFormatter={(_, payload) => (payload?.[0]?.payload as { jour?: string })?.jour ?? ''} />
-          <Scatter dataKey="y" name="Consommation" fill="#f97316" />
-          {reg && (
-            <Line data={reg.line} dataKey="y" name="Régression" stroke="#22d3ee"
-              strokeWidth={2} strokeDasharray="6 3" dot={false} legendType="none" />
-          )}
-        </ComposedChart>
-      </ResponsiveContainer>
-      <p className="text-slate-500 text-xs px-1">
-        Chaque point = 1 jour. Une pente positive élevée indique une consommation sensible à la chaleur
-        (climatisation) : la pente chiffre le surcoût en kWh par degré supplémentaire.
-      </p>
-    </div>
-  );
-}
-
 function reviveStoredShellyRows(rows: Record<string, unknown>[]): ShellyRow[] {
   return rows.map((row) => ({
     ...row,
@@ -779,11 +417,6 @@ function safeNum(v: unknown, fallback = 0): number {
   return isFinite(n) ? n : fallback;
 }
 
-// Format français : remplace le . décimal par une virgule (ex: 13.455 → 13,455)
-function fmtFr(n: number, digits: number): string {
-  return n.toFixed(digits).replace('.', ',');
-}
-
 function fmt3(v: unknown): string {
   return fmtFr(safeNum(v, 0), 3);
 }
@@ -800,657 +433,6 @@ function fmt0(v: unknown): string {
   return fmtFr(safeNum(v, 0), 0);
 }
 
-function getNumericCols(rows: Record<string, unknown>[]): string[] {
-  if (rows.length === 0) return [];
-  return Object.keys(rows[0]).filter(col => {
-    const sample = rows.find(r => r[col] !== null && r[col] !== undefined)?.[col];
-    return sample !== undefined && !isNaN(Number(sample));
-  });
-}
-
-function getDateCols(rows: Record<string, unknown>[]): string[] {
-  if (rows.length === 0) return [];
-  return Object.keys(rows[0]).filter(col => {
-    const val = rows[0][col];
-    if (!val) return false;
-    if (val instanceof Date) return true;
-    const s = String(val);
-    return !isNaN(Date.parse(s)) || s.match(/\d{1,4}[-/]\d{1,2}[-/]\d{1,4}/);
-  });
-}
-
-function genericToShellyRow(
-  raw: Record<string, unknown>,
-  dateCol: string,
-  valueCol: string,
-  joursFerier: { date: Date; actif: boolean }[],
-): ShellyRow | null {
-  const remapped: Record<string, unknown> = {
-    ...raw,
-    Temps: raw[dateCol],
-    'Wh_Total': typeof raw[valueCol] === 'number' ? (raw[valueCol] as number) * 1000 : 0,
-  };
-  return parseShellyRow(remapped, joursFerier as import('@/components/iot/shared').JourFerie[]);
-}
-
-// ── Familles d'appareils connues (schema.sql SHELLY_GCP_00) ────
-const DEVICE_FAMILY_OPTIONS = [
-  { value: '', label: 'Toutes les familles' },
-  { value: 'ENERGIE_3PH', label: 'ENERGIE_3PH — Shelly 3EM / Pro 3EM' },
-  { value: 'ENERGIE_2PH', label: 'ENERGIE_2PH — Shelly 2EM / Pro 2EM' },
-  { value: 'ENERGIE_1PH', label: 'ENERGIE_1PH — Shelly EM / PM / Plug' },
-  { value: 'LUMIERE', label: 'LUMIERE — Dimmer / Bulb' },
-  { value: 'CAPTEUR_ENV', label: 'CAPTEUR_ENV — H&T / Gas / CO₂' },
-  { value: 'ETAT', label: 'ETAT — Relais / Prise / Contact' },
-];
-
-// ============================================================
-// PANNEAU : Export Supabase
-// ============================================================
-function SupabaseExportPanel({
-  onDataLoaded,
-}: {
-  onDataLoaded: (rows: Record<string, unknown>[], colonnes: string[]) => void;
-}) {
-  // ── Dates par défaut : 7 derniers jours ──────────────────────
-  const todayStr = new Date().toISOString().split('T')[0];
-  const sevenDaysAgoStr = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-  const [open, setOpen] = useState(true);
-  const [showColumnsForm, setShowColumnsForm] = useState(false);
-  const [expandedGroups, setExpandedGroups] = useState<Record<'entree' | 'calcule' | 'classifieur', boolean>>({
-    entree: false,
-    calcule: false,
-    classifieur: false,
-  });
-  const [selectedCols, setSelectedCols] = useState<Set<string>>(() =>
-    new Set(DEFAULT_SUPABASE_COLUMNS)
-  );
-  // Tant que l'utilisateur n'a pas personnalisé manuellement, les colonnes
-  // s'adaptent automatiquement aux familles d'appareils réellement chargées.
-  const [colsAuto, setColsAuto] = useState(true);
-
-  // Granularité des données — auto-forcée sur "minute" pour les capteurs
-  // environnementaux/état, car shelly_cl_horaire n'agrège que l'énergie
-  // (aucune colonne température/humidité/etc.), tant que l'utilisateur ne
-  // choisit pas explicitement une granularité.
-  const [granularite, setGranularite] = useState<'horaire' | 'minute'>('horaire');
-  const [granulariteAuto, setGranulariteAuto] = useState(true);
-
-  // Filtres — site vide = tous les sites
-  const [site, setSite] = useState('');
-  const [deviceFamily, setDeviceFamily] = useState('ENERGIE_3PH');
-  const [deviceRoom, setDeviceRoom] = useState('');
-  const [deviceSearch, setDeviceSearch] = useState('');
-  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
-  const [dateDebut, setDateDebut] = useState(sevenDaysAgoStr);
-  const [dateFin, setDateFin] = useState(todayStr);
-  const [limit, setLimit] = useState<number | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
-  const [resultCount, setResultCount] = useState<number | null>(null);
-
-  // ── Données dynamiques depuis Supabase ───────────────────────
-  const [disponibles, setDisponibles] = useState<{
-    sites: string[];
-    devices: { name: string; device_id: string; device_family: string; site: string; room?: string | null }[];
-    deviceFamilies?: string[];
-    rooms?: string[];
-  }>({ sites: [], devices: [] });
-  const [loadingMeta, setLoadingMeta] = useState(false);
-  // Vrai une fois le catalogue reçu (loadingMeta est faux avant même le départ du fetch).
-  const [metaLoaded, setMetaLoaded] = useState(false);
-
-  useEffect(() => {
-    setLoadingMeta(true);
-    fetchDisponibles().then(d => {
-      setDisponibles(d);
-      setLoadingMeta(false);
-      setMetaLoaded(true);
-    });
-  }, []);
-
-  // Raccourci venu de l'onglet Sources (« Analyser ») : pré-coche les appareils
-  // de la source et cale le site, puis se consomme. Tout reste modifiable — le
-  // chargement libre (site / famille / appareil / période) n'est pas touché.
-  const { state: { analysePreset }, setAnalysePreset } = useIOT();
-  const [presetLabel, setPresetLabel] = useState<string | null>(null);
-  // Appareils à cocher une fois les filtres posés (voir l'effet après la purge).
-  const [pendingPresetIds, setPendingPresetIds] = useState<string[] | null>(null);
-  useEffect(() => {
-    // Attend le catalogue : la purge ci-dessous retire toute sélection absente
-    // des appareils filtrés, et un catalogue vide viderait la pré-sélection.
-    if (!analysePreset || !metaLoaded) return;
-    setSite(analysePreset.site);
-    setDeviceFamily('');            // la source peut mêler plusieurs familles
-    setDeviceRoom('');
-    setDeviceSearch('');
-    setPendingPresetIds(analysePreset.deviceIds);
-    setPresetLabel(analysePreset.label);
-    setOpen(true);
-    setAnalysePreset(null);
-  }, [analysePreset, metaLoaded, setAnalysePreset]);
-
-  const siteDeviceCounts = disponibles.devices.reduce<Record<string, number>>((acc, d) => {
-    const key = d.site || 'Sans site';
-    acc[key] = (acc[key] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  // Pièces disponibles pour le site sélectionné (ou toutes si aucun site choisi)
-  const roomOptions = Array.from(new Set(
-    disponibles.devices
-      .filter(d => !site || d.site === site)
-      .map(d => d.room)
-      .filter((r): r is string => Boolean(r))
-  )).sort();
-
-  // Appareils filtrés par site + famille + pièce + recherche
-  const devicesFiltres = disponibles.devices.filter(d =>
-    (!site || d.site === site) &&
-    (!deviceFamily || d.device_family === deviceFamily) &&
-    (!deviceRoom || d.room === deviceRoom) &&
-    (!deviceSearch || d.name.toLowerCase().includes(deviceSearch.toLowerCase()))
-  );
-
-  const devicesBySite = devicesFiltres.reduce<Record<string, typeof devicesFiltres>>((acc, d) => {
-    const key = d.site || 'Sans site';
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(d);
-    return acc;
-  }, {});
-
-  // Familles des appareils effectivement ciblés (sélection explicite sinon filtre courant)
-  // — sert à adapter automatiquement les colonnes proposées (énergie / météo / état).
-  const familiesActives = (selectedDeviceIds.length > 0
-    ? disponibles.devices.filter(d => selectedDeviceIds.includes(d.device_id))
-    : devicesFiltres
-  ).map(d => d.device_family).filter(Boolean) as string[];
-  const familiesKey = Array.from(new Set(familiesActives)).sort().join(',');
-
-  useEffect(() => {
-    if (!colsAuto) return;
-    setSelectedCols(new Set(recommendedColumns(new Set(familiesKey ? familiesKey.split(',') : []))));
-     
-  }, [familiesKey, colsAuto]);
-
-  useEffect(() => {
-    if (!granulariteAuto) return;
-    const families = new Set(familiesKey ? familiesKey.split(',') : []);
-    // La table horaire agrège désormais aussi les capteurs (temperature_moy,
-    // humidity_moy…), donc une sélection mixte énergie + capteurs reste en
-    // horaire : c'est la seule granularité qui permet de croiser consommation
-    // et température. La minute ne s'impose que pour une sélection composée
-    // uniquement de capteurs, où l'on veut le relevé brut.
-    const hasEnergie = Array.from(families).some(f => ENERGIE_FAMILIES.has(f) || f === 'LUMIERE');
-    const hasCapteur = families.has('CAPTEUR_ENV') || families.has('ETAT');
-    setGranularite(hasCapteur && !hasEnergie ? 'minute' : 'horaire');
-     
-  }, [familiesKey, granulariteAuto]);
-
-  const groupes = getColonnesParGroupe();
-  const GROUPE_LABELS = { entree: "Données d'entrée", calcule: 'Données calculées', classifieur: 'Classifieurs' };
-
-  useEffect(() => {
-    const availableIds = new Set(devicesFiltres.map(d => d.device_id));
-    setSelectedDeviceIds(prev => prev.filter(id => availableIds.has(id)));
-  }, [site, deviceFamily, deviceRoom, deviceSearch, disponibles.devices]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Pré-sélection venue de l'onglet Sources : appliquée APRÈS la purge
-  // ci-dessus (même commit, déclaré ensuite), une fois site et famille en place.
-  useEffect(() => {
-    if (!pendingPresetIds) return;
-    setSelectedDeviceIds(pendingPresetIds);
-    setPendingPresetIds(null);
-  }, [pendingPresetIds, site, deviceFamily]);
-
-  const toggleCol = (key: string) => {
-    setColsAuto(false);
-    setSelectedCols(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  };
-
-  const selectGroupe = (keys: string[], select: boolean) => {
-    setColsAuto(false);
-    setSelectedCols(prev => {
-      const next = new Set(prev);
-      keys.forEach(k => select ? next.add(k) : next.delete(k));
-      return next;
-    });
-  };
-
-  const handleFetch = async () => {
-    setLoading(true);
-    setErreur(null);
-    const colonnes = Array.from(selectedCols);
-    const result = await exporterDonneesSupabase({
-      colonnes,
-      granularite,
-      site: site.trim() || undefined,
-      deviceFamily: deviceFamily || undefined,
-      deviceIds: selectedDeviceIds.length > 0 ? selectedDeviceIds : undefined,
-      dateDebut: dateDebut || undefined,
-      dateFin: dateFin || undefined,
-      limit,
-    });
-    setLoading(false);
-    if (result.erreur) {
-      setErreur(result.erreur);
-    } else {
-      setResultCount(result.total);
-      onDataLoaded(result.rows, colonnes);
-    }
-  };
-
-  const resetToDefaultColumns = () => {
-    setColsAuto(true);
-    setGranulariteAuto(true);
-    setSelectedCols(new Set(recommendedColumns(new Set(familiesKey ? familiesKey.split(',') : []))));
-  };
-  const toggleExpandedGroup = (group: 'entree' | 'calcule' | 'classifieur') =>
-    setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
-  const toggleDeviceId = (deviceId: string) =>
-    setSelectedDeviceIds(prev => prev.includes(deviceId) ? prev.filter(id => id !== deviceId) : [...prev, deviceId]);
-
-  return (
-    <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
-      <button
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors"
-        onClick={() => setOpen(v => !v)}
-      >
-        <div className="flex items-center gap-2">
-          <Database className="h-4 w-4 text-green-400" />
-          <span className="text-white font-medium text-sm">Charger depuis Supabase</span>
-          {resultCount !== null && (
-            <Badge className="bg-green-500/20 text-green-400 border-0 text-xs ml-2">
-              {resultCount.toLocaleString('fr-FR')} ligne(s)
-            </Badge>
-          )}
-        </div>
-        {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
-      </button>
-
-
-      {open && (
-        <div className="border-t border-white/10 p-4 space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4">
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                <div className="md:col-span-2 xl:col-span-1">
-                  <Label className="text-slate-400 text-xs mb-1 block">Granularité</Label>
-                  <div className="flex items-center gap-2">
-                    {(['horaire', 'minute'] as const).map(g => (
-                      <button
-                        key={g}
-                        onClick={() => { setGranulariteAuto(false); setGranularite(g); }}
-                        className={`px-3 py-2 rounded-lg text-xs font-medium border transition-all
-                          ${granularite === g
-                            ? 'bg-green-600/30 text-green-300 border-green-500/50'
-                            : 'text-slate-400 border-white/15 hover:text-white hover:bg-white/5'}`}
-                      >
-                        {g === 'horaire' ? 'Horaire' : 'Minute'}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-slate-500 text-[0.6875rem] mt-1">
-                    {granulariteAuto
-                      ? (granularite === 'minute' ? 'Auto — relevés bruts des capteurs sélectionnés' : 'Auto — moyennes horaires, capteurs inclus')
-                      : (granularite === 'horaire' ? 'Recommandé pour l’analyse' : 'Plus lourd, données brutes')}
-                  </p>
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">
-                    Site
-                    {loadingMeta && <RefreshCw className="inline h-3 w-3 ml-1 animate-spin text-slate-500" />}
-                  </Label>
-                  <select
-                    value={site}
-                    onChange={e => { setSite(e.target.value); setSelectedDeviceIds([]); setDeviceRoom(''); }}
-                    className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
-                  >
-                    <option value="" className="bg-[#1a1d2e]">Tous les sites</option>
-                    {disponibles.sites.map(s => (
-                      <option key={s} value={s} className="bg-[#1a1d2e]">
-                        {s} ({siteDeviceCounts[s] ?? 0} appareils)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Famille d'appareil</Label>
-                  <select
-                    value={deviceFamily}
-                    onChange={e => setDeviceFamily(e.target.value)}
-                    className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
-                  >
-                    {DEVICE_FAMILY_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value} className="bg-[#1a1d2e]">{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Pièce</Label>
-                  <select
-                    value={deviceRoom}
-                    onChange={e => setDeviceRoom(e.target.value)}
-                    className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
-                    disabled={roomOptions.length === 0}
-                  >
-                    <option value="" className="bg-[#1a1d2e]">Toutes les pièces</option>
-                    {roomOptions.map(r => (
-                      <option key={r} value={r} className="bg-[#1a1d2e]">{r}</option>
-                    ))}
-                  </select>
-                  {roomOptions.length === 0 && (
-                    <p className="text-slate-600 text-[0.6875rem] mt-1">Aucune pièce renseignée pour ce filtre</p>
-                  )}
-                </div>
-
-                <div className="md:col-span-2 xl:col-span-3">
-                  <Label className="text-slate-400 text-xs mb-1 block">
-                    Appareils
-                    <span className="text-slate-500 ml-1">
-                      ({devicesFiltres.length} disponible{devicesFiltres.length > 1 ? 's' : ''} / {disponibles.devices.length} au total)
-                    </span>
-                  </Label>
-                  <div className="rounded-lg border border-white/10 bg-white/3 p-3 space-y-3">
-                    <Input
-                      value={deviceSearch}
-                      onChange={e => setDeviceSearch(e.target.value)}
-                      placeholder={loadingMeta ? 'Chargement…' : 'Rechercher un appareil...'}
-                      className="h-9 text-xs bg-white/5 border-white/20 text-white"
-                    />
-                    {presetLabel && selectedDeviceIds.length > 0 && (
-                      <div className="flex items-center justify-between gap-2 text-xs rounded-md border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5">
-                        <span className="text-blue-200">
-                          Pré-sélection depuis la source <span className="font-medium">{presetLabel}</span> — {selectedDeviceIds.length} appareil{selectedDeviceIds.length > 1 ? 's' : ''}, modifiable.
-                        </span>
-                        <button className="text-blue-300 hover:text-white shrink-0" onClick={() => { setPresetLabel(null); setSelectedDeviceIds([]); }}>
-                          Tout désélectionner
-                        </button>
-                      </div>
-                    )}
-                    {selectedDeviceIds.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {selectedDeviceIds.map(id => {
-                          const device = disponibles.devices.find(d => d.device_id === id);
-                          if (!device) return null;
-                          return (
-                            <Badge key={id} className="bg-blue-600/20 text-blue-300 border-0 text-xs">
-                              {device.name}
-                              <button className="ml-1 text-blue-200" onClick={() => toggleDeviceId(id)}>x</button>
-                            </Badge>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <div className="max-h-48 overflow-auto rounded-lg border border-white/10 bg-[#0f111a]/40">
-                      {Object.entries(devicesBySite).length > 0 ? (
-                        Object.entries(devicesBySite).map(([siteName, devs]) => (
-                          <div key={siteName} className="border-b border-white/5 last:border-b-0">
-                            <div className="px-3 py-2 text-xs font-medium text-slate-300 bg-white/5">
-                              {siteName} ({devs.length} appareil{devs.length > 1 ? 's' : ''})
-                            </div>
-                            <div className="p-2 space-y-1">
-                              {devs.map(d => {
-                                const checked = selectedDeviceIds.includes(d.device_id);
-                                return (
-                                  <label key={d.device_id} className="flex items-center gap-2 px-2 py-1 rounded text-xs text-slate-300 hover:bg-white/5 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => toggleDeviceId(d.device_id)}
-                                      className="accent-blue-500"
-                                    />
-                                    <span className="flex-1 min-w-0 truncate">{d.name}</span>
-                                    <span className="text-slate-500">{d.device_family}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="px-3 py-4 text-xs text-slate-500">Aucun appareil trouvé pour ce filtre.</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Date début</Label>
-                  <Input
-                    type="date"
-                    value={dateDebut}
-                    onChange={e => setDateDebut(e.target.value)}
-                    className="h-9 text-xs bg-white/5 border-white/20 text-white"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Date fin</Label>
-                  <Input
-                    type="date"
-                    value={dateFin}
-                    onChange={e => setDateFin(e.target.value)}
-                    className="h-9 text-xs bg-white/5 border-white/20 text-white"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Limite</Label>
-                  <select
-                    value={limit ?? ''}
-                    onChange={e => setLimit(e.target.value === '' ? undefined : parseInt(e.target.value))}
-                    className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
-                  >
-                    <option value="" className="bg-[#1a1d2e]">Illimité</option>
-                    {[1000, 5000, 10000, 25000, 50000].map(n => (
-                      <option key={n} value={n} className="bg-[#1a1d2e]">{n.toLocaleString('fr-FR')} lignes</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <DevicePeriodsNotice
-                deviceIds={selectedDeviceIds.length > 0 ? selectedDeviceIds : devicesFiltres.map(d => d.device_id)}
-                deviceName={id => disponibles.devices.find(d => d.device_id === id)?.name ?? id}
-                dateDebut={dateDebut}
-                dateFin={dateFin}
-                onStartAt={setDateDebut}
-              />
-            </div>
-
-            <div className="bg-white/3 rounded-xl border border-white/10 p-4 space-y-3">
-              <div>
-                <p className="text-white text-sm font-medium">Colonnes à charger</p>
-                <p className="text-slate-500 text-xs mt-1">
-                  Les colonnes habituelles sont sélectionnées par défaut.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Badge className="bg-blue-600/20 text-blue-300 border-0 text-xs">
-                  {selectedCols.size} colonne(s)
-                </Badge>
-                <Badge className={colsAuto ? 'bg-green-600/20 text-green-300 border-0 text-xs' : 'bg-white/10 text-slate-300 border-0 text-xs'}>
-                  {colsAuto ? 'Adapté automatiquement' : 'Personnalisé'}
-                </Badge>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 border-white/20 text-white hover:bg-white/10"
-                  onClick={() => setShowColumnsForm(v => !v)}
-                >
-                  {showColumnsForm ? 'Masquer la personnalisation' : 'Personnaliser les colonnes'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-8 text-slate-400 hover:text-white hover:bg-white/10"
-                  onClick={resetToDefaultColumns}
-                >
-                  Colonnes habituelles
-                </Button>
-              </div>
-
-              <p className="text-slate-500 text-xs">
-                {site && <span>Site : <span className="text-slate-300">{site}</span> · </span>}
-                {deviceFamily && <span>Famille : <span className="text-slate-300">{deviceFamily}</span> · </span>}
-                {deviceRoom && <span>Pièce : <span className="text-slate-300">{deviceRoom}</span> · </span>}
-                {selectedDeviceIds.length > 0 && <span>Appareils : <span className="text-slate-300">{selectedDeviceIds.length}</span></span>}
-                {!site && !deviceFamily && !deviceRoom && selectedDeviceIds.length === 0 && <span>Aucun filtre spécifique appliqué</span>}
-              </p>
-
-              <Button
-                className="w-full bg-green-600 hover:bg-green-500 text-white"
-                onClick={handleFetch}
-                disabled={loading || selectedCols.size === 0}
-              >
-                {loading
-                  ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Chargement...</>
-                  : <><Database className="h-4 w-4 mr-2" /> Charger dans TCD</>}
-              </Button>
-            </div>
-          </div>
-
-          {showColumnsForm && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-slate-300 text-xs font-semibold uppercase tracking-wide">
-                  Personnalisation des colonnes ({selectedCols.size} / {COLONNES_PROFIL_SHELLY.length})
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    className="text-xs text-blue-400 hover:text-blue-300"
-                    onClick={resetToDefaultColumns}
-                  >
-                    Habituel
-                  </button>
-                  <span className="text-slate-600">·</span>
-                  <button
-                    className="text-xs text-blue-400 hover:text-blue-300"
-                    onClick={() => setSelectedCols(new Set(COLONNES_PROFIL_SHELLY.map(c => c.key)))}
-                  >
-                    Tout
-                  </button>
-                  <span className="text-slate-600">·</span>
-                  <button
-                    className="text-xs text-slate-400 hover:text-white"
-                    onClick={() => setSelectedCols(new Set())}
-                  >
-                    Aucun
-                  </button>
-                </div>
-              </div>
-
-              {(['entree', 'calcule', 'classifieur'] as const).map(groupe => {
-                const cols = groupes[groupe];
-                const keys = cols.map(c => c.key);
-                const nbSelected = keys.filter(k => selectedCols.has(k)).length;
-                const allSelected = nbSelected === keys.length;
-                const defaultKeys = DEFAULT_COLUMN_GROUPS[groupe];
-                const extraCols = cols.filter(col => !defaultKeys.includes(col.key as never));
-                return (
-                  <div key={groupe} className="bg-white/3 rounded-lg border border-white/10 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-slate-300 text-xs font-medium">{GROUPE_LABELS[groupe]}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-slate-500 text-xs">{nbSelected}/{keys.length}</span>
-                        <button
-                          className="text-xs text-slate-400 hover:text-white"
-                          onClick={() => selectGroupe(keys, !allSelected)}
-                        >
-                          {allSelected ? 'Tout décocher' : 'Tout cocher'}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5">
-                      {cols.filter(col => defaultKeys.includes(col.key as never)).map(col => {
-                        const isSelected = selectedCols.has(col.key);
-                        return (
-                          <button
-                            key={col.key}
-                            onClick={() => toggleCol(col.key)}
-                            className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-all border
-                              ${isSelected
-                                ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
-                                : 'text-slate-500 border-white/10 hover:text-slate-300 hover:border-white/20'}`}
-                          >
-                            {isSelected
-                              ? <CheckSquare className="h-3 w-3 shrink-0" />
-                              : <Square className="h-3 w-3 shrink-0" />}
-                            {col.label}
-                            {col.unite && <span className="text-slate-600 text-[0.625rem]">({col.unite})</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {extraCols.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-white/5">
-                        <button
-                          className="flex items-center gap-2 text-xs text-slate-400 hover:text-white"
-                          onClick={() => toggleExpandedGroup(groupe)}
-                        >
-                          {expandedGroups[groupe] ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                          {expandedGroups[groupe] ? 'Masquer les autres colonnes' : 'Afficher les autres colonnes'}
-                        </button>
-                        {expandedGroups[groupe] && (
-                          <div className="flex flex-wrap gap-1.5 mt-3">
-                            {extraCols.map(col => {
-                              const isSelected = selectedCols.has(col.key);
-                              return (
-                                <button
-                                  key={col.key}
-                                  onClick={() => toggleCol(col.key)}
-                                  className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-all border
-                                    ${isSelected
-                                      ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
-                                      : 'text-slate-500 border-white/10 hover:text-slate-300 hover:border-white/20'}`}
-                                >
-                                  {isSelected
-                                    ? <CheckSquare className="h-3 w-3 shrink-0" />
-                                    : <Square className="h-3 w-3 shrink-0" />}
-                                  {col.label}
-                                  {col.unite && <span className="text-slate-600 text-[0.625rem]">({col.unite})</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {erreur && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-red-400 text-sm">
-              {erreur}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================
-// Filtre multi-sélection (Appareil / Pièce) — appliqué à tous les graphiques
-// ============================================================
 function MultiSelectFilter({ label, icon, options, selected, onChange }: {
   label: string;
   icon: React.ReactNode;
@@ -1532,33 +514,41 @@ export function AnalyseTab() {
   }, []);
 
   // ---- Import fichier ----
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
   const [localRows, setLocalRows] = useState<ShellyRow[]>([]);
-  const [rawData, setRawData] = useState<Record<string, unknown>[]>([]);
-  const [allColumns, setAllColumns] = useState<string[]>([]);
-  const [dateCol, setDateCol] = useState<string>('');
-  const [valueCol, setValueCol] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
-  const [loading, setLoading] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [mappingNeeded, setMappingNeeded] = useState(false);
+  // Fichier sans aucune date lisible : sa lecture se corrige dans Fichiers
+  const [fichierIllisible, setFichierIllisible] = useState<string | null>(null);
 
   // ---- Données Supabase chargées ----
   const [supabaseRows, setSupabaseRows] = useState<ShellyRow[]>([]);
   const [supabaseFileName, setSupabaseFileName] = useState<string>('');
+  const [supabaseChargement, setSupabaseChargement] = useState<SupabaseExportOptions | null>(null);
+  // Périmètre choisi dans la barre (site, appareils, période, plage horaire) :
+  // partagé par toutes les vues, Courbe de charge comprise
+  const [perimetreAnalyse, setPerimetreAnalyse] = useState<PerimetreAnalyse | null>(null);
+  // Plage horaire appliquée chaque jour aux relevés chargés
+  const supabaseRowsPlage = useMemo(() => {
+    const p = perimetreAnalyse;
+    if (!p || (p.heureDebut === 0 && p.heureFin === 23)) return supabaseRows;
+    return supabaseRows.filter(r => {
+      const h = toDate(r.date).getHours();
+      return p.heureDebut <= p.heureFin ? h >= p.heureDebut && h <= p.heureFin : h >= p.heureDebut || h <= p.heureFin;
+    });
+  }, [supabaseRows, perimetreAnalyse]);
 
-  // ---- Panneau qualité : visible seulement si des anomalies existent ----
-  const [showQualityPanel, setShowQualityPanel] = useState(false);
-  // true quand les données viennent de la bibliothèque (fichier déjà nettoyé) — pas de rapport qualité
-  const [dataFromLibrary, setDataFromLibrary] = useState(false);
 
   // Source active: supabase > local > contexte
-  const activeRows = supabaseRows.length > 0 ? supabaseRows
+  const activeRows = supabaseRows.length > 0 ? supabaseRowsPlage
     : localRows.length > 0 ? localRows : shellyRows;
-  const dataSource = supabaseRows.length > 0 ? `Supabase (${supabaseFileName})`
+  // Qualité des données Supabase : le même moteur que le Nettoyage
+  const qualite = useQualiteMoteur(supabaseRowsPlage, supabaseRows.length > 0, null);
+  // Source décrite par son périmètre (site · période), pas par « Supabase — Tous appareils »
+  const jjmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+  const dataSource = supabaseRows.length > 0
+    ? (perimetreAnalyse ? `${perimetreAnalyse.site || 'Tous les sites'} · ${jjmm(perimetreAnalyse.dateDebut)} → ${jjmm(perimetreAnalyse.dateFin)}` : 'Données Shelly')
     : localRows.length > 0 ? fileName
-      : shellyRows.length > 0 ? 'Données importées (contexte)' : null;
+      : shellyRows.length > 0 ? 'Données transmises par un autre onglet' : null;
 
   // ---- Analyse ----
   const [mode, setMode] = useState<AnalyseMode>('courbe');
@@ -1613,214 +603,6 @@ export function AnalyseTab() {
     });
   const isHidden = (key: string) => hiddenSeries.has(key);
 
-  // ============================================================
-  // RAPPORT QUALITÉ (anomalies) + solutions Nettoyage
-  // ============================================================
-
-  type DataIssueType =
-    | 'duplicates_day'
-    | 'duplicates_exact'
-    | 'zeros'
-    | 'outliers'
-    | 'gaps'
-    | 'negatives'
-    | 'phase_mismatch';
-
-  interface DataIssue {
-    id: DataIssueType;
-    count: number;
-    description: string;
-    detail?: string;
-  }
-
-  const OUTLIER_SIGMA = 2.5;
-  function analyserRowsForReport(rows: ShellyRow[]): DataIssue[] {
-    const issues: DataIssue[] = [];
-    if (rows.length === 0) return issues;
-
-    // Doublons par jour
-    const dateMap = new Map<string, number>();
-    for (const r of rows) {
-      const k = toDate(r.date).toISOString().slice(0, 10);
-      dateMap.set(k, (dateMap.get(k) ?? 0) + 1);
-    }
-    const dupDates = [...dateMap.entries()].filter(([, c]) => c > 1);
-    if (dupDates.length > 0) {
-      const total = dupDates.reduce((s, [, c]) => s + c - 1, 0);
-      issues.push({
-        id: 'duplicates_day',
-        count: total,
-        description: `${total} doublon${total > 1 ? 's' : ''} par date (jour)`,
-        detail: `${dupDates.length} date${dupDates.length > 1 ? 's' : ''} concernée${dupDates.length > 1 ? 's' : ''} — ex. : ${dupDates.slice(0, 3).map(([d]) => d).join(', ')}`,
-      });
-    }
-
-    // Doublons exacts (timestamp)
-    const dtMap = new Map<string, number>();
-    for (const r of rows) {
-      const k = toDate(r.date).toISOString();
-      dtMap.set(k, (dtMap.get(k) ?? 0) + 1);
-    }
-    const dupExact = [...dtMap.values()].filter(c => c > 1).reduce((s, c) => s + c - 1, 0);
-    if (dupExact > 0) {
-      issues.push({
-        id: 'duplicates_exact',
-        count: dupExact,
-        description: `${dupExact} doublon${dupExact > 1 ? 's' : ''} exacts (même date et heure)`,
-      });
-    }
-
-    // Zéros (ligne vide)
-    const zeros = rows.filter(r => r.kwhTotal === 0 && r.kwhNet === 0);
-    if (zeros.length > 0) {
-      issues.push({
-        id: 'zeros',
-        count: zeros.length,
-        description: `${zeros.length} ligne${zeros.length > 1 ? 's' : ''} vide${zeros.length > 1 ? 's' : ''} (kWh Total et Net = 0)`,
-        detail: `Première : ${toDate(zeros[0].date).toLocaleDateString('fr-FR')}`,
-      });
-    }
-
-    // Outliers
-    const kwhVals = rows.map(r => r.kwhNet);
-    const { moyenne, ecartType } = calculerStats(kwhVals);
-    const threshold = moyenne + OUTLIER_SIGMA * ecartType;
-    const outliers = rows.filter(r => ecartType > 0 && r.kwhNet > threshold);
-    if (outliers.length > 0) {
-      issues.push({
-        id: 'outliers',
-        count: outliers.length,
-        description: `${outliers.length} valeur${outliers.length > 1 ? 's' : ''} aberrante${outliers.length > 1 ? 's' : ''} (kWh Net > ${threshold.toFixed(1)})`,
-        detail: `Seuil ≈ moy(${moyenne.toFixed(2)}) + ${OUTLIER_SIGMA}σ(${ecartType.toFixed(2)})`,
-      });
-    }
-
-    // Négatifs
-    const negRows = rows.filter(r => r.kwhTotal < 0 || r.kwhNet < 0);
-    if (negRows.length > 0) {
-      issues.push({
-        id: 'negatives',
-        count: negRows.length,
-        description: `${negRows.length} valeur${negRows.length > 1 ? 's' : ''} négative${negRows.length > 1 ? 's' : ''} (kWh Total ou Net < 0)`,
-      });
-    }
-
-    // Trous temporels (jours)
-    const sortedByDate = [...rows].sort((a, b) => toDate(a.date).getTime() - toDate(b.date).getTime());
-    let gaps = 0;
-    const gapExamples: string[] = [];
-    for (let i = 1; i < sortedByDate.length; i++) {
-      const prev = toDate(sortedByDate[i - 1].date);
-      const cur = toDate(sortedByDate[i].date);
-      const diffDays = Math.round((cur.getTime() - prev.getTime()) / 86400000);
-      if (diffDays > 1) {
-        gaps += (diffDays - 1);
-        if (gapExamples.length < 5) gapExamples.push(`${prev.toISOString().slice(0, 10)} → ${cur.toISOString().slice(0, 10)}`);
-      }
-    }
-    if (gaps > 0) {
-      issues.push({
-        id: 'gaps',
-        count: gaps,
-        description: `${gaps} jour${gaps > 1 ? 's' : ''} manquant${gaps > 1 ? 's' : ''} dans la série`,
-        detail: gapExamples.length ? `Ex: ${gapExamples.join(' · ')}` : undefined,
-      });
-    }
-
-    // Incohérence phases vs total
-    const phaseMismatch = rows.filter(r => {
-      const sum = r.kwhA + r.kwhB + r.kwhC;
-      return r.kwhTotal > 0 && Math.abs(sum - r.kwhTotal) > 0.05;
-    });
-    if (phaseMismatch.length > 0) {
-      issues.push({
-        id: 'phase_mismatch',
-        count: phaseMismatch.length,
-        description: `${phaseMismatch.length} incohérence${phaseMismatch.length > 1 ? 's' : ''} entre phases et total kWh`,
-        detail: `kWhA + kWhB + kWhC ≠ kWhTotal (écart > 0.05 kWh)`,
-      });
-    }
-
-    return issues;
-  }
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const qualityIssues = useMemo(() => analyserRowsForReport(activeRows), [activeRows]);
-  const hasIssues = qualityIssues.length > 0;
-
-  // Panneau qualité : afficher seulement pour les imports manuels avec anomalies,
-  // jamais pour les fichiers chargés depuis la bibliothèque
-  useEffect(() => {
-    setShowQualityPanel(hasIssues && !dataFromLibrary);
-  }, [hasIssues, dataFromLibrary]);
-
-  const solutions = useMemo(() => {
-    const map: Record<DataIssueType, { title: string; steps: string[]; cta?: string }> = {
-      duplicates_day: {
-        title: 'Doublons par jour',
-        steps: [
-          'Aller dans l’onglet Nettoyage.',
-          'Cliquer “Procéder au Nettoyage” sur le fichier concerné.',
-          'Dans la section Diagnostic, utiliser “Conserver : première occurrence” ou “dernière occurrence”.',
-          'Re-scanner pour vérifier que l’anomalie a disparu.',
-        ],
-      },
-      duplicates_exact: {
-        title: 'Doublons exacts',
-        steps: [
-          'Onglet Nettoyage → Diagnostic.',
-          'Cliquer “Supprimer les copies exactes”.',
-          'Re-scanner.',
-        ],
-      },
-      zeros: {
-        title: 'Lignes vides (kWh=0)',
-        steps: [
-          'Onglet Nettoyage → Diagnostic → “Lignes vides”.',
-          'Choisir une méthode : “Moyenne”, “Reporter précédent”, ou “Interpolation linéaire”.',
-          'Re-scanner puis exporter si besoin.',
-        ],
-      },
-      outliers: {
-        title: 'Valeurs aberrantes',
-        steps: [
-          'Onglet Nettoyage → activer la mise en évidence “Aberrantes” pour repérer les pics.',
-          'Dans Diagnostic → Outliers : soit “Supprimer les lignes”, soit “Remplacer par la moyenne”.',
-          'Re-scanner.',
-        ],
-      },
-      negatives: {
-        title: 'Valeurs négatives',
-        steps: [
-          'Onglet Nettoyage → Diagnostic → “Valeurs négatives”.',
-          'Choisir : “Mettre à zéro” ou “Valeur absolue” selon le sens métier.',
-          'Re-scanner.',
-        ],
-      },
-      gaps: {
-        title: 'Jours manquants',
-        steps: [
-          'Onglet Nettoyage → Diagnostic → “Trous temporels”.',
-          'Cliquer “Voir les dates manquantes”.',
-          'Décider une stratégie métier: réimporter la période manquante, ou accepter la coupure (pas de comblement automatique).',
-        ],
-      },
-      phase_mismatch: {
-        title: 'Phases ≠ Total',
-        steps: [
-          'Onglet Nettoyage → Diagnostic → “Incohérence phases”.',
-          'Cliquer “Recalculer kWh Total depuis les phases”.',
-          'Re-scanner.',
-        ],
-      },
-    };
-
-    return qualityIssues.map(i => ({
-      id: i.id,
-      title: map[i.id].title,
-      steps: map[i.id].steps,
-    }));
-  }, [qualityIssues]);
 
   const parseImportedFileToShellyRows = useCallback((file: import('./shared').ImportedFile): ShellyRow[] => {
     if (file.rawData.length === 0) return [];
@@ -1828,6 +610,12 @@ export function AnalyseTab() {
     if (file.statut === 'nettoyé') {
       return reviveStoredShellyRows(file.rawData);
     }
+
+    // Fichier quelconque : lecture choisie à l'import (dates, rôles, unités),
+    // sections empilées réorganisées en colonnes
+    const ident = { nom: file.name.replace(/\.(csv|xlsx|xls)$/i, ''), lieu: file.deviceLocation, piece: file.deviceRoom };
+    const lu = lireFichierImporte(file, joursFerier);
+    if (lu) return lu.rows;
 
     const detect = detecterFormatShelly(file.columns);
     if (detect.format === 'shelly_excel') {
@@ -1857,13 +645,17 @@ export function AnalyseTab() {
     if (detect.format === 'shelly_section') {
       return parseShellySectionCSV(file.rawData, joursFerier);
     }
-    return [];
+    // Importé avant le 19/10 sans lecture : la proposer à la volée
+    const lecture = proposerLecture(file.columns, file.rawData, {}, [], file.name);
+    return lecture.colDate ? appliquerLecture(file.rawData, lecture, joursFerier, ident).rows : [];
   }, [joursFerier]);
 
   // ---- Callback Supabase ----
-  const handleSupabaseData = useCallback((rows: Record<string, unknown>[], _colonnes: string[]) => {
+  const handleSupabaseData = useCallback((rows: Record<string, unknown>[], _colonnes: string[], options: SupabaseExportOptions) => {
     if (rows.length === 0) return;
-    setDataFromLibrary(false); // import Supabase manuel → rapport qualité actif
+    // Gardé pour le Nettoyage : même périmètre pour le moteur de qualité,
+    // et recette rejouable
+    setSupabaseChargement(options);
     const parsed = rows
       .map(r => profilMiToShellyRow(r, joursFerier))
       .filter((r): r is ShellyRow => r !== null);
@@ -1873,89 +665,8 @@ export function AnalyseTab() {
     }
   }, [joursFerier]);
 
-  // ---- Parse fichier ----
-  const parseFile = useCallback((file: File) => {
-    setDataFromLibrary(false); // import manuel → rapport qualité actif
-    setLoading(true);
-    setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const buffer = e.target!.result as ArrayBuffer;
-        const wb = await parseExcelBuffer(buffer);
-        let sheetName = wb.sheetNames[0];
-        const candidates = wb.sheetNames.filter(n =>
-          n.toLowerCase().includes('profil') ||
-          n.toLowerCase().includes('données') ||
-          n.toLowerCase().includes('data') ||
-          n.toLowerCase().includes('mesure')
-        );
-        if (candidates.length > 0) sheetName = candidates[0];
-        const rawRows = wb.getRows(sheetName);
-        const rows = rowsToObjects(rawRows, { dateNF: 'YYYY-MM-DD' })
-          .filter(r => Object.values(r).some(v => v !== null));
-        if (rows.length === 0) { setLoading(false); return; }
-        const cols = Object.keys(rows[0]);
-        setAllColumns(cols);
-        setRawData(rows);
-        const detect = detecterFormatShelly(cols);
-        if (detect.format === 'shelly_excel') {
-          const parsed = rows
-            .map(r => parseShellyRow(r, joursFerier))
-            .filter((r): r is ShellyRow => r !== null);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else if (detect.format === 'profil_mi') {
-          const parsed = rows
-            .map(r => profilMiToShellyRow(r, joursFerier))
-            .filter((r): r is ShellyRow => r !== null);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else if (detect.format === 'supabase_cl') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const profilRows = transformRowsToProfilMi(rows as any, COLONNES_PROFIL_SHELLY.map(c => c.key));
-          const parsed = profilRows
-            .map(r => profilMiToShellyRow(r, joursFerier))
-            .filter((r): r is ShellyRow => r !== null);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else if (detect.format === 'supabase_horaire') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const profilRows = transformHoraireToProfilMi(rows as any, COLONNES_PROFIL_SHELLY.map(c => c.key));
-          const parsed = profilRows
-            .map(r => profilMiToShellyRow(r, joursFerier))
-            .filter((r): r is ShellyRow => r !== null);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else if (detect.format === 'shelly_section') {
-          const parsed = parseShellySectionCSV(rows, joursFerier);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else {
-          const dateCandidates = getDateCols(rows);
-          const numCandidates = getNumericCols(rows);
-          setDateCol(dateCandidates[0] ?? cols[0]);
-          setValueCol(numCandidates[0] ?? cols[1]);
-          setMappingNeeded(true);
-        }
-      } catch { /* ignore */ }
-      setLoading(false);
-    };
-    reader.readAsArrayBuffer(file);
-  }, [joursFerier]);
-
-  const applyMapping = () => {
-    if (!dateCol || !valueCol) return;
-    const parsed = rawData
-      .map(r => genericToShellyRow(r, dateCol, valueCol, joursFerier))
-      .filter((r): r is ShellyRow => r !== null);
-    setLocalRows(parsed);
-    setMappingNeeded(false);
-  };
-
   const clearLocal = () => {
-    setLocalRows([]); setRawData([]); setAllColumns([]);
-    setFileName(''); setMappingNeeded(false);
+    setLocalRows([]); setFileName(''); setFichierIllisible(null);
   };
 
   const clearSupabase = () => {
@@ -1964,20 +675,11 @@ export function AnalyseTab() {
 
   const loadFromImported = useCallback((f: import('./shared').ImportedFile) => {
     if (f.rawData.length === 0) return;
-    const cols = f.columns;
-    setAllColumns(cols); setRawData(f.rawData); setFileName(f.name);
+    setFileName(f.name);
     const parsed = parseImportedFileToShellyRows(f);
-    if (parsed.length > 0) {
-      setLocalRows(parsed); setMappingNeeded(false);
-      setShowImport(false); // collapse import panel → charts visible directly
-    } else {
-      const dateCandidates = getDateCols(f.rawData);
-      const numCandidates = getNumericCols(f.rawData);
-      setDateCol(dateCandidates[0] ?? cols[0]);
-      setValueCol(numCandidates[0] ?? cols[1]);
-      setMappingNeeded(true);
-      setShowImport(true); // expand only when user must configure column mapping
-    }
+    setLocalRows(parsed);
+    setFichierIllisible(parsed.length > 0 ? null : f.name);
+    setShowImport(parsed.length === 0); // graphiques directement visibles, sinon le message
   }, [parseImportedFileToShellyRows]);
 
   // Fichier sélectionné (bibliothèque ou reprise de session) : le contenu
@@ -1989,7 +691,6 @@ export function AnalyseTab() {
     let stale = false;
     void ensureFileContent(selectedFileId).then(file => {
       if (stale || !file) return;
-      setDataFromLibrary(true); // données depuis la bibliothèque → pas de rapport qualité
       loadFromImported(file);
       setSupabaseRows([]);
       setSupabaseFileName('');
@@ -1997,12 +698,6 @@ export function AnalyseTab() {
     });
     return () => { stale = true; };
   }, [selectedFileId, filesLoaded, ensureFileContent, loadFromImported]);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault(); setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) parseFile(file);
-  }, [parseFile]);
 
   // ---- Export Excel ----
   // Écrit ce qui est CHARGÉ, à sa granularité d'origine (minute, heure, jour) : une ligne par relevé avec
@@ -2012,6 +707,7 @@ export function AnalyseTab() {
   // la granularité horaire pour « avoir les bonnes colonnes ».
   const exportCSV = async () => {
     const envCols = METRIQUES_ENV.filter(m => activeRows.some(r => typeof r[m.key] === 'number'));
+    const autresGrandeurs = [...new Set(activeRows.flatMap(r => r.grandeurs ? Object.keys(r.grandeurs) : []))];
     const hasEnergy = activeRows.some(r => r.kwhTotal !== 0 || r.kwhRetourTotal !== 0 || r.puissKwTotal !== 0);
     const hms = (d: Date) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     await exportJsonToXlsx(
@@ -2025,6 +721,7 @@ export function AnalyseTab() {
           Site: r.deviceLocation ?? '',
         };
         for (const m of envCols) ligne[`${m.label}${m.unit ? ` (${m.unit})` : ''}`] = typeof r[m.key] === 'number' ? r[m.key] : '';
+        for (const k of autresGrandeurs) ligne[k] = r.grandeurs?.[k] ?? '';
         if (hasEnergy) {
           ligne['kWh Total'] = fmt3(r.kwhTotal);
           ligne['kWh Net'] = fmt3(r.kwhNet);
@@ -2079,7 +776,7 @@ export function AnalyseTab() {
   // Les vues env_* partent d'activeRows avec les mêmes filtres globaux, en ne
   // gardant que les lignes portant au moins une grandeur environnementale.
   const envRows = useMemo(() => {
-    let rows = activeRows.filter(r => METRIQUES_ENV.some(m => typeof r[m.key] === 'number'));
+    let rows = activeRows.filter(r => r.grandeurs || METRIQUES_ENV.some(m => typeof r[m.key] === 'number'));
     if (!showFeries) rows = rows.filter(r => !r.isJourFerie);
     if (!showWeekends) rows = rows.filter(r => !r.isWeekend);
     if (slicerAppareil.length) rows = rows.filter(r => slicerAppareil.includes(r.nomAppareil ?? ''));
@@ -2088,17 +785,23 @@ export function AnalyseTab() {
   }, [activeRows, showFeries, showWeekends, slicerAppareil, slicerPiece]);
 
   // Grandeurs env réellement présentes → pilote l'affichage des modes env_*
+  const paletteGrandeurs = usePalette();
   const envMetricsAvailable = useMemo(
-    () => METRIQUES_ENV.filter(m => envRows.some(r => typeof r[m.key] === 'number')),
-    [envRows]);
+    () => grandeursDisponibles(envRows, paletteGrandeurs),
+    [envRows, paletteGrandeurs]);
   const hasEnvData = envMetricsAvailable.length > 0;
+  // Signature = consommation × température extérieure : il faut une température
+  const hasTemperature = useMemo(() => envRows.some(r => typeof r.temperature === 'number'), [envRows]);
   // Données énergie réelles (au moins un relevé non nul) → pilote les modes énergie
   const hasEnergyData = useMemo(
     () => activeRows.some(r =>
       (r.kwhTotal ?? 0) > 0 || (r.kwhRetourTotal ?? 0) > 0 || (r.puissKwTotal ?? 0) > 0 || (r.whTotal ?? 0) > 0),
     [activeRows]);
 
-  const [envMetric, setEnvMetric] = useState<EnvMetricKey>('temperature');
+  const [envMetric, setEnvMetric] = useState<string>('temperature');
+  const grandeurActive = envMetricsAvailable.find(m => m.key === envMetric) ?? envMetricsAvailable[0];
+  // Fichier aux grandeurs quelconques (PM2.5, tension…) : « Grandeurs » plutôt qu'« Environnement »
+  const libelleGrandeurs = envMetricsAvailable.some(m => !METRIQUES_ENV.some(e => e.key === m.key)) ? 'Grandeurs' : 'Environnement';
   // Grandeur sélectionnée absente des données chargées → retomber sur la première dispo
   useEffect(() => {
     if (envMetricsAvailable.length > 0 && !envMetricsAvailable.some(m => m.key === envMetric)) {
@@ -2111,14 +814,14 @@ export function AnalyseTab() {
   // premier mode pertinent
   useEffect(() => {
     const isEnvMode = ENV_MODES.includes(mode);
-    if (mode === 'signature' && !(hasEnergyData && hasEnvData)) {
-      setMode(hasEnergyData ? 'courbe' : 'env_bande');
+    if (mode === 'signature' && !(hasEnergyData && hasTemperature)) {
+      setMode(hasEnergyData ? 'courbe' : 'env_courbe');
     } else if (isEnvMode && !hasEnvData && hasEnergyData) {
       setMode('courbe');
     } else if (!isEnvMode && mode !== 'signature' && !hasEnergyData && hasEnvData) {
-      setMode('env_bande');
+      setMode('env_courbe');
     }
-  }, [mode, hasEnvData, hasEnergyData]);
+  }, [mode, hasEnvData, hasEnergyData, hasTemperature]);
 
   // Slicers Power BI (saison, tranche, type de jour)
   const slicerRows = useMemo(() => {
@@ -2409,105 +1112,19 @@ export function AnalyseTab() {
     <>
       <div className="space-y-4">
 
-        {/* ---- Export Supabase ---- */}
-        <SupabaseExportPanel onDataLoaded={handleSupabaseData} />
+        {/* ---- Périmètre : un seul chargement pour toutes les vues ---- */}
+        <PerimetreBar
+          colonnesRecommandees={recommendedColumns}
+          onCharge={(rows, colonnes, options, p) => { handleSupabaseData(rows, colonnes, options); setPerimetreAnalyse(p); }}
+        />
 
-        {/* ---- Rapport qualité + solutions ---- */}
-        {activeRows.length > 0 && showQualityPanel && (
-          <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
-            <div className={`flex items-center justify-between px-4 py-3 ${hasIssues ? 'bg-amber-500/10 border-b border-amber-500/20' : 'bg-green-500/10 border-b border-green-500/20'}`}>
-              <div className="flex items-center gap-2">
-                {hasIssues ? <Filter className="h-4 w-4 text-amber-400" /> : <CheckSquare className="h-4 w-4 text-green-400" />}
-                <span className={`text-sm font-semibold ${hasIssues ? 'text-amber-300' : 'text-green-300'}`}>
-                  Rapport qualité des données
-                </span>
-                <span className="text-slate-500 text-xs">
-                  · {activeRows.length.toLocaleString('fr-FR')} lignes
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="h-8 border-white/20 text-white hover:bg-white/10"
-                  onClick={() => {
-                    if (activeRows.length > 0) setShellyRows(activeRows);
-                    // Sans cela, Nettoyage rechargeait le DERNIER fichier ouvert (ex. « Ma Maison - 5 pièces ») à son
-                    // arrivée, qui passait avant les données qu'on vient d'envoyer : colonnes d'énergie d'un autre jeu.
-                    setSelectedFile(null);
-                    setShowQualityPanel(false);
-                    setActiveTab('nettoyage');
-                  }}>
-                  Aller au Nettoyage
-                </Button>
-                <Button size="sm" variant="ghost" className="h-8 text-slate-400 hover:text-white hover:bg-white/10"
-                  onClick={() => {
-                    setLocalRows([]);
-                    setRawData([]);
-                    setAllColumns([]);
-                    setFileName('');
-                    setMappingNeeded(false);
-                    setSupabaseRows([]);
-                    setSupabaseFileName('');
-                    setShowQualityPanel(false);
-                  }}>
-                  Annuler
-                </Button>
-              </div>
-            </div>
-
-            <div className="p-4 space-y-4">
-              {!hasIssues ? (
-                <p className="text-slate-400 text-sm">
-                  Aucune anomalie majeure détectée. Tu peux quand même passer par `Nettoyage` pour filtrer/éditer/exporter.
-                </p>
-              ) : (
-                <>
-                  <div className="flex flex-wrap gap-2">
-                    {qualityIssues.map(iss => (
-                      <Badge key={iss.id} className="bg-amber-500/15 text-amber-300 border border-amber-500/20 text-xs">
-                        {iss.description}
-                      </Badge>
-                    ))}
-                  </div>
-
-                  <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
-                    <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FileSpreadsheet className="h-4 w-4 text-blue-400" />
-                        <span className="text-white text-sm font-semibold">Solutions détaillées</span>
-                      </div>
-                      <span className="text-slate-500 text-xs">Actions à exécuter dans l’onglet Nettoyage</span>
-                    </div>
-                    <div className="divide-y divide-white/5">
-                      {solutions.map(sol => {
-                        const issue = qualityIssues.find(i => i.id === sol.id);
-                        return (
-                          <div key={sol.id} className="p-4">
-                            <div className="flex items-start justify-between gap-4">
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-white text-sm font-medium">{sol.title}</span>
-                                  {issue && (
-                                    <Badge className="bg-white/10 text-slate-300 border-0 text-[0.625rem]">
-                                      {issue.count}
-                                    </Badge>
-                                  )}
-                                </div>
-                                {issue?.detail && <p className="text-slate-500 text-xs mt-1">{issue.detail}</p>}
-                              </div>
-                            </div>
-                            <ol className="mt-3 ml-5 list-decimal space-y-1 text-slate-300 text-xs">
-                              {sol.steps.map((s, idx) => (
-                                <li key={idx} className="leading-relaxed">{s}</li>
-                              ))}
-                            </ol>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+        {/* ---- Qualité : une ligne, détail et réglages dans le Nettoyage ---- */}
+        {supabaseRows.length > 0 && (
+          <QualiteLigne q={qualite} onVoir={() => {
+            setShellyRows(activeRows, supabaseChargement);
+            setSelectedFile(null);
+            setActiveTab('nettoyage');
+          }} />
         )}
 
         {/* ---- Import fichier local ---- */}
@@ -2518,7 +1135,7 @@ export function AnalyseTab() {
           >
             <div className="flex items-center gap-2">
               <Upload className="h-4 w-4 text-blue-400" />
-              <span className="text-white font-medium text-sm">Importer un fichier local (CSV / XLSX)</span>
+              <span className="text-white font-medium text-sm">Analyser un fichier (CSV / XLSX) plutôt que les données Shelly</span>
               {dataSource && (
                 <Badge className="bg-blue-600/30 text-blue-300 border-0 text-xs ml-2">
                   {localRows.length > 0 ? `${localRows.length} lignes · ${fileName}` : dataSource}
@@ -2572,80 +1189,22 @@ export function AnalyseTab() {
                 </div>
               )}
 
-              {/* Drop zone */}
-              <div
-                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all
-                ${dragOver ? 'border-blue-400 bg-blue-500/10' : 'border-white/20 hover:border-white/40 hover:bg-white/5'}`}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleDrop}
-                onClick={() => inputRef.current?.click()}
-              >
-                <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
-                  onChange={(e) => e.target.files?.[0] && parseFile(e.target.files[0])} />
-                {loading ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                    <p className="text-slate-400 text-sm">Chargement...</p>
-                  </div>
-                ) : (
-                  <>
-                    <FileSpreadsheet className="mx-auto h-8 w-8 text-blue-400 mb-2" />
-                    <p className="text-white text-sm font-medium">Glisser-déposer ou cliquer</p>
-                    <p className="text-slate-500 text-xs mt-1">CSV, XLSX, XLS — Shelly 3EM, données génériques</p>
-                  </>
-                )}
+              {/* Nouveau fichier : un seul endroit pour l'importer et vérifier sa lecture */}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                <span>Nouveau fichier ? Importez-le dans <strong className="text-slate-300">Fichiers</strong> : dates, colonnes et unités s'y vérifient une fois pour toutes.</span>
+                <Button size="sm" variant="outline" className="h-7 text-xs border-white/20 text-slate-200 hover:bg-white/10"
+                  onClick={() => setActiveTab('fichiers')}>Aller à Fichiers</Button>
               </div>
 
-              {/* Mapping colonnes */}
-              {mappingNeeded && rawData.length > 0 && (
-                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 space-y-3">
-                  <p className="text-yellow-400 text-sm font-medium">Format non reconnu — sélectionnez les colonnes</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-slate-400 text-xs mb-1 block">Colonne date / temps</Label>
-                      <Select value={dateCol} onValueChange={setDateCol}>
-                        <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm"><SelectValue placeholder="Choisir..." /></SelectTrigger>
-                        <SelectContent className="bg-[#1a1d2e] border-white/20">
-                          {allColumns.map(c => <SelectItem key={c} value={c} className="text-white text-sm">{c}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-slate-400 text-xs mb-1 block">Colonne valeur (kWh / W)</Label>
-                      <Select value={valueCol} onValueChange={setValueCol}>
-                        <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm"><SelectValue placeholder="Choisir..." /></SelectTrigger>
-                        <SelectContent className="bg-[#1a1d2e] border-white/20">
-                          {getNumericCols(rawData).map(c => <SelectItem key={c} value={c} className="text-white text-sm">{c}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="overflow-x-auto rounded-lg border border-white/10 max-h-40">
-                    <table className="min-w-full text-xs">
-                      <thead className="bg-white/5 sticky top-0">
-                        <tr>{allColumns.slice(0, 6).map(c => (
-                          <th key={c} className={`px-3 py-2 text-left font-medium whitespace-nowrap
-                          ${c === dateCol ? 'text-blue-400' : c === valueCol ? 'text-green-400' : 'text-slate-400'}`}>{c}</th>
-                        ))}</tr>
-                      </thead>
-                      <tbody>{rawData.slice(0, 5).map((row, i) => (
-                        <tr key={i} className="border-t border-white/5">
-                          {allColumns.slice(0, 6).map(c => (
-                            <td key={c} className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{String(row[c] ?? '')}</td>
-                          ))}
-                        </tr>
-                      ))}</tbody>
-                    </table>
-                  </div>
-                  <Button className="bg-blue-600 hover:bg-blue-500 text-white" onClick={applyMapping} disabled={!dateCol || !valueCol}>
-                    Analyser ces données
-                  </Button>
+              {fichierIllisible && (
+                <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span>Aucune date lisible dans « {fichierIllisible} ». Réimportez-le depuis <strong>Fichiers</strong> pour vérifier sa lecture (colonne date, ordre jour/mois).</span>
                 </div>
               )}
 
               {/* Fichier chargé */}
-              {localRows.length > 0 && !mappingNeeded && (
+              {localRows.length > 0 && (
                 <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/20 rounded-xl px-4 py-3">
                   <FileSpreadsheet className="h-5 w-5 text-green-400 shrink-0" />
                   <div className="flex-1">
@@ -2674,100 +1233,106 @@ export function AnalyseTab() {
 
         {activeRows.length > 0 && (
           <>
-            {/* Barre mode + filtres */}
-            <div className="flex flex-wrap items-center gap-3 bg-white/5 rounded-xl border border-white/10 p-3">
-              <div className="flex gap-1 flex-wrap items-center">
-                {/* Modes proposés selon le contenu réellement chargé : vues énergie
-                    si des compteurs remontent des kWh, vues environnement si des
-                    capteurs remontent température/humidité/etc. En jeu mixte, les
-                    deux groupes sont visibles, séparés par un trait. */}
-                {(hasEnergyData ? [
-                  { key: 'courbe', icon: <Zap className="h-3.5 w-3.5" />, label: 'Courbe de charge' },
-                  { key: 'serie', icon: <Activity className="h-3.5 w-3.5" />, label: 'Série temp.' },
-                  { key: 'tcd', icon: <BarChart2 className="h-3.5 w-3.5" />, label: 'TCD' },
-                  { key: 'profil_semaine', icon: <TrendingUp className="h-3.5 w-3.5" />, label: 'Semaine' },
-                  { key: 'distribution', icon: <Filter className="h-3.5 w-3.5" />, label: 'Distribution' },
-                  { key: 'correlation', icon: <Activity className="h-3.5 w-3.5" />, label: 'Corrélation' },
-                ] : []).map(({ key, icon, label }) => (
-                  <button
-                    key={key}
-                    onClick={() => setMode(key as AnalyseMode)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
-                    ${mode === key ? 'text-white' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
-                    style={mode === key ? { backgroundColor: ACCENT_COLOR + '40', color: ACCENT_COLOR } : {}}
-                  >
-                    {icon} {label}
-                  </button>
-                ))}
-                {hasEnergyData && hasEnvData && <div className="h-5 w-px bg-white/15 mx-1" />}
-                {([
-                  ...(hasEnvData ? [
-                    { key: 'env_bande', icon: <Activity className="h-3.5 w-3.5" />, label: 'Min/Max jour' },
-                    { key: 'env_heatmap', icon: <Layers className="h-3.5 w-3.5" />, label: 'Heatmap' },
-                    { key: 'env_profil24', icon: <TrendingUp className="h-3.5 w-3.5" />, label: 'Profil 24 h' },
-                  ] : []),
-                  // Croisement conso ↔ température : uniquement en jeu mixte
-                  ...(hasEnergyData && hasEnvData ? [
-                    { key: 'signature', icon: <Zap className="h-3.5 w-3.5" />, label: 'Signature énergétique' },
-                  ] : []),
-                ]).map(({ key, icon, label }) => (
-                  <button
-                    key={key}
-                    onClick={() => setMode(key as AnalyseMode)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
-                    ${mode === key ? 'bg-orange-500/25 text-orange-300' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
-                  >
-                    {icon} {label}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-3 ml-auto flex-wrap">
-                {availableAppareils.length > 0 && (
-                  <MultiSelectFilter label="Appareil" icon={<Zap className="h-3.5 w-3.5" />}
-                    options={availableAppareils} selected={slicerAppareil} onChange={setSlicerAppareil} />
-                )}
-                {availablePieces.length > 0 && (
-                  <MultiSelectFilter label="Pièce" icon={<Layers className="h-3.5 w-3.5" />}
-                    options={availablePieces} selected={slicerPiece} onChange={setSlicerPiece} />
-                )}
-                <div className="flex items-center gap-2">
-                  <Switch id="fe2" checked={showFeries} onCheckedChange={setShowFeries} className="data-[state=checked]:bg-purple-500 scale-75" />
-                  <Label htmlFor="fe2" className="text-slate-400 text-xs">Fériés</Label>
+            {/* Barre des vues : regroupées par question, filtres et affichage dans des menus */}
+            {(() => {
+              type Vue = { mode: AnalyseMode; libelle: string };
+              const groupes: { cle: string; libelle: string; icone: React.ReactNode; vues: Vue[] }[] = [
+                ...(hasEnergyData ? [
+                  { cle: 'ensemble', libelle: "Vue d'ensemble", icone: <Zap className="h-3.5 w-3.5" />, vues: [{ mode: 'courbe' as AnalyseMode, libelle: 'Courbe de charge' }] },
+                  { cle: 'profils', libelle: 'Profils', icone: <TrendingUp className="h-3.5 w-3.5" />, vues: [{ mode: 'profil_semaine' as AnalyseMode, libelle: 'Semaine type' }] },
+                  { cle: 'detail', libelle: 'Détail temporel', icone: <Activity className="h-3.5 w-3.5" />, vues: [{ mode: 'serie' as AnalyseMode, libelle: 'Série temporelle' }] },
+                  { cle: 'tcd', libelle: 'Tableau croisé', icone: <BarChart2 className="h-3.5 w-3.5" />, vues: [{ mode: 'tcd' as AnalyseMode, libelle: 'Tableau croisé' }] },
+                  { cle: 'stats', libelle: 'Statistiques', icone: <Filter className="h-3.5 w-3.5" />, vues: [
+                    { mode: 'distribution' as AnalyseMode, libelle: 'Distribution' },
+                    { mode: 'correlation' as AnalyseMode, libelle: 'Corrélation' },
+                  ] },
+                ] : []),
+                ...(hasEnvData ? [
+                  { cle: 'env', libelle: libelleGrandeurs, icone: <Layers className="h-3.5 w-3.5" />, vues: [
+                    { mode: 'env_courbe' as AnalyseMode, libelle: 'Courbe' },
+                    { mode: 'env_bande' as AnalyseMode, libelle: 'Min/Max par jour' },
+                    { mode: 'env_heatmap' as AnalyseMode, libelle: 'Carte de chaleur' },
+                    { mode: 'env_profil24' as AnalyseMode, libelle: 'Profil 24 h' },
+                  ] },
+                ] : []),
+                // Croisement consommation ↔ température : uniquement en jeu mixte
+                ...(hasEnergyData && hasTemperature ? [
+                  { cle: 'signature', libelle: 'Signature énergétique', icone: <Zap className="h-3.5 w-3.5" />, vues: [{ mode: 'signature' as AnalyseMode, libelle: 'Signature énergétique' }] },
+                ] : []),
+              ];
+              const actif = groupes.find(g => g.vues.some(v => v.mode === mode)) ?? groupes[0];
+              const nbFiltres = slicerAppareil.length + slicerPiece.length + (showFeries ? 0 : 1) + (showWeekends ? 0 : 1);
+              return (
+                <div className="bg-white/5 rounded-xl border border-white/10 p-2 space-y-2">
+                  <div className="flex flex-wrap items-center gap-1">
+                    {groupes.map(g => (
+                      <button key={g.cle} onClick={() => setMode(g.vues[0].mode)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+                        ${actif?.cle === g.cle ? 'text-white' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
+                        style={actif?.cle === g.cle ? { backgroundColor: ACCENT_COLOR + '40', color: ACCENT_COLOR } : {}}>
+                        {g.icone} {g.libelle}
+                      </button>
+                    ))}
+                    <div className="flex items-center gap-2 ml-auto">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button className="flex items-center gap-1 h-7 px-2 rounded-md text-xs text-slate-300 hover:text-white border border-white/15">
+                            <Filter className="h-3.5 w-3.5" /> Filtres{nbFiltres > 0 && <span className="ml-1 px-1.5 rounded-full bg-violet-600/50 text-white">{nbFiltres}</span>}
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-72 p-3 bg-[#1a1d2e] border-white/20 space-y-3">
+                          {availableAppareils.length > 0 && (
+                            <MultiSelectFilter label="Appareil" icon={<Zap className="h-3.5 w-3.5" />}
+                              options={availableAppareils} selected={slicerAppareil} onChange={setSlicerAppareil} />
+                          )}
+                          {availablePieces.length > 0 && (
+                            <MultiSelectFilter label="Pièce" icon={<Layers className="h-3.5 w-3.5" />}
+                              options={availablePieces} selected={slicerPiece} onChange={setSlicerPiece} />
+                          )}
+                          <div className="flex items-center gap-2">
+                            <Switch id="fe2" checked={showFeries} onCheckedChange={setShowFeries} className="data-[state=checked]:bg-purple-500 scale-75" />
+                            <Label htmlFor="fe2" className="text-slate-300 text-xs">Inclure les jours fériés</Label>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Switch id="we2" checked={showWeekends} onCheckedChange={setShowWeekends} className="data-[state=checked]:bg-yellow-500 scale-75" />
+                            <Label htmlFor="we2" className="text-slate-300 text-xs">Inclure les week-ends</Label>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                      {/* Couleurs, légendes et titre — mêmes réglages que le module Mesures. */}
+                      <ChartOptions chartId={`iot:${mode}`} defaultTitle={autoChartTitle} />
+                      <span className="text-slate-500 text-xs">
+                        {(ENV_MODES.includes(mode) ? envRows.length : filteredRows.length).toLocaleString('fr-FR')} relevés
+                      </span>
+                      <Button size="sm" variant="ghost" className="text-slate-400 hover:text-white h-7 px-2" onClick={exportCSV} title="Exporter les relevés (Excel)">
+                        <Download className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="text-slate-400 hover:text-red-400 h-7 px-2" onClick={exportPDF} disabled={exportingPDF} title="Exporter le graphique en PDF">
+                        {exportingPDF
+                          ? <span className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin inline-block" />
+                          : <FileText className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  </div>
+                  {actif && actif.vues.length > 1 && (
+                    <div className="flex flex-wrap items-center gap-1 pl-1">
+                      {actif.vues.map(v => (
+                        <button key={v.mode} onClick={() => setMode(v.mode)}
+                          className={`px-2.5 py-1 rounded-md text-xs ${mode === v.mode ? 'bg-white/15 text-white' : 'text-slate-400 hover:text-white'}`}>
+                          {v.libelle}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Switch id="we2" checked={showWeekends} onCheckedChange={setShowWeekends} className="data-[state=checked]:bg-yellow-500 scale-75" />
-                  <Label htmlFor="we2" className="text-slate-400 text-xs">WE</Label>
-                </div>
-                {/* Couleurs, légendes et titre — mêmes réglages que le module Mesures. */}
-                <ChartOptions chartId={`iot:${mode}`} defaultTitle={autoChartTitle} />
-                <Badge variant="outline" className="border-white/20 text-slate-400 text-xs">
-                  {(ENV_MODES.includes(mode) ? envRows.length : filteredRows.length).toLocaleString('fr-FR')} pts
-                </Badge>
-                <Button size="sm" variant="ghost" className="text-slate-400 hover:text-white h-7 px-2" onClick={exportCSV} title="Exporter CSV">
-                  <Download className="h-3.5 w-3.5" />
-                </Button>
-                <Button size="sm" variant="ghost"
-                  className="text-slate-400 hover:text-red-400 h-7 px-2"
-                  onClick={exportPDF}
-                  disabled={exportingPDF}
-                  title="Exporter graphique en PDF"
-                >
-                  {exportingPDF
-                    ? <span className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin inline-block" />
-                    : <FileText className="h-3.5 w-3.5" />
-                  }
-                </Button>
-              </div>
-            </div>
+              );
+            })()}
 
             <div ref={chartRef} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
               {/* Titre repris dans l'export PDF/image */}
               <p className="text-white font-medium text-sm">{displayChartTitle}</p>
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-white font-semibold text-sm">Espace visualisation</h3>
-                  <p className="text-slate-500 text-xs mt-1">Zone dédiée aux graphiques et tableaux d'analyse.</p>
-                </div>
+                <div />
                 {mode === 'serie' && (
                   <div className="flex items-center gap-2 flex-wrap max-w-[65%] justify-end">
                     {/* Aperçu pills des métriques sélectionnées */}
@@ -2808,7 +1373,7 @@ export function AnalyseTab() {
                           </button>
                         </div>
                         <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
-                          {(['Énergie', 'Phase A', 'Phase B', 'Phase C', 'Puissance', 'Coût'] as MetricGroup[]).map(group => {
+                          {(['Énergie', 'Phase A', 'Phase B', 'Phase C', 'Puissance'] as MetricGroup[]).map(group => {
                             const groupMetrics = METRIQUES.filter(m => m.group === group);
                             if (groupMetrics.length === 0) return null;
                             return (
@@ -2845,7 +1410,10 @@ export function AnalyseTab() {
               {/* ---- Courbe de charge (ex-onglet Profil de charge) ---- */}
               {mode === 'courbe' && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                  <ProfilChargeTab />
+                  <ProfilChargeTab
+                    perimetre={supabaseRows.length > 0 ? perimetreAnalyse : null}
+                    lignes={supabaseRows.length > 0 ? undefined : activeRows}
+                  />
                 </div>
               )}
 
@@ -2853,6 +1421,13 @@ export function AnalyseTab() {
               {ENV_MODES.includes(mode) && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
                   {/* Sélecteur de grandeur — équivalent env du sélecteur de métriques kWh */}
+                  {envMetricsAvailable.length > 12 ? (
+                    // Analyseur réseau : des dizaines de grandeurs, une liste plutôt que des pastilles
+                    <select value={grandeurActive?.key ?? ''} onChange={e => setEnvMetric(e.target.value)}
+                      className="h-8 rounded-md bg-white/5 border border-white/20 text-white text-xs px-2 max-w-full">
+                      {envMetricsAvailable.map(m => <option key={m.key} value={m.key}>{m.label}{m.unit ? ` (${m.unit})` : ''}</option>)}
+                    </select>
+                  ) : (
                   <div className="flex flex-wrap gap-1.5">
                     {envMetricsAvailable.map(m => (
                       <button key={m.key}
@@ -2867,9 +1442,13 @@ export function AnalyseTab() {
                       </button>
                     ))}
                   </div>
-                  {mode === 'env_bande' && <EnvBandeView rows={envRows} metric={envMetric} />}
-                  {mode === 'env_heatmap' && <EnvHeatmapView rows={envRows} metric={envMetric} />}
-                  {mode === 'env_profil24' && <EnvProfil24View rows={envRows} metric={envMetric} />}
+                  )}
+                  {grandeurActive && <>
+                    {mode === 'env_courbe' && <EnvCourbeView rows={envRows} g={grandeurActive} />}
+                    {mode === 'env_bande' && <EnvBandeView rows={envRows} g={grandeurActive} />}
+                    {mode === 'env_heatmap' && <EnvHeatmapView rows={envRows} g={grandeurActive} />}
+                    {mode === 'env_profil24' && <EnvProfil24View rows={envRows} g={grandeurActive} />}
+                  </>}
                 </div>
               )}
 

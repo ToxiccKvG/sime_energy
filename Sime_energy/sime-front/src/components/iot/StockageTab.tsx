@@ -42,7 +42,6 @@ const STATUT_COLORS: Record<string, string> = {
 
 const TYPE_COLORS: Record<string, string> = {
   shelly:      'bg-yellow-500/20 text-yellow-400',
-  facturation: 'bg-purple-500/20 text-purple-400',
   autre:       'bg-slate-500/20 text-slate-400',
 };
 
@@ -217,11 +216,10 @@ function FichierCard({
 export function StockageTab() {
   const { state, removeFile, updateFile, setSelectedFile, setActiveTab } = useIOT();
   const { files, filesLoading } = state;
-  const [filter, setFilter] = useState<'tous' | 'shelly' | 'facturation' | 'nettoyé'>('tous');
+  const [filter, setFilter] = useState<'tous' | 'shelly' | 'nettoyé'>('tous');
 
   const filtered = files.filter(f => {
     if (filter === 'shelly')      return f.type === 'shelly';
-    if (filter === 'facturation') return f.type === 'facture';
     if (filter === 'nettoyé')     return f.statut === 'nettoyé';
     return true;
   });
@@ -248,7 +246,7 @@ export function StockageTab() {
 
       {/* Filtres */}
       <div className="flex gap-1 p-1 bg-white/5 rounded-lg border border-white/10 w-fit">
-        {(['tous', 'shelly', 'facturation', 'nettoyé'] as const).map(f => (
+        {(['tous', 'shelly', 'nettoyé'] as const).map(f => (
           <button key={f} onClick={() => setFilter(f)}
             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors capitalize ${
               filter === f

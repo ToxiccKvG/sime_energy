@@ -68,8 +68,8 @@ function IOTInner() {
         <div className="flex flex-wrap gap-2 text-xs text-slate-400">
           {shellyRows.length > 0 && (
             <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
-              <p className="text-green-400 font-bold text-sm">{shellyRows.length}</p>
-              <p>jours</p>
+              <p className="text-green-400 font-bold text-sm">{shellyRows.length.toLocaleString('fr-FR')}</p>
+              <p>relevés</p>
             </div>
           )}
           {files.length > 0 && (

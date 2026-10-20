@@ -273,7 +273,7 @@ export function transformRowsToProfilMi(
     const kW_RC   = Math.abs(Math.min(0, pC_W))   / 1000;
     const kW_RTot = Math.abs(Math.min(0, pTot_W)) / 1000;
 
-    // ── Montant énergie (tarif SENELEC 140,74 F CFA / kWh) ────
+    // ── Énergie en kWh ────
     const kwhTot  = whTot  / 1000;
     const kwhRTot = whRTot / 1000;
 
@@ -380,10 +380,15 @@ export function transformRowsToProfilMi(
       Semaine_mesures: getWeekNumber(date),
     };
 
-    return colonnes.reduce<Record<string, unknown>>((acc, key) => {
+    const out = colonnes.reduce<Record<string, unknown>>((acc, key) => {
       acc[key] = fullRow[key] ?? null;
       return acc;
     }, {});
+    // Identifiant de l'appareil, toujours transmis (hors colonnes choisies) :
+    // le moteur de qualité signale par device_id, le nom ne suffit pas
+    // (capteur renommé, homonymes).
+    out.__deviceId = m.device_id;
+    return out;
   });
 }
 
@@ -509,10 +514,15 @@ export function transformHoraireToProfilMi(
       Semaine_mesures: getWeekNumber(date),
     };
 
-    return colonnes.reduce<Record<string, unknown>>((acc, key) => {
+    const out = colonnes.reduce<Record<string, unknown>>((acc, key) => {
       acc[key] = fullRow[key] ?? null;
       return acc;
     }, {});
+    // Identifiant de l'appareil, toujours transmis (hors colonnes choisies) :
+    // le moteur de qualité signale par device_id, le nom ne suffit pas
+    // (capteur renommé, homonymes).
+    out.__deviceId = m.device_id;
+    return out;
   });
 }
 
@@ -939,4 +949,80 @@ export function getColonnesParGroupe() {
     calcule:     COLONNES_PROFIL_SHELLY.filter(c => c.groupe === 'calcule'),
     classifieur: COLONNES_PROFIL_SHELLY.filter(c => c.groupe === 'classifieur'),
   };
+}
+
+// ── Courbe de charge : une ligne par appareil et par jour ─────
+// RPC fn_profil_charge (migrations 20261015 puis 20261016_fn_profil_charge_qualite) :
+// agrégée côté serveur, sur une plage horaire appliquée CHAQUE jour, avec la
+// part en quarantaine décidée par fn_qualite. Lue par pages : PostgREST
+// plafonne à 1000 lignes et l'ancienne lecture de shelly_cl_horaire était
+// coupée sans avertissement au-delà de ~2 jours à Ma Maison.
+export interface ProfilChargeJour {
+  jour: string;
+  site: string;
+  device_id: string;
+  name: string | null;
+  device_family: string | null;
+  role: string | null;
+  sens_inverse: boolean;
+  wh_conso: number | null;
+  wh_inj: number | null;
+  wh_a: number | null;
+  wh_b: number | null;
+  wh_c: number | null;
+  nb_heures: number;
+  nb_mesures: number;
+  wh_conso_exclu: number;
+  wh_inj_exclu: number;
+  wh_a_exclu: number;
+  wh_b_exclu: number;
+  wh_c_exclu: number;
+  nb_h_exclues: number;
+  regles_exclues: string[] | null;
+}
+
+export async function fetchProfilCharge(params: {
+  dateDebut: string;
+  dateFin: string;
+  heureDebut: number;
+  heureFin: number;
+  sites: string[];
+  deviceIds?: string[];
+}): Promise<ProfilChargeJour[]> {
+  const PAGE = 1000;
+  const lignes: ProfilChargeJour[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .rpc('fn_profil_charge', {
+        p_date_debut: params.dateDebut,
+        p_date_fin: params.dateFin,
+        p_heure_debut: params.heureDebut,
+        p_heure_fin: params.heureFin,
+        p_sites: params.sites,
+        p_device_ids: params.deviceIds ?? null,
+      })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    lignes.push(...((data ?? []) as ProfilChargeJour[]));
+    if (!data || data.length < PAGE) break;
+  }
+  return lignes;
+}
+
+// ── Méthode de consommation de chaque site (table site_bilan) ─
+// Les sites sont câblés différemment (PV en aval non mesuré à Donsin,
+// arrivées séparées à l'Académie) : la façon d'obtenir la consommation est
+// déclarée en base, jamais déduite ni écrite dans le code.
+export type MethodeConsommation = 'arrivee' | 'charge_M3' | 'departs' | 'indeterminee';
+
+export interface SiteBilan {
+  site: string;
+  methode: MethodeConsommation;
+  explication: string;
+}
+
+export async function fetchSiteBilan(): Promise<SiteBilan[]> {
+  const { data, error } = await supabase.from('site_bilan').select('site,methode,explication');
+  if (error) throw error;
+  return (data ?? []) as SiteBilan[];
 }

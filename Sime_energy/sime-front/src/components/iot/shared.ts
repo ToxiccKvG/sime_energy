@@ -1,7 +1,6 @@
 // ============================================================
 // IOT MODULE — Shared Types
-// Note : la couche facturation/tarification SENELEC a été retirée
-// (sera réintroduite par le merge avec le code du dev billing).
+// Pas de facturation ni de coûts dans le module IOT (module Facturation).
 // Conservé ici : mesures énergie, capteurs, calendrier, jours d'activité.
 //
 // Les « sources » ne sont plus un modèle local : une source est un rôle
@@ -184,11 +183,13 @@ export interface ShellyRow {
   mois: string;
   annee: number;
   jourActivites: 'Jour ouvré' | 'Weekend' | 'Jour férié';
-  heuresEnsoleillement: 'En ensoleillement' | 'Hors ensoleillement';
-  heuresTravail: "Heures d'activités" | 'Heures hors activités';
+  // 'Journée' : ligne journalière (Courbe de charge), qui couvre les deux tranches
+  heuresEnsoleillement: 'En ensoleillement' | 'Hors ensoleillement' | 'Journée';
+  heuresTravail: "Heures d'activités" | 'Heures hors activités' | 'Journée';
   periodeclimatique: 'Période de fraîcheur' | 'Période chaude';
   saison: 'Sèche' | 'Hivernage';
-  periode: 'Nuit' | 'Matin' | 'Après-midi' | 'Soir';
+  // 'Journée' : ligne journalière (Courbe de charge), pas une tranche horaire
+  periode: 'Nuit' | 'Matin' | 'Après-midi' | 'Soir' | 'Journée';
   profil: 'CHARGE' | 'SOUTIRAGE';
   // ---- Identification appareil ----
   nomAppareil?: string;
@@ -217,15 +218,70 @@ export interface ShellyRow {
   batterie?: number;
   batterieV?: number;
   signal?: number;
+  // Grandeurs d'un fichier importé quelconque (PM2.5, tension, CO₂…),
+  // clé = « libellé (unité) » — voir lib/iot-lecture-fichier.ts
+  grandeurs?: Record<string, number>;
+  // ---- Qualité (source fn_profil_charge ; absents pour un fichier importé) ----
+  deviceId?: string;
+  deviceFamily?: string;            // ENERGIE_1PH, LUMIERE…
+  role?: string | null;             // shelly_device_roles : M1_RESEAU, DEPART…
+  nbHeures?: number;                // heures présentes ce jour dans la plage
+  // Part de la journée en quarantaine (fn_qualite, règles d'action « quarantaine »).
+  // Les champs kWh ci-dessus restent BRUTS ; le nettoyage soustrait s'il est activé.
+  quarantaine?: {
+    kwh: number; kwhRetour: number; kwhA: number; kwhB: number; kwhC: number;
+    heures: number; regles: string[];
+  };
   // ---- Helpers ----
   kwhNet: number; // = kwhTotal - kwhRetourTotal
+  // Flux par rôle (ligne synthétique « site », bilanParRole) : kWh
+  flux?: FluxRoles;
   isWeekend: boolean;
   isJourFerie: boolean;
   jourSemaine: string;
 }
 
+// Énergie par rôle électrique (kWh). null = rien mesuré pour ce rôle.
+export interface FluxRoles {
+  reseauSoutire: number | null;   // M1_RESEAU, consommation
+  reseauInjecte: number | null;   // M1_RESEAU, injection
+  pv: number | null;              // M5_PV, production (sens inverse appliqué)
+  groupe: number | null;          // M4_GROUPE
+  charge: number | null;          // M3_CHARGE
+  departs: number | null;         // DEPART
+}
+
+// Une journée calendaire, toutes lignes confondues (appareils, pas horaires)
+export interface JourAgrege {
+  date: Date;
+  mois: string;
+  annee: number;
+  jourActivites: ShellyRow['jourActivites'];
+  isWeekend: boolean;
+  isJourFerie: boolean;
+  kwhA: number;
+  kwhB: number;
+  kwhC: number;
+  kwhTotal: number;
+  kwhRetourTotal: number;
+  kwhNet: number;
+  // Puissance moyenne du jour = kWh / 24 h
+  puissKwA: number;
+  puissKwB: number;
+  puissKwC: number;
+  puissKwTotal: number;
+  nbLignes: number;
+  // Flux par rôle de la journée (somme des lignes « site ») — absent pour un fichier
+  flux?: FluxRoles;
+  // Raison pour laquelle le jour est écarté de la moyenne, du min et du max
+  // (il reste dans le total). Absent = jour retenu.
+  exclu?: string;
+}
+
 export interface ShellyAnalyse {
   rows: ShellyRow[];
+  parJour: JourAgrege[];
+  nbJoursRetenus: number;
   totalKwhConsomme: number;
   totalKwhRetour: number;
   totalKwhNet: number;
@@ -246,7 +302,7 @@ export interface ShellyAnalyse {
 export interface ImportedFile {
   id: string;
   name: string;
-  type: 'shelly' | 'autre' | 'facture';
+  type: 'shelly' | 'autre';
   uploadedAt: Date;
   rowCount: number;
   columns: string[];
@@ -264,6 +320,36 @@ export interface ImportedFile {
   parentId?: string;
   deviceLocation?: string;
   deviceRoom?: string;
+  /** Lecture d'un fichier hors formats Shelly : enregistrée à l'import, rejouée par l'Analyse. */
+  lecture?: LectureFichier;
+}
+
+/** Rôle d'une colonne d'un fichier importé. */
+export type RoleColonne = 'energie' | 'retour' | 'puissance' | 'grandeur' | 'ignorer';
+
+export interface LectureColonne {
+  col: string;
+  libelle: string;
+  unite: string;
+  role: RoleColonne;
+  /** Index cumulatif (compteur) : l'énergie est la différence entre deux relevés. */
+  cumul?: boolean;
+  /** Énergie d'une seule phase (sinon : total). Sans colonne total, le total = A + B + C. */
+  phase?: 'A' | 'B' | 'C';
+  /** Pourquoi la colonne est écartée par défaut (vide, texte, constante…). */
+  motif?: string;
+}
+
+export interface LectureFichier {
+  version: 1;
+  colDate: string;
+  /** Colonne heure séparée ('' si la date porte l'heure). */
+  colHeure: string;
+  /** jma = jour/mois/année, mja = mois/jour/année (exports US), iso = année en tête. */
+  ordreDates: 'jma' | 'mja' | 'iso';
+  colonnes: LectureColonne[];
+  /** Ce que mesure le fichier : une production (PV) est rangée comme le PV des sites (rôle M5_PV). */
+  sens?: 'consommation' | 'production';
 }
 
 // ============================================================

@@ -4,12 +4,14 @@
 // "2026-03-11-modèle export données Shelly 3EM.xlsx"
 // ============================================================
 
-import type { ShellyRow, ShellyAnalyse, JourFerie } from '@/components/iot/shared';
+import type { ShellyRow, ShellyAnalyse, JourFerie, JourAgrege, FluxRoles } from '@/components/iot/shared';
+import type { MethodeConsommation, SiteBilan } from '@/lib/iot-supabase-service';
+import type { Signalement, RegleQualite } from '@/lib/iot-qualite-service';
 import { JOURS_SEMAINE_LONG, MOIS_FR, JOURS_FERIES_FIXES } from '@/components/iot/shared';
 
 // ============================================================
 // HELPERS CLASSIFICATION (jours d'activité, saisons, périodes climatiques)
-// La couche tarification SENELEC a été retirée (sera réintroduite au merge).
+// Pas de tarification ici : les coûts relèvent du module Facturation.
 // ============================================================
 
 /** Heures d'ensoleillement : 8h ≤ h < 19h */
@@ -207,6 +209,7 @@ export function parseShellyRow(
     jourSemaine,
     // Identité appareil (préservée si présente dans la source)
     nomAppareil:    (raw['Appareil'] ?? raw['Nom'] ?? raw['name'] ?? raw['nomAppareil'] ?? raw['device_name']) as string | undefined,
+    deviceId:       (raw['__deviceId'] ?? raw['device_id'] ?? raw['deviceId']) as string | undefined,
     deviceLocation: (raw['Emplacement'] ?? raw['Site'] ?? raw['site'] ?? raw['deviceLocation']) as string | undefined,
     deviceRoom:     (raw['Piece'] ?? raw['Pièce'] ?? raw['Room'] ?? raw['room'] ?? raw['deviceRoom']) as string | undefined,
     // Capteurs environnementaux (préservés si présents dans la source — colonnes PROFIL Mi)
@@ -278,10 +281,82 @@ export function ajouterCumulatifs(rows: ShellyRow[]): ShellyRow[] {
 // ANALYSE COMPLÈTE — Calculs agrégés
 // ============================================================
 
-export function analyserDonneesShelly(rows: ShellyRow[]): ShellyAnalyse {
+/**
+ * Regroupe les lignes par journée calendaire. Une ligne n'est pas un jour :
+ * la source Supabase en donne une par appareil et par jour, un fichier peut
+ * en donner une par heure. Sans ce regroupement, nbJours, moyenne, max et min
+ * étaient calculés par ligne.
+ */
+export function sommerParJour(rows: ShellyRow[], heuresParJour = 24): JourAgrege[] {
+  const jours = new Map<string, JourAgrege>();
+  for (const r of rows) {
+    const key = cleJour(r.date);
+    const d = toDateSafe(r.date);
+    let j = jours.get(key);
+    if (!j) {
+      j = {
+        date: new Date(d.getFullYear(), d.getMonth(), d.getDate()),
+        mois: r.mois, annee: r.annee,
+        jourActivites: r.jourActivites, isWeekend: r.isWeekend, isJourFerie: r.isJourFerie,
+        kwhA: 0, kwhB: 0, kwhC: 0, kwhTotal: 0, kwhRetourTotal: 0, kwhNet: 0,
+        puissKwA: 0, puissKwB: 0, puissKwC: 0, puissKwTotal: 0,
+        nbLignes: 0,
+      };
+      jours.set(key, j);
+    }
+    j.kwhA += r.kwhA ?? 0;
+    j.kwhB += r.kwhB ?? 0;
+    j.kwhC += r.kwhC ?? 0;
+    j.kwhTotal += r.kwhTotal ?? 0;
+    j.kwhRetourTotal += r.kwhRetourTotal ?? 0;
+    j.kwhNet += r.kwhNet ?? 0;
+    if (r.flux) j.flux = ajouterFlux(j.flux, r.flux);
+    j.nbLignes++;
+  }
+  return [...jours.values()]
+    .map(j => ({
+      ...j,
+      // Puissance moyenne sur les heures analysées (24, ou la plage De/À)
+      puissKwA: j.kwhA / heuresParJour, puissKwB: j.kwhB / heuresParJour, puissKwC: j.kwhC / heuresParJour,
+      puissKwTotal: j.kwhTotal / heuresParJour,
+    }))
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+/** Somme de deux jeux de flux ; null + null reste null (rien mesuré). */
+export function ajouterFlux(a: FluxRoles | undefined, b: FluxRoles): FluxRoles {
+  const plus = (x: number | null | undefined, y: number | null) =>
+    x == null ? y : y == null ? x : x + y;
+  return {
+    reseauSoutire: plus(a?.reseauSoutire, b.reseauSoutire),
+    reseauInjecte: plus(a?.reseauInjecte, b.reseauInjecte),
+    pv: plus(a?.pv, b.pv),
+    groupe: plus(a?.groupe, b.groupe),
+    charge: plus(a?.charge, b.charge),
+    departs: plus(a?.departs, b.departs),
+  };
+}
+
+/** Clé de jour calendaire local, stable entre sources (Date ou chaîne). */
+export function cleJour(v: unknown): string {
+  const d = toDateSafe(v);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * @param joursExclus clé jour → raison. Ces jours restent dans les totaux
+ *   mais sortent de la moyenne, du min, du max et des moyennes par type de jour.
+ */
+export function analyserDonneesShelly(
+  rows: ShellyRow[],
+  joursExclus: Map<string, string> = new Map(),
+  heuresParJour = 24,
+): ShellyAnalyse {
   if (rows.length === 0) {
     return {
       rows: [],
+      parJour: [],
+      nbJoursRetenus: 0,
       totalKwhConsomme: 0, totalKwhRetour: 0, totalKwhNet: 0,
       moyenneJournaliere: 0, maxJournalier: 0, minJournalier: 0,
       nbJours: 0,
@@ -299,38 +374,419 @@ export function analyserDonneesShelly(rows: ShellyRow[]): ShellyAnalyse {
   const totalKwhConsomme = rowsAvecCumuls.reduce((s, r) => s + r.kwhTotal, 0);
   const totalKwhRetour   = rowsAvecCumuls.reduce((s, r) => s + r.kwhRetourTotal, 0);
   const totalKwhNet      = rowsAvecCumuls.reduce((s, r) => s + r.kwhNet, 0);
-  const nbJours = rowsAvecCumuls.length;
-  const moyenneJournaliere = totalKwhNet / nbJours;
-  const maxJournalier = rowsAvecCumuls.reduce((a, r) => Math.max(a, r.kwhNet), -Infinity);
-  const minJournalier = rowsAvecCumuls.reduce((a, r) => Math.min(a, r.kwhNet), Infinity);
+  // Moyenne, extremums et types de jour se calculent sur les journées, pas sur les lignes
+  const parJour = sommerParJour(rowsAvecCumuls, heuresParJour)
+    .map(j => ({ ...j, exclu: joursExclus.get(cleJour(j.date)) }));
+  const nbJours = parJour.length;
+  const retenus = parJour.filter(j => !j.exclu);
+  const moyenneJournaliere = retenus.length > 0 ? retenus.reduce((s, j) => s + j.kwhNet, 0) / retenus.length : 0;
+  const maxJournalier = retenus.length > 0 ? Math.max(...retenus.map(j => j.kwhNet)) : 0;
+  const minJournalier = retenus.length > 0 ? Math.min(...retenus.map(j => j.kwhNet)) : 0;
 
   // Par mois
   const parMois: ShellyAnalyse['parMois'] = {};
-  for (const r of rowsAvecCumuls) {
-    const key = `${r.mois} ${r.annee}`;
+  for (const j of parJour) {
+    const key = `${j.mois} ${j.annee}`;
     if (!parMois[key]) parMois[key] = { kwhTotal: 0, kwhNet: 0, kwhRetour: 0, nbJours: 0 };
-    parMois[key].kwhTotal  += r.kwhTotal;
-    parMois[key].kwhNet    += r.kwhNet;
-    parMois[key].kwhRetour += r.kwhRetourTotal;
+    parMois[key].kwhTotal  += j.kwhTotal;
+    parMois[key].kwhNet    += j.kwhNet;
+    parMois[key].kwhRetour += j.kwhRetourTotal;
     parMois[key].nbJours++;
   }
 
   // Par type de jour
-  const joursOuvres  = rowsAvecCumuls.filter(r => r.jourActivites === 'Jour ouvré');
-  const weekendRows  = rowsAvecCumuls.filter(r => r.jourActivites === 'Weekend');
-  const feriesRows   = rowsAvecCumuls.filter(r => r.jourActivites === 'Jour férié');
+  const joursOuvres  = retenus.filter(j => j.jourActivites === 'Jour ouvré');
+  const weekendRows  = retenus.filter(j => j.jourActivites === 'Weekend');
+  const feriesRows   = retenus.filter(j => j.jourActivites === 'Jour férié');
 
-  const avg = (arr: ShellyRow[]) =>
-    arr.length > 0 ? arr.reduce((s, r) => s + r.kwhNet, 0) / arr.length : 0;
+  const avg = (arr: JourAgrege[]) =>
+    arr.length > 0 ? arr.reduce((s, j) => s + j.kwhNet, 0) / arr.length : 0;
 
   return {
     rows: rowsAvecCumuls,
+    parJour,
+    nbJoursRetenus: retenus.length,
     totalKwhConsomme, totalKwhRetour, totalKwhNet,
     moyenneJournaliere, maxJournalier, minJournalier, nbJours,
     parMois,
     jourOuvre: { kwhMoyen: avg(joursOuvres), nbJours: joursOuvres.length },
     weekend:   { kwhMoyen: avg(weekendRows),  nbJours: weekendRows.length },
     ferieOuDimanche: { kwhMoyen: avg(feriesRows), nbJours: feriesRows.length },
+  };
+}
+
+
+// ============================================================
+// NETTOYAGE DU PROFIL DE CHARGE
+// Aucune règle de qualité ici : elles vivent en base (qualite_regles) et
+// sont évaluées par fn_qualite (lib/iot-qualite-service.ts). Aucune façon
+// de calculer la consommation non plus : elle est déclarée par site dans
+// site_bilan. Ce module applique seulement ces déclarations et les choix
+// de l'utilisateur :
+//  - soustraire ou non la part en quarantaine ;
+//  - écarter des statistiques journalières les jours signalés incomplets ;
+//  - bilan par rôle : consommation selon la méthode du site, flux mesurés
+//    (réseau, PV, groupe, départs) affichés à part, jamais additionnés
+//    entre eux.
+// La base n'est jamais modifiée, rien n'est extrapolé, tout ce qui est
+// écarté est listé avec sa raison.
+// ============================================================
+
+export interface OptionsNettoyage {
+  /** Écarter de la moyenne, du min et du max les jours signalés JOUR_INCOMPLET */
+  completude: boolean;
+  /** Masquer du détail les appareils à 0 sur toute la période */
+  masquerZeros: boolean;
+  /** Soustraire l'énergie des heures en quarantaine (fn_qualite) */
+  quarantaine: boolean;
+  /** Méthode de consommation de chaque site (table site_bilan) */
+  sitesBilan?: SiteBilan[];
+  /** Période demandée ('YYYY-MM-DD'), pour lister les jours sans aucune donnée */
+  periode?: { debut: string; fin: string };
+  aujourdhui?: Date;
+}
+
+/** Signalements d'une règle, regroupés pour l'affichage. */
+export interface GroupeSignalements {
+  regle: string;
+  libelle: string;
+  explication: string;
+  action: string;
+  plages: Signalement[];
+  heures: number;
+  kwh: number;
+  appareils: string[];
+}
+
+export interface JourControle {
+  cle: string;
+  exclu?: string;        // raison de l'exclusion des statistiques
+  coupureMin: number;
+  repriseKwh: number;
+  incoherence?: string;
+}
+
+/** Ce que la série principale représente, site par site. */
+export type NaturePrincipale = 'consommation' | 'reseau' | 'departs' | 'lignes' | 'aucune';
+
+export interface BilanSite {
+  site: string;
+  methode: MethodeConsommation | 'non_declaree';
+  explication: string;
+  nature: NaturePrincipale;
+  /** Pourquoi la série n'est pas la consommation, quand c'est le cas */
+  raison?: string;
+  flux: FluxRoles;
+  principal: number;             // kWh de la série principale sur la période
+  nonMesure: number | null;      // consommation − départs, si la consommation est connue
+}
+
+export interface RapportNettoyage {
+  rowsCalcul: ShellyRow[];        // une ligne par jour (bilan) ou les lignes du fichier
+  rowsAffichage: ShellyRow[];     // lignes du détail
+  joursExclus: Map<string, string>;
+  jours: JourControle[];
+  joursSansDonnee: string[];
+  referenceCompletude: string[];  // appareils dont la complétude décide d'un jour
+  sites: BilanSite[];             // vide pour un fichier importé
+  nature: NaturePrincipale;       // nature commune de la série principale, ou 'aucune' si mélange
+  horsTotal: string[];            // appareils mesurés mais hors de la série principale
+  idsHorsTotal: Set<string>;
+  fluxTotal: FluxRoles | null;    // null pour un fichier importé
+  appareilsMasques: string[];
+  kwhQuarantaine: number;
+  groupes: GroupeSignalements[];
+}
+
+const FLUX_VIDE: FluxRoles = { reseauSoutire: null, reseauInjecte: null, pv: null, groupe: null, charge: null, departs: null };
+
+/** Retire d'une ligne la part en quarantaine (champs kWh bruts → nets). */
+function sansQuarantaine(r: ShellyRow): ShellyRow {
+  const q = r.quarantaine;
+  if (!q || q.heures === 0) return r;
+  const kwhTotal = Math.max(0, r.kwhTotal - q.kwh);
+  const kwhRetourTotal = Math.max(0, r.kwhRetourTotal - q.kwhRetour);
+  return {
+    ...r,
+    kwhTotal, kwhRetourTotal,
+    kwhA: Math.max(0, r.kwhA - q.kwhA), kwhB: Math.max(0, r.kwhB - q.kwhB), kwhC: Math.max(0, r.kwhC - q.kwhC),
+    whTotal: kwhTotal * 1000, whRetourTotal: kwhRetourTotal * 1000,
+    kwhNet: Math.max(0, kwhTotal - kwhRetourTotal),
+  };
+}
+
+/** Flux par rôle d'un ensemble de lignes (sens inverse déjà appliqué par fn_profil_charge). */
+function fluxDe(lignes: ShellyRow[]): FluxRoles {
+  const somme = (role: string, f: (r: ShellyRow) => number) => {
+    const l = lignes.filter(r => r.role === role);
+    return l.length ? l.reduce((s, r) => s + f(r), 0) : null;
+  };
+  return {
+    reseauSoutire: somme('M1_RESEAU', r => r.kwhTotal),
+    reseauInjecte: somme('M1_RESEAU', r => r.kwhRetourTotal),
+    // Production PV : l'énergie qui SORT du champ PV, c.-à-d. son injection
+    // une fois le sens du TC corrigé (PV_BUILDING est déclaré en sens inverse)
+    pv: somme('M5_PV', r => r.kwhRetourTotal),
+    groupe: somme('M4_GROUPE', r => r.kwhTotal),
+    charge: somme('M3_CHARGE', r => r.kwhTotal),
+    departs: somme('DEPART', r => r.kwhTotal),
+  };
+}
+
+const ROLE_DE_NATURE: Record<string, string | null> = {
+  arrivee: 'M1_RESEAU', charge_M3: 'M3_CHARGE', departs: 'DEPART', reseau: 'M1_RESEAU',
+};
+
+export function nettoyerProfil(
+  rowsBruts: ShellyRow[],
+  signalements: Signalement[],
+  regles: RegleQualite[],
+  opts: OptionsNettoyage,
+): RapportNettoyage {
+  const nomDe = (r: ShellyRow) => r.nomAppareil ?? r.deviceId ?? '?';
+  const idDe = (r: ShellyRow) => r.deviceId ?? nomDe(r);
+  const siteDe = (r: ShellyRow) => r.deviceLocation ?? '';
+  const regleDe = new Map(regles.map(rg => [rg.code, rg]));
+
+  // ── Quarantaine (décidée par fn_qualite) ───────────────────
+  const kwhQuarantaine = opts.quarantaine
+    ? rowsBruts.reduce((s, r) => s + (r.quarantaine?.kwh ?? 0), 0)
+    : 0;
+  const rows = opts.quarantaine ? rowsBruts.map(sansQuarantaine) : rowsBruts;
+
+  // ── Bilan par rôle (données Supabase : les lignes portent un rôle) ──
+  const avecRoles = rows.some(r => r.role);
+  const methodeDe = new Map((opts.sitesBilan ?? []).map(b => [b.site, b]));
+  const sites: BilanSite[] = [];
+  const idsPrincipaux = new Set<string>();
+  // nature retenue par site, constante sur la période (on ne mélange pas
+  // consommation un jour et énergie réseau le lendemain)
+  const natureSite = new Map<string, NaturePrincipale>();
+
+  // Jours où un compteur émet mais mesure 0 (règle ZERO_ARRIVEE, « Compteur
+  // principal à zéro ») : une plage peut couvrir plusieurs jours
+  const joursZero = new Map<string, Set<string>>();   // device_id → clés de jour
+  for (const sg of signalements) {
+    if (sg.regle !== 'ZERO_ARRIVEE' || !sg.device_id) continue;
+    const set = joursZero.get(sg.device_id) ?? new Set<string>();
+    const d = new Date(sg.debut);
+    const fin = new Date(sg.fin);
+    for (; d < fin; d.setHours(d.getHours() + 1)) set.add(cleJour(d));
+    joursZero.set(sg.device_id, set);
+  }
+  const estZero = (r: ShellyRow) => !!r.deviceId && Math.abs(r.kwhTotal) < 0.0005 && !!joursZero.get(r.deviceId)?.has(cleJour(r.date));
+
+  if (avecRoles) {
+    for (const site of [...new Set(rows.map(siteDe))].sort()) {
+      const lignes = rows.filter(r => siteDe(r) === site);
+      const decl = methodeDe.get(site);
+      const flux = fluxDe(lignes);
+      let nature: NaturePrincipale;
+      let raison: string | undefined;
+      const methode = decl?.methode;
+      if (methode === 'arrivee' && flux.reseauSoutire != null) nature = 'consommation';
+      else if (methode === 'charge_M3' && flux.charge != null) nature = 'consommation';
+      else if (methode === 'departs' && flux.departs != null) nature = 'consommation';
+      else {
+        raison = !decl
+          ? (site
+            ? 'méthode de consommation non déclarée pour ce site (site_bilan)'
+            // Fichier importé (pas de site) : production seule, par exemple
+            : 'aucune consommation dans ce fichier')
+          : methode === 'indeterminee'
+            ? decl.explication
+            : `${methode === 'arrivee' ? "l'arrivée" : methode === 'charge_M3' ? 'le compteur de charge M3' : 'les départs'} n'a aucune mesure sur la période`;
+        // Repli honnête : ce qui est mesuré, nommé pour ce que c'est
+        nature = flux.reseauSoutire != null ? 'reseau' : flux.departs != null ? 'departs' : 'aucune';
+      }
+      // Le compteur de la série principale émet mais mesure 0 tous les jours :
+      // ce n'est pas une consommation nulle, c'est une mesure absente
+      const roleConso = nature === 'consommation' ? ROLE_DE_NATURE[methode!] : null;
+      const lignesConso = roleConso ? lignes.filter(r => r.role === roleConso) : [];
+      if (lignesConso.length > 0 && lignesConso.every(estZero)) {
+        nature = 'aucune';
+        raison = `${lignesConso[0].nomAppareil ?? roleConso} émet mais mesure 0 sur toute la période (règle « Compteur principal à zéro ») : consommation non mesurée`;
+      }
+      natureSite.set(site, nature);
+      const role = nature === 'consommation' ? ROLE_DE_NATURE[methode!] : nature === 'aucune' ? null : ROLE_DE_NATURE[nature];
+      for (const r of lignes) if (role && r.role === role) idsPrincipaux.add(idDe(r));
+      const principal = lignes.filter(r => role && r.role === role).reduce((s, r) => s + r.kwhTotal, 0);
+      sites.push({
+        site, methode: decl?.methode ?? 'non_declaree', explication: decl?.explication ?? '',
+        nature, raison, flux, principal,
+        // « Non mesuré » = consommation − départs, seulement si l'arrivée alimente
+        // tous les départs (méthode arrivee). À l'Académie, les départs sont sur
+        // une autre arrivée (bureau, Woyofal) : la soustraction n'aurait pas de sens.
+        nonMesure: nature === 'consommation' && methode === 'arrivee' && flux.departs != null ? principal - flux.departs : null,
+      });
+    }
+  }
+
+  // Série principale : une ligne par jour (sites additionnés), ou les lignes
+  // du fichier telles quelles (pas de rôles : on ne peut rien distinguer)
+  let rowsCalcul: ShellyRow[];
+  if (avecRoles) {
+    const parJourAvec = new Map<string, ShellyRow[]>();
+    for (const r of rows) {
+      const k = cleJour(r.date);
+      if (!parJourAvec.has(k)) parJourAvec.set(k, []);
+      parJourAvec.get(k)!.push(r);
+    }
+    rowsCalcul = [...parJourAvec.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, lignes]) => {
+      const contrib = lignes.filter(r => idsPrincipaux.has(idDe(r)));
+      const somme = (f: (r: ShellyRow) => number) => contrib.reduce((s, r) => s + f(r), 0);
+      const kwhTotal = somme(r => r.kwhTotal);
+      const flux = fluxDe(lignes);
+      const injecte = flux.reseauInjecte ?? 0;
+      const base = lignes[0];
+      return {
+        ...base,
+        nomAppareil: 'Bilan du site', deviceId: undefined, role: undefined, quarantaine: undefined,
+        deviceRoom: undefined, deviceFamily: undefined,
+        kwhTotal, kwhNet: kwhTotal, kwhRetourTotal: injecte,
+        kwhA: somme(r => r.kwhA), kwhB: somme(r => r.kwhB), kwhC: somme(r => r.kwhC),
+        whTotal: kwhTotal * 1000, whRetourTotal: injecte * 1000,
+        whPhaseA: somme(r => r.whPhaseA), whPhaseB: somme(r => r.whPhaseB), whPhaseC: somme(r => r.whPhaseC),
+        puissKwTotal: somme(r => r.puissKwTotal),
+        puissKwA: somme(r => r.puissKwA), puissKwB: somme(r => r.puissKwB), puissKwC: somme(r => r.puissKwC),
+        profil: 'CHARGE',
+        flux,
+      } as ShellyRow;
+    });
+  } else {
+    rowsCalcul = rows;
+  }
+
+  const natures = [...new Set(sites.map(s => s.nature))];
+  const nature: NaturePrincipale = !avecRoles ? 'lignes' : natures.length === 1 ? natures[0] : 'aucune';
+
+  const nomsHorsTotal = new Map<string, string>();
+  if (avecRoles) {
+    for (const r of [...rows].sort((a, b) => toDateSafe(a.date).getTime() - toDateSafe(b.date).getTime())) {
+      if (!idsPrincipaux.has(idDe(r))) nomsHorsTotal.set(idDe(r), nomDe(r));
+    }
+  }
+
+  // ── Signalements par jour ──────────────────────────────────
+  const parJourRegle = new Map<string, Signalement[]>();
+  for (const sg of signalements) {
+    const k = `${cleJour(sg.debut)}|${sg.regle}`;
+    if (!parJourRegle.has(k)) parJourRegle.set(k, []);
+    parJourRegle.get(k)!.push(sg);
+  }
+  const duJour = (cle: string, regle: string) => parJourRegle.get(`${cle}|${regle}`) ?? [];
+
+  // Référence de complétude : le ou les compteurs qui font la série
+  // principale (arrivée, M3) ; pour des départs, tout appareil continu —
+  // fn_qualite ne signale JOUR_INCOMPLET que pour ceux-là.
+  const compteurs = new Map(rows
+    .filter(r => idsPrincipaux.has(idDe(r)) && (r.role === 'M1_RESEAU' || r.role === 'M3_CHARGE'))
+    .map(r => [idDe(r), nomDe(r)]));
+  const referenceIds = compteurs.size > 0 ? new Set(compteurs.keys()) : null;
+
+  const parCle = new Map<string, ShellyRow[]>();
+  for (const r of rows) {
+    const k = cleJour(r.date);
+    if (!parCle.has(k)) parCle.set(k, []);
+    parCle.get(k)!.push(r);
+  }
+
+  const cleAujourdhui = cleJour(opts.aujourdhui ?? new Date());
+  const jours: JourControle[] = [];
+  for (const cle of [...parCle.keys()].sort()) {
+    const lignes = parCle.get(cle)!;
+    const coupureMin = duJour(cle, 'COUPURE').reduce((s, sg) => s + (sg.valeur ?? 0), 0);
+    const repriseKwh = duJour(cle, 'REPRISE').reduce((s, sg) => s + (sg.kwh ?? 0), 0);
+
+    let exclu: string | undefined;
+    if (opts.completude) {
+      const incomplets = duJour(cle, 'JOUR_INCOMPLET')
+        .filter(sg => sg.device_id && (!referenceIds || referenceIds.has(sg.device_id)));
+      const absents = referenceIds
+        ? [...referenceIds].filter(id => !lignes.some(l => idDe(l) === id)).map(id => `${compteurs.get(id)} absent`)
+        : [];
+      const aZero = lignes.filter(l => idsPrincipaux.has(idDe(l)) && estZero(l));
+      if (cle === cleAujourdhui || incomplets.some(sg => sg.detail?.en_cours === true)) {
+        exclu = 'journée en cours';
+      } else if (aZero.length > 0) {
+        exclu = `${aZero.map(nomDe).join(', ')} à 0 alors qu'il émet (compteur principal à zéro)`;
+      } else if (incomplets.length > 0 || absents.length > 0) {
+        exclu = 'incomplet : ' + [
+          ...incomplets.map(sg => {
+            const d = sg.detail ?? {};
+            const h = Number(d.heures_presentes ?? 0) + Number(d.heures_coupees ?? 0);
+            return `${sg.nom ?? sg.device_id} ${h} h/${d.heures_attendues ?? '?'}`;
+          }),
+          ...absents,
+        ].join(', ');
+      }
+    }
+
+    const incoherence = duJour(cle, 'DEPARTS_SUP_ARRIVEE')
+      .map(sg => `${sg.site} : départs ${Number(sg.detail?.kwh_departs ?? 0).toFixed(2)} kWh > arrivée ${Number(sg.detail?.kwh_arrivee ?? 0).toFixed(2)} kWh`)
+      .join(' ; ') || undefined;
+
+    jours.push({ cle, exclu, coupureMin, repriseKwh, incoherence });
+  }
+
+  const joursSansDonnee: string[] = [];
+  if (opts.periode) {
+    const d = new Date(`${opts.periode.debut}T00:00:00`);
+    const fin = new Date(`${opts.periode.fin}T00:00:00`);
+    for (; d <= fin; d.setDate(d.getDate() + 1)) {
+      const k = cleJour(d);
+      if (!parCle.has(k) && k <= cleAujourdhui) joursSansDonnee.push(k);
+    }
+  }
+
+  // ── Appareils à 0 sur toute la période (bruit dans le détail) ──
+  const energieParApp = new Map<string, { nom: string; kwh: number }>();
+  for (const r of rows) {
+    const id = idDe(r);
+    const e = energieParApp.get(id) ?? { nom: nomDe(r), kwh: 0 };
+    e.kwh += Math.abs(r.kwhTotal) + Math.abs(r.kwhRetourTotal);
+    energieParApp.set(id, e);
+  }
+  const idsMasques = new Set(
+    opts.masquerZeros ? [...energieParApp].filter(([, e]) => e.kwh < 0.0005).map(([id]) => id) : [],
+  );
+
+  // ── Tous les signalements, par règle (ordre et textes de la base) ──
+  const groupesMap = new Map<string, GroupeSignalements>();
+  for (const sg of signalements) {
+    const rg = regleDe.get(sg.regle);
+    let g = groupesMap.get(sg.regle);
+    if (!g) {
+      g = {
+        regle: sg.regle, libelle: rg?.libelle ?? sg.regle, explication: rg?.explication ?? '',
+        action: rg?.action ?? sg.action, plages: [], heures: 0, kwh: 0, appareils: [],
+      };
+      groupesMap.set(sg.regle, g);
+    }
+    g.plages.push(sg);
+    g.heures += sg.nb_heures ?? 0;
+    g.kwh += sg.kwh ?? 0;
+    const qui = sg.nom ?? (sg.device_id ? sg.device_id : `site ${sg.site}`);
+    if (!g.appareils.includes(qui)) g.appareils.push(qui);
+  }
+  const ordre = (code: string) => regleDe.get(code)?.ordre ?? 999;
+  const groupes = [...groupesMap.values()].sort((a, b) => ordre(a.regle) - ordre(b.regle));
+
+  return {
+    rowsCalcul,
+    rowsAffichage: rows.filter(r => !idsMasques.has(idDe(r))),
+    joursExclus: new Map(jours.filter(j => j.exclu).map(j => [j.cle, j.exclu!])),
+    jours,
+    joursSansDonnee,
+    referenceCompletude: referenceIds ? [...compteurs.values()] : ['appareils continus analysés'],
+    sites,
+    nature,
+    horsTotal: [...nomsHorsTotal.values()].sort(),
+    idsHorsTotal: new Set(nomsHorsTotal.keys()),
+    fluxTotal: avecRoles ? sites.reduce<FluxRoles>((acc, s) => ajouterFlux(acc, s.flux), FLUX_VIDE) : null,
+    appareilsMasques: [...idsMasques].map(id => energieParApp.get(id)!.nom).sort(),
+    kwhQuarantaine,
+    groupes,
   };
 }
 
@@ -471,7 +927,10 @@ export function detecterFormatShelly(colonnes: string[]): {
   }) ?? null;
   const hasPhases = cols.some(c => c.includes('phase') || c.includes('wh_'));
   const hasRetour = cols.some(c => c.includes('retour') || c.includes('return'));
-  const isShelly  = hasPhases && colonneDate !== null;
+  // Colonnes « Wh_… » exigées : parseShellyRow ne lit que celles-là. Un tableau
+  // réorganisé par sections (« Phase A (Wh) », lib/tableau-sections.ts) passe
+  // par le lecteur générique, qui range chaque colonne à sa phase.
+  const isShelly  = cols.some(c => c.startsWith('wh_')) && colonneDate !== null;
 
   return {
     format: isShelly ? 'shelly_excel' : 'generic',
