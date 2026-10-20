@@ -1,0 +1,20 @@
+{
+  "name": "simee-tests-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:unitaire": "vitest run",
+    "connexion": "playwright test --project=connexion --headed",
+    "test:systeme": "playwright test --project=e2e",
+    "test": "vitest run && playwright test --project=e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@testing-library/react": "16.3.0",
+    "jsdom": "26.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "vitest": "3.2.4",
+    "xlsx": "0.18.5"
+  }
+}
