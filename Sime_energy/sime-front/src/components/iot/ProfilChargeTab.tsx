@@ -1,5 +1,4 @@
 import { useMemo, useState, useEffect } from 'react';
-import { exportMultiSheetXlsx } from '@/lib/excel-utils';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ReferenceLine,
@@ -22,6 +21,12 @@ import { fetchDisponibles, fetchProfilCharge, fetchSiteBilan, type ProfilChargeJ
 import type { PerimetreAnalyse } from './PerimetreBar';
 import { fetchRegles, fetchSignalements, versionRegles, type RegleQualite, type Signalement } from '@/lib/iot-qualite-service';
 import { fetchAccounts } from '@/lib/shelly-account-service';
+import { fetchDevicePeriodes } from '@/lib/shelly-device-period-service';
+import { useAuth } from '@/context/AuthContext';
+import { construireRapport, type EntreeRapport } from '@/services/iotRapport';
+import { exporterRapportExcel } from '@/services/iotRapportExcel';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 
 /** Clé de couleur partagée avec Analyse (communs.METRIQUES) quand la donnée est la même. */
 const CLE_COULEUR: Partial<Record<string, string>> = {
@@ -639,40 +644,67 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
     [analyse]
   );
 
-  // Export Excel
-  const exportExcel = async () => {
-    await exportMultiSheetXlsx(
-      [
-        {
-          name: 'PROFIL CHARGE',
-          data: filteredRows.map(r => ({
-            'Date': (r.date instanceof Date ? r.date : new Date(r.date as string)).toLocaleDateString('fr-FR'),
-            'Jour': r.jour,
-            'Mois': r.mois,
-            'Année': r.annee,
-            'Wh Phase A': r.whPhaseA, 'Wh Phase B': r.whPhaseB, 'Wh Phase C': r.whPhaseC, 'Wh Total': r.whTotal,
-            'Wh Retour A': r.whRetourA, 'Wh Retour B': r.whRetourB, 'Wh Retour C': r.whRetourC, 'Wh Retour Total': r.whRetourTotal,
-            'kWh A': +((r.kwhA ?? 0).toFixed(3)), 'kWh B': +((r.kwhB ?? 0).toFixed(3)), 'kWh C': +((r.kwhC ?? 0).toFixed(3)), 'kWh Total': +((r.kwhTotal ?? 0).toFixed(3)),
-            'kWh Retour A': +((r.kwhRetourA ?? 0).toFixed(3)), 'kWh Retour B': +((r.kwhRetourB ?? 0).toFixed(3)), 'kWh Retour C': +((r.kwhRetourC ?? 0).toFixed(3)), 'kWh Retour Total': +((r.kwhRetourTotal ?? 0).toFixed(3)),
-            'kWh Cum Total': +((r.kwhCumTotal ?? 0).toFixed(3)),
-            'Puiss. kW A': +((r.puissKwA ?? 0).toFixed(3)), 'Puiss. kW B': +((r.puissKwB ?? 0).toFixed(3)), 'Puiss. kW C': +((r.puissKwC ?? 0).toFixed(3)), 'Puiss. kW Total': +((r.puissKwTotal ?? 0).toFixed(3)),
-            'kWh Net': +((r.kwhNet ?? 0).toFixed(3)),
-            'Profil': r.profil,
-          })),
-        },
-        {
-          name: 'Mensuel',
-          data: chartDataMensuel.map(m => ({
-            'Mois': m.mois,
-            'kWh Total': m.kwhTotal,
-            'kWh Net': m.kwhNet,
-            'kWh Retour': m.kwhRetour,
-            'Nb jours': m.nbJours,
-          })),
-        },
-      ],
-      'profil_charge_shelly.xlsx'
-    );
+  // ── Rapport Excel ─────────────────────────────────────────
+  // Remplace l'ancien export, dont la colonne « kWh Total » additionnait
+  // arrivée et départs. Le rapport reprend les objets de l'écran tels quels
+  // (services/iotRapport.ts) : il ne recalcule aucune énergie.
+  const { user } = useAuth();
+  const [rapportOuvert, setRapportOuvert] = useState(false);
+  const [commentaire, setCommentaire] = useState('');
+  const [rapportEnCours, setRapportEnCours] = useState(false);
+  const [rapportErreur, setRapportErreur] = useState<string | null>(null);
+  const [periodes, setPeriodes] = useState<Awaited<ReturnType<typeof fetchDevicePeriodes>>>([]);
+  useEffect(() => {
+    if (!rapportOuvert || !enSupabase) return;
+    fetchDevicePeriodes().then(setPeriodes).catch(() => setPeriodes([]));
+  }, [rapportOuvert, enSupabase]);
+
+  const entreeRapport = useMemo<EntreeRapport>(() => {
+    const meta = user?.user_metadata ?? {};
+    const auteur = meta.first_name && meta.last_name ? `${meta.first_name} ${meta.last_name}` : (user?.email ?? 'utilisateur');
+    const uniques = (f: (r: ShellyRow) => string | undefined) =>
+      [...new Set(shellyRows.map(f).filter((x): x is string => Boolean(x)))].sort();
+    return {
+      analyse, nettoyage, bilan: nettoyageFlux, lignes: filteredRows,
+      libellePrincipal: nettoyageFlux ? TITRE_NATURE[nettoyageFlux.nature] : 'Consommation totale',
+      perimetre: {
+        source: enSupabase ? 'base' : 'fichier',
+        sites: uniques(r => r.deviceLocation),
+        appareils: uniques(r => r.nomAppareil),
+        debut: enSupabase ? chargement.debut : undefined,
+        fin: enSupabase ? chargement.fin : undefined,
+        heureDebut: enSupabase ? chargement.heureDebut : undefined,
+        heureFin: enSupabase ? chargement.heureFin : undefined,
+        filtreJours: { tous: 'tous les jours', 'ouvrés': 'jours ouvrés seulement', weekends: 'week-ends seulement', 'fériés': 'jours fériés seulement' }[filterType],
+      },
+      options: optsNettoyage,
+      versionRegles: versionRegles(regles) ?? '—',
+      periodes,
+      auteur,
+      commentaire,
+      dateExport: new Date(),
+    };
+  }, [analyse, nettoyage, nettoyageFlux, filteredRows, enSupabase, chargement, shellyRows, filterType, optsNettoyage, regles, periodes, user, commentaire]);
+  const apercuRapport = useMemo(() => (rapportOuvert ? construireRapport(entreeRapport) : null), [rapportOuvert, entreeRapport]);
+
+  const exporterRapport = async () => {
+    setRapportEnCours(true);
+    setRapportErreur(null);
+    try {
+      const rapport = construireRapport({ ...entreeRapport, dateExport: new Date() });
+      const p = entreeRapport.perimetre;
+      const nom = [
+        'Rapport_courbe_de_charge',
+        p.sites.length === 1 ? p.sites[0] : p.sites.length ? `${p.sites.length}_sites` : 'fichier',
+        p.debut, p.fin,
+      ].filter(Boolean).join('_').replace(/[^\p{L}\p{N}_-]+/gu, '_');
+      await exporterRapportExcel(rapport, `${nom}.xlsx`);
+      setRapportOuvert(false);
+    } catch (e) {
+      setRapportErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRapportEnCours(false);
+    }
   };
 
 
@@ -1014,9 +1046,10 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
               size="sm"
               variant="outline"
               className="border-white/20 text-white hover:bg-white/10"
-              onClick={exportExcel}
+              onClick={() => setRapportOuvert(true)}
+              title="Rapport Excel : synthèse, journalier, types de jour, mensuel, qualité, détail par appareil"
             >
-              <Download className="h-4 w-4 mr-1" /> Export Excel
+              <Download className="h-4 w-4 mr-1" /> Rapport Excel
             </Button>
           </div>
         </div>
@@ -1108,6 +1141,49 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
             )}
           </ResponsiveContainer>
         </div>
+
+        <Dialog open={rapportOuvert} onOpenChange={setRapportOuvert}>
+          <DialogContent className="max-w-2xl bg-[#0f111a] border-white/10 text-slate-100">
+            <DialogHeader>
+              <DialogTitle>Rapport Excel — courbe de charge</DialogTitle>
+            </DialogHeader>
+            {apercuRapport && (
+              <div className="space-y-4 text-sm max-h-[60vh] overflow-y-auto pr-1">
+                <div className="space-y-1">
+                  {apercuRapport.perimetre.slice(0, 5).map(([k, v]) => (
+                    <p key={k} className="text-xs"><span className="text-slate-400">{k} : </span><span className="text-slate-200">{v}</span></p>
+                  ))}
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-300 mb-1">Synthèse calculée (reprise telle quelle dans le fichier)</p>
+                  <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
+                    {apercuRapport.phrases.map((p, i) => <li key={i}>{p}</li>)}
+                  </ul>
+                </div>
+                <div>
+                  <Label htmlFor="commentaire-rapport" className="text-xs text-slate-300">Commentaire de l'analyste (facultatif)</Label>
+                  <Textarea
+                    id="commentaire-rapport"
+                    value={commentaire}
+                    onChange={e => setCommentaire(e.target.value)}
+                    placeholder="Votre interprétation : contexte, incident connu, recommandation…"
+                    className="mt-1 min-h-24 bg-white/5 border-white/15 text-slate-100 text-xs"
+                  />
+                  <p className="text-[0.6875rem] text-slate-500 mt-1">
+                    Signé {entreeRapport.auteur} et présenté comme l'avis de l'analyste, distinct des chiffres mesurés.
+                  </p>
+                </div>
+                {rapportErreur && <p className="text-xs text-red-400">{rapportErreur}</p>}
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="ghost" className="text-slate-300" onClick={() => setRapportOuvert(false)}>Annuler</Button>
+              <Button onClick={exporterRapport} disabled={rapportEnCours} className="bg-blue-600 hover:bg-blue-500">
+                <Download className="h-4 w-4 mr-1" /> {rapportEnCours ? 'Préparation…' : 'Télécharger le rapport'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Tableau de données journalières */}
         <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">

@@ -14,7 +14,7 @@ function unwrapCellValue(v: unknown): unknown {
   return v;
 }
 
-function triggerDownload(buffer: ExcelJS.Buffer, filename: string) {
+export function triggerDownload(buffer: ExcelJS.Buffer, filename: string) {
   const blob = new Blob([buffer as BlobPart], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
