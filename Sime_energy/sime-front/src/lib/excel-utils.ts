@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { desempilerSections } from './tableau-sections';
 
 function unwrapCellValue(v: unknown): unknown {
   if (v === null || v === undefined) return null;
@@ -116,8 +117,29 @@ export function metaFromPreambleLines(lines: string[]): SpreadsheetMeta {
 }
 
 /** Parseur CSV minimal (RFC 4180 : guillemets, guillemets doublés, retours à la ligne dans les cellules). */
+/**
+ * Virgule décimale ET séparateur virgule (export Shelly Cloud :
+ * « 01/05/2026 00:00, 165,700 ») : la valeur est coupée en « 165 » et « 700 »,
+ * et la 2e moitié tombe hors des colonnes. Si les lignes datées ont
+ * systématiquement une cellule de plus que l'en-tête et finissent par
+ * « entier , chiffres », on recolle les deux morceaux : 165.700.
+ */
+function recollerDecimales(rows: string[][]): string[][] {
+  const date = (c: string) => /^\s*\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}/.test(c);
+  const datees = rows.filter(r => r.length > 1 && date(r[0]));
+  if (datees.length < 3) return rows;
+  const larg = new Map<number, number>();
+  for (const r of datees) larg.set(r.length, (larg.get(r.length) ?? 0) + 1);
+  const [L, n] = [...larg.entries()].sort((a, b) => b[1] - a[1])[0];
+  const entetes = rows.filter(r => r.length > 1 && !date(r[0]) && r.every(c => !/^\s*-?\d/.test(c)));
+  if (n / datees.length < 0.9 || !entetes.length || !entetes.every(r => r.length === L - 1)) return rows;
+  const coupee = (r: string[]) => r.length === L && /^\s*-?\d+\s*$/.test(r[L - 2]) && /^\d+\s*$/.test(r[L - 1]);
+  if (!datees.filter(r => r.length === L).every(coupee)) return rows;
+  return rows.map(r => coupee(r) && date(r[0]) ? [...r.slice(0, L - 2), `${r[L - 2].trim()}.${r[L - 1].trim()}`] : r);
+}
+
 function parseCsv(text: string, delimiter: string): { rows: unknown[][]; meta: SpreadsheetMeta } {
-  const rows: unknown[][] = [];
+  const brutes: string[][] = [];
   let row: string[] = [];
   let cell = '';
   let inQuotes = false;
@@ -135,12 +157,19 @@ function parseCsv(text: string, delimiter: string): { rows: unknown[][]; meta: S
     } else if (ch === '\n' || ch === '\r') {
       if (ch === '\r' && text[i + 1] === '\n') i++;
       row.push(cell); cell = '';
-      if (row.some(c => c.trim() !== '')) rows.push(row.map(coerceCell));
+      if (row.some(c => c.trim() !== '')) brutes.push(row);
       row = [];
     } else cell += ch;
   }
   row.push(cell);
-  if (row.some(c => c.trim() !== '')) rows.push(row.map(coerceCell));
+  if (row.some(c => c.trim() !== '')) brutes.push(row);
+  // Avant la conversion en nombres : « 000 » doit rester « 000 » pour être recollé
+  const rows: unknown[][] = (delimiter === ',' ? recollerDecimales(brutes) : brutes).map(r => r.map(coerceCell));
+  // Séries empilées en sections (export Shelly Cloud : Phase A, Phase B… Retour
+  // Total) : une colonne par section, AVANT d'écarter le préambule, qui
+  // avalerait le titre de la 1re section
+  const d = desempilerSections(rows);
+  if (d) return { rows: d.rows, meta: { sections: d.sections.join(' · ') } };
   return stripPreamble(rows);
 }
 
@@ -199,7 +228,8 @@ export async function parseExcelBuffer(buffer: ArrayBuffer): Promise<{
       const vals = (row.values as unknown[]).slice(1).map(unwrapCellValue);
       rows.push(vals);
     });
-    sheetData[ws.name] = rows;
+    // Même règle qu'en CSV : sections empilées → une colonne par section
+    sheetData[ws.name] = desempilerSections(rows)?.rows ?? rows;
   });
 
   return {

@@ -300,7 +300,11 @@ export function suggestMapping(
   const timeCol = !tsWithTime && dateCols[0] ? (timeOnlyCols[0] ?? '') : '';
 
   const numericCols = columns.filter(c => c !== timestampCol && c !== timeCol && !INDEX_COL_RE.test(c.trim()) && isNumericColumn(sample, c));
-  const valueCol = numericCols[0] ?? '';
+  // Grandeur principale : le total s'il existe (fichier réorganisé par sections :
+  // Phase A, Phase B, Phase C, Total, Retour…), jamais une phase ni un retour
+  const valueCol = numericCols.find(c => /total|global|somme/i.test(c) && !/retour|inject/i.test(c))
+    ?? numericCols.find(c => !/retour|inject/i.test(c))
+    ?? numericCols[0] ?? '';
   // Unité : en-tête « (°C) », sinon préambule « Temperature Unit:Celsius », sinon nom de
   // colonne, sinon le titre du fichier (« MESURE SONORE … » → dB).
   const unit = valueCol

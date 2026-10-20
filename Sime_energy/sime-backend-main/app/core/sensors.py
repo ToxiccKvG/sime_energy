@@ -31,6 +31,7 @@ colonne `timestamp` (datetime) + les colonnes normalisées, puis l'enregistrer
 dans `SENSOR_REGISTRY`.
 """
 
+import csv
 import io
 import logging
 import re
@@ -319,6 +320,9 @@ def parse_shelly(text: str) -> pd.DataFrame:
     section_map = {
         "phase a": "phase_a_wh", "phase b": "phase_b_wh", "phase c": "phase_c_wh",
         "total": "total_wh",
+        # Export Shelly Cloud d'un compteur monophasé / d'un total seul :
+        # « Consommation » puis « Retour Total » (même grandeur que « Total »)
+        "consommation": "total_wh",
         "retour phase a": "return_a_wh", "retour phase b": "return_b_wh",
         "retour phase c": "return_c_wh", "retour total": "return_total_wh",
     }
@@ -326,7 +330,9 @@ def parse_shelly(text: str) -> pd.DataFrame:
     current: Optional[str] = None
 
     for line in text.splitlines():
-        stripped = line.strip()
+        # Les exports Shelly Cloud commencent par plusieurs BOM (\ufeff), que
+        # strip() ne retire pas : la section « Phase A » n'était pas reconnue
+        stripped = line.replace("\ufeff", "").strip()
         if not stripped:
             continue
         low = stripped.lower()
@@ -468,6 +474,98 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
 _TEXT_DELIMITERS = ["\t", ";", ",", "|"]
 
 
+_DATE_RE = re.compile(r"^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}")
+_NUM_RE = re.compile(r"^-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?$")
+
+
+def _cell_text(v: Any) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    return str(v).replace("\ufeff", "").replace("\u200b", "").strip()
+
+
+def _is_date(v: Any) -> bool:
+    return hasattr(v, "year") or bool(_DATE_RE.match(_cell_text(v)))
+
+
+def _is_num(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not pd.isna(v) or bool(_NUM_RE.match(_cell_text(v).replace(" ", "").replace("\u00a0", "")))
+
+
+def _desempiler_sections(rows: List[List[Any]]) -> Optional[tuple]:
+    """Séries empilées en sections → une colonne par section (même règle que
+    le frontend, src/lib/tableau-sections.ts).
+
+    Certains exports (Shelly Cloud) empilent les séries sous un titre et un
+    en-tête répété : « Phase A / Temps, Wh / données / Phase B / Temps, Wh / … ».
+    Lues telles quelles, toutes les valeurs tombaient dans la même colonne
+    (phases, total et retours additionnés). Renvoie (colonnes, lignes, titres)
+    ou None si le tableau n'est pas empilé.
+    """
+    lignes = [r for r in rows if any(_cell_text(c) for c in r)]
+    pleines = lambda r: [c for c in r if _cell_text(c)]
+    est_titre = lambda r: len(pleines(r)) == 1 and not _is_num(pleines(r)[0]) and not _is_date(pleines(r)[0])
+
+    compte: Dict[str, int] = {}
+    for i in range(len(lignes) - 1):
+        r = lignes[i]
+        if est_titre(r) or any(_is_num(c) or _is_date(c) for c in pleines(r)):
+            continue
+        if not lignes[i + 1] or not _is_date(lignes[i + 1][0]):
+            continue
+        cle = _cell_text(r[0]).lower()
+        if cle:
+            compte[cle] = compte.get(cle, 0) + 1
+    if not compte:
+        return None
+    cle_entete, nb = max(compte.items(), key=lambda kv: kv[1])
+    if nb < 2:
+        return None
+
+    sections: List[Dict[str, Any]] = []
+    titre: Optional[str] = None
+    cur: Optional[Dict[str, Any]] = None
+    for r in lignes:
+        if est_titre(r):
+            titre, cur = _cell_text(pleines(r)[0]), None
+            continue
+        if _cell_text(r[0]).lower() == cle_entete:
+            cur = {"titre": titre, "entete": [_cell_text(c) for c in r], "lignes": []}
+            sections.append(cur)
+            titre = None
+            continue
+        if cur is not None and r and _is_date(r[0]):
+            cur["lignes"].append(r)
+    if len(sections) < 2:
+        return None
+    # 1re section sans titre (avalé) : « Phase B » ensuite → « Phase A »
+    for i, sec in enumerate(sections):
+        if sec["titre"]:
+            continue
+        suivant = next((x["titre"] for x in sections[i + 1:] if x["titre"]), None)
+        m = re.match(r"^(.*?)([B2])$", suivant or "", re.I)
+        sec["titre"] = (m.group(1) + {"B": "A", "b": "a", "2": "1"}[m.group(2)]) if m else ("Valeurs" if i == 0 else f"Section {i + 1}")
+
+    colonnes = [sections[0]["entete"][0] or "Temps"]
+    par_ts: Dict[str, Dict[int, Any]] = {}
+    ordre: List[str] = []
+    for sec in sections:
+        valeurs = [(nom, k + 1) for k, nom in enumerate(sec["entete"][1:])
+                   if nom or any(len(l) > k + 1 and _cell_text(l[k + 1]) for l in sec["lignes"])]
+        for nom, k in valeurs:
+            col = (f"{sec['titre']} ({nom})" if nom else sec["titre"]) if len(valeurs) == 1 else f"{sec['titre']} — {nom or f'col {k}'}"
+            idx = len(colonnes)
+            colonnes.append(col)
+            for l in sec["lignes"]:
+                cle = _cell_text(l[0])
+                if cle not in par_ts:
+                    par_ts[cle] = {0: l[0]}
+                    ordre.append(cle)
+                par_ts[cle][idx] = l[k] if len(l) > k else None
+    data = [[par_ts[c].get(i) for i in range(len(colonnes))] for c in ordre]
+    return colonnes, data, [sec["titre"] for sec in sections]
+
+
 def _find_header_row(frame: pd.DataFrame) -> int:
     """Index de la première ligne au nombre de cellules renseignées majoritaire.
 
@@ -493,6 +591,10 @@ def _read_excel_table(contents: bytes) -> tuple:
     engine = "xlrd" if contents[:4] == b"\xd0\xcf\x11\xe0" else "openpyxl"
     xls = pd.ExcelFile(bio, engine=engine)
     raw = xls.parse(xls.sheet_names[0], header=None)
+    d = _desempiler_sections(raw.values.tolist())
+    if d:
+        colonnes, data, _ = d
+        return pd.DataFrame(data, columns=colonnes), []
     h = _find_header_row(raw)
     preamble = [
         " ".join(str(v) for v in row if pd.notna(v)).strip()
@@ -534,10 +636,18 @@ def _read_text_table(contents: bytes) -> tuple:
     if not lines:
         raise ValueError("Fichier vide")
 
+    # « sep=; » en 1re ligne (indication pour Excel, exports Sunny Portal) :
+    # c'est le séparateur, pas l'en-tête
+    sep_impose = None
+    m_sep = re.match(r'^\s*"?sep=(.)"?\s*$', lines[0], re.I)
+    if m_sep:
+        sep_impose = m_sep.group(1)
+        lines = lines[1:]
+
     # Séparateur : celui dont le nombre d'occurrences par ligne est le plus
     # souvent identique et non nul (un tableau régulier).
     best_sep, best_score, best_count = ",", -1, 0
-    for sep in _TEXT_DELIMITERS:
+    for sep in ([sep_impose] if sep_impose else _TEXT_DELIMITERS):
         counts = [ln.count(sep) for ln in lines]
         nonzero = [c for c in counts if c > 0]
         if not nonzero:
@@ -547,8 +657,49 @@ def _read_text_table(contents: bytes) -> tuple:
         if score > best_score:
             best_sep, best_score, best_count = sep, score, modal
 
-    # En-tête = première ligne au nombre de séparateurs majoritaire
-    header_idx = next((i for i, ln in enumerate(lines) if ln.count(best_sep) == best_count), 0)
+    # Virgule décimale avec séparateur virgule (« 01/05/2026 00:00, 165,700 ») :
+    # la valeur est coupée en deux cellules ; on la recolle (même règle que le
+    # frontend, recollerDecimales dans src/lib/excel-utils.ts)
+    if best_sep == ",":
+        lignes_csv = list(csv.reader(lines, delimiter=",", skipinitialspace=True))
+        datees = [r for r in lignes_csv if len(r) > 1 and _DATE_RE.match(r[0].strip())]
+        if len(datees) >= 3:
+            largeurs = [len(r) for r in datees]
+            L = max(set(largeurs), key=largeurs.count)
+            entetes = [r for r in lignes_csv if len(r) > 1 and not _DATE_RE.match(r[0].strip())
+                       and all(not re.match(r"^\s*-?\d", c) for c in r)]
+            coupee = lambda r: len(r) == L and re.fullmatch(r"\s*-?\d+\s*", r[L - 2]) and re.fullmatch(r"\d+\s*", r[L - 1])
+            if largeurs.count(L) / len(datees) >= 0.9 and entetes and all(len(r) == L - 1 for r in entetes) \
+                    and all(coupee(r) for r in datees if len(r) == L):
+                lines = [",".join(r[:L - 2] + [f"{r[L - 2].strip()}.{r[L - 1].strip()}"]) if coupee(r) and _DATE_RE.match(r[0].strip())
+                         else ",".join(r) for r in lignes_csv]
+                best_count = L - 2
+
+    # Séries empilées en sections (export Shelly Cloud) : une colonne par
+    # section, avant de chercher l'en-tête (qui ne serait que la 1re section)
+    d = _desempiler_sections(list(csv.reader(lines, delimiter=best_sep, skipinitialspace=True)))
+    if d:
+        colonnes, data, _ = d
+        return pd.DataFrame(data, columns=colonnes, dtype=str), []
+
+    # En-tête = ligne juste au-dessus des premières lignes de données (une date
+    # et un nombre), une ligne d'unités pouvant s'intercaler ; même règle que
+    # le frontend (lib/iot-lecture-fichier.ts, lireTableau). Un préambule
+    # « clé ; valeur » (Sunny Portal : Version ; 4, Langue ; fr-FR…) a la même
+    # largeur que le tableau : la règle « largeur majoritaire » le prenait pour
+    # l'en-tête. Repli sur cette règle si aucune ligne de données n'est trouvée.
+    cells = list(csv.reader(lines, delimiter=best_sep, skipinitialspace=True))
+    est_donnee = lambda r: any(_is_date(c) for c in r) and any(_is_num(c) for c in r if not _is_date(c))
+    debut = next((i for i in range(len(cells))
+                  if est_donnee(cells[i]) and all(est_donnee(r) for r in cells[i + 1:i + 3])), None)
+    if debut is not None and debut > 0:
+        header_idx = debut - 1
+        unites = [_cell_text(c) for c in cells[header_idx] if _cell_text(c)]
+        if header_idx > 0 and unites and all(len(u) <= 10 and not _is_num(u) for u in unites) \
+                and all(re.fullmatch(r"(%|%rh|°c|℃|°f|v|a|w|kw|wh|kwh|hz|var|va|kva|kvar|varh|ppm|lux|hpa|db|dba|mm|m/s|°|s)", u, re.I) for u in unites):
+            header_idx -= 1  # ligne d'unités sous l'en-tête
+    else:
+        header_idx = next((i for i, ln in enumerate(lines) if ln.count(best_sep) == best_count), 0)
     body = "\n".join(lines[header_idx:])
     raw = pd.read_csv(io.StringIO(body), sep=best_sep, engine="python",
                       on_bad_lines="skip", skipinitialspace=True, dtype=str)
