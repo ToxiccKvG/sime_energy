@@ -17,7 +17,7 @@ type Meta = { name: string; room: string | null; type: string; family: DeviceFam
 
 const FAMILY_BY_TYPE: Record<string, DeviceFamily> = {
   "SHEM-3":"ENERGIE_3PH","SPEM-003CEBEU":"ENERGIE_3PH","SPEM-003CEBEU400":"ENERGIE_3PH",
-  "SHEM":"ENERGIE_2PH","SPEM-002CEBEU50":"ENERGIE_2PH",
+  "SHEM":"ENERGIE_2PH","SPEM-002CEBEU50":"ENERGIE_2PH","S3EM-002CXCEU":"ENERGIE_2PH",
   "SNPL-00112EU":"ENERGIE_1PH","SNPM-001PCEU16":"ENERGIE_1PH","S3PM-001PCEU16":"ENERGIE_1PH",
   "S3PL-00112EU":"ENERGIE_1PH","S4PL-00416EU":"ENERGIE_1PH","SPSW-104PE16EU":"ENERGIE_1PH","S3PB-O3AR000001":"ENERGIE_1PH",
   "S3PL-30110EU":"ENERGIE_1PH",
@@ -327,15 +327,34 @@ function extractEnergie3PH(base: Record<string,unknown>, s: Record<string,unknow
 }
 
 function extractEnergie2PH(base: Record<string,unknown>, s: Record<string,unknown>, last: {wh_tot:number|null}|undefined): Record<string,unknown> {
+  // Shelly EM à deux pinces (Gen1 `emeters`, Gen2/Gen3 `em1:0`/`em1:1`).
+  // Les deux pinces sont deux mesures DISTINCTES, nommées séparément dans
+  // l'app (ex. Dakar : pince 0 = « Général SENELEC », pince 1 = « Yacouba »).
+  // La ligne du boîtier ne porte donc que la pince 0 (power_w, wh_tot) ; la
+  // pince 1 a sa propre ligne `<id>_1` (shelly_device_channels). Jusqu'au
+  // 2026-10-19 on écrivait ici la SOMME des deux : la pince 1 était comptée
+  // deux fois (Général SENELEC Dakar +33 %). p_b/wh_b restent en détail.
   const emeters=s.emeters as any[]|undefined;
   if (emeters && emeters.length>=2) {
     const [a,b]=emeters;
     const wh_a=safeNum(a.total,0,1e9),wh_b=safeNum(b.total,0,1e9);
-    const wh_tot=wh_a!=null&&wh_b!=null?wh_a+wh_b:null;
     return {...base,state:"on",
-      power_w:safeNum((a.power??0)+(b.power??0),-1e5,1e5),voltage_v:safeNum(a.voltage,0,500),current_a:safeNum(a.current,0,1000),
+      power_w:safeNum(a.power,-1e5,1e5),voltage_v:safeNum(a.voltage,0,500),current_a:safeNum(a.current,0,1000),
       p_a:safeNum(a.power,-1e5,1e5),p_b:safeNum(b.power,-1e5,1e5),v_a:safeNum(a.voltage,0,500),v_b:safeNum(b.voltage,0,500),i_a:safeNum(a.current,0,1000),i_b:safeNum(b.current,0,1000),
-      wh_a:safeCounter(wh_a,null),wh_b:safeCounter(wh_b,null),wh_tot:safeCounter(wh_tot,last?.wh_tot),
+      wh_a:safeCounter(wh_a,null),wh_b:safeCounter(wh_b,null),wh_tot:safeCounter(wh_a,last?.wh_tot),
+    };
+  }
+  const e1a=s["em1:0"] as any;
+  if (e1a) {
+    const e1b=(s["em1:1"] as any)??{};
+    const da=(s["em1data:0"] as any)??{}, db=(s["em1data:1"] as any)??{};
+    const wh_a=safeNum(da.total_act_energy,0,1e9),wh_b=safeNum(db.total_act_energy,0,1e9);
+    return {...base,state:"on",
+      power_w:safeNum(e1a.act_power,-1e5,1e5),voltage_v:safeNum(e1a.voltage,0,500),current_a:safeNum(e1a.current,0,1000),
+      p_a:safeNum(e1a.act_power,-1e5,1e5),p_b:safeNum(e1b.act_power,-1e5,1e5),v_a:safeNum(e1a.voltage,0,500),v_b:safeNum(e1b.voltage,0,500),i_a:safeNum(e1a.current,0,1000),i_b:safeNum(e1b.current,0,1000),
+      wh_a:safeCounter(wh_a,null),wh_b:safeCounter(wh_b,null),wh_tot:safeCounter(wh_a,last?.wh_tot),
+      wh_rtot:safeCounter(safeNum(da.total_act_ret_energy,0,1e9),null),
+      frequency_hz:safeNum(e1a.freq,40,70),signal_rssi:(s.wifi as any)?.rssi!=null?Math.round((s.wifi as any).rssi):null,
     };
   }
   const em0=s["em:0"] as any;
@@ -558,6 +577,11 @@ function extractChannelReading(deviceId: string, site: string, meta: Meta, paren
   if(pm!==undefined) return {...base,state:"on",power_w:safeNum(pm.apower,0,7500),voltage_v:safeNum(pm.voltage,0,500),current_a:safeNum(pm.current,0,1000),wh_tot:safeCounter(safeNum(pm.aenergy?.total,0,1e9),last?.wh_tot),wh_rtot:safeCounter(safeNum(pm.ret_aenergy?.total,0,1e9),null),device_temp_c:safeNum(pm.temperature?.tC,-40,150),...diag};
   const relays=parentStatus.relays as any[]|undefined, meters=parentStatus.meters as any[]|undefined;
   if(relays&&relays.length>ch){const m=meters?.[ch]; return {...base,state:relays[ch].ison?"on":"off",power_w:safeNum(m?.power,0,7500),voltage_v:safeNum(m?.voltage,0,500),wh_tot:safeCounter(safeNum(m?.total,0,1e9),last?.wh_tot)};}
+  const e1=parentStatus[`em1:${ch}`] as any;
+  if(e1!==undefined){
+    const d=(parentStatus[`em1data:${ch}`] as any)??{};
+    return {...base,state:"on",power_w:safeNum(e1.act_power,-1e5,1e5),voltage_v:safeNum(e1.voltage,0,500),current_a:safeNum(e1.current,0,1000),p_a:safeNum(e1.act_power,-1e5,1e5),v_a:safeNum(e1.voltage,0,500),i_a:safeNum(e1.current,0,1000),wh_tot:safeCounter(safeNum(d.total_act_energy,0,1e9),last?.wh_tot),wh_rtot:safeCounter(safeNum(d.total_act_ret_energy,0,1e9),null),frequency_hz:safeNum(e1.freq,40,70),...diag};
+  }
   const emeters=parentStatus.emeters as any[]|undefined;
   if(emeters&&emeters.length>ch){
     const e=emeters[ch]; const wh=safeNum(e.total,0,1e9);
