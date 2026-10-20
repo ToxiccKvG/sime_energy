@@ -23,7 +23,7 @@ import { fetchRegles, fetchSignalements, versionRegles, type RegleQualite, type 
 import { fetchAccounts } from '@/lib/shelly-account-service';
 import { fetchDevicePeriodes } from '@/lib/shelly-device-period-service';
 import { useAuth } from '@/context/AuthContext';
-import { construireRapport, type EntreeRapport } from '@/services/iotRapport';
+import { construireRapport, etatDuFlux, type EntreeRapport } from '@/services/iotRapport';
 import { exporterRapportExcel } from '@/services/iotRapportExcel';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
@@ -603,6 +603,7 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
     () => analyserDonneesShelly(nettoyage.rowsCalcul, nettoyage.joursExclus, enSupabase ? chargement.heures : 24),
     [nettoyage, enSupabase, chargement]
   );
+  const ctxFlux = { lignes: filteredRows, nettoyage, nbJours: analyse.nbJours, quarantaine: optsNettoyage.quarantaine };
   const statsKwh = useMemo(
     () => calculerStats(analyse.parJour.filter(j => !j.exclu).map(j => j.kwhNet)),
     [analyse]
@@ -954,15 +955,22 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
             color="green"
           />
           {nettoyageFlux ? <>
-            {nettoyageFlux.flux.reseauSoutire != null && (
-              <KPICard
-                label="Réseau (arrivée)"
-                value={fmtFr(nettoyageFlux.flux.reseauSoutire, 0)}
-                unit="kWh soutirés"
-                sub={`Injectés : ${fmtFr(nettoyageFlux.flux.reseauInjecte ?? 0, 1)} kWh`}
-                color="purple"
-              />
-            )}
+            {nettoyageFlux.flux.reseauSoutire != null && (() => {
+              // Même règle que le rapport : un compteur qui émet mais compte 0
+              // n'est pas « 0 kWh soutirés » (Académie, août 2026)
+              const etat = etatDuFlux('reseauSoutire', nettoyageFlux.flux.reseauSoutire, ctxFlux);
+              return (
+                <KPICard
+                  label="Réseau (arrivée)"
+                  value={etat.valeur == null ? '—' : fmtFr(etat.valeur, 0)}
+                  unit={etat.valeur == null ? '' : 'kWh soutirés'}
+                  sub={etat.valeur == null || Math.abs(etat.valeur) < 0.0005
+                    ? etat.precision
+                    : `Injectés : ${fmtFr(nettoyageFlux.flux.reseauInjecte ?? 0, 1)} kWh`}
+                  color="purple"
+                />
+              );
+            })()}
             {(nettoyageFlux.flux.pv != null || nettoyageFlux.flux.groupe != null) && (
               <KPICard
                 label={nettoyageFlux.flux.pv != null ? 'Production PV' : 'Groupe électrogène'}
@@ -972,7 +980,15 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
                 color="green"
               />
             )}
-            {nettoyageFlux.flux.departs != null && nettoyageFlux.nature !== 'departs' && (
+            {nettoyageFlux.flux.departs != null && nettoyageFlux.nature !== 'departs' && Math.abs(nettoyageFlux.flux.departs) < 0.0005 ? (
+              <KPICard
+                label="Départs mesurés"
+                value={etatDuFlux('departs', nettoyageFlux.flux.departs, ctxFlux).valeur == null ? '—' : '0'}
+                unit="kWh"
+                sub={etatDuFlux('departs', nettoyageFlux.flux.departs, ctxFlux).precision}
+                color="blue"
+              />
+            ) : nettoyageFlux.flux.departs != null && nettoyageFlux.nature !== 'departs' && (
               <KPICard
                 label="Départs mesurés"
                 value={fmtFr(nettoyageFlux.flux.departs, 0)}

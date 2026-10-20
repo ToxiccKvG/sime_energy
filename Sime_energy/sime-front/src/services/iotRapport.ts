@@ -130,28 +130,38 @@ function libelleAppareil(r: ShellyRow, periodes: DevicePeriode[]): { nom: string
   };
 }
 
+/**
+ * Un flux à 0 n'est pas forcément une mesure : compteur qui émet mais compte
+ * 0 (règle ZERO_ARRIVEE) → non mesuré ; compteur présent quelques jours
+ * seulement → on dit combien. Partagé par le rapport et les cartes de l'écran.
+ */
+export function etatDuFlux(
+  cle: keyof FluxRoles,
+  v: number,
+  ctx: { lignes: ShellyRow[]; nettoyage: RapportNettoyage; nbJours: number; quarantaine: boolean },
+): { valeur: number | null; precision: string } {
+  const role = ROLE_DU_FLUX[cle];
+  const lignesRole = ctx.lignes.filter(r => r.role === role);
+  const ids = new Set(lignesRole.map(r => r.deviceId).filter(Boolean));
+  const jours = new Set(lignesRole.map(r => cleJour(r.date))).size;
+  const aZero = ctx.nettoyage.groupes.some(g => g.regle === 'ZERO_ARRIVEE' && g.plages.some(sg => sg.device_id && ids.has(sg.device_id)));
+  if (Math.abs(v) >= 0.0005) return { valeur: v, precision: 'Mesuré à part, jamais additionné aux autres flux' };
+  if (aZero) return { valeur: null, precision: 'Non mesuré : le compteur émet mais compte 0 (règle « Compteur principal à zéro »)' };
+  return {
+    valeur: v,
+    precision: `0 kWh compté, compteur présent ${jours} jour(s) sur ${ctx.nbJours}`
+      + (ctx.quarantaine && ctx.nettoyage.kwhQuarantaine > 0 ? ' (après retrait de la quarantaine)' : ''),
+  };
+}
+
 export function construireRapport(e: EntreeRapport): RapportCourbe {
   const { analyse, nettoyage, bilan } = e;
   const nonCalculable = bilan?.nature === 'aucune';
   // « Énergie mesurée (voir détail) : non mesurée » ne veut rien dire
   const libellePrincipal = nonCalculable ? 'Consommation' : e.libellePrincipal;
 
-  // Un flux à 0 n'est pas forcément une mesure : compteur qui émet mais compte
-  // 0 (règle ZERO_ARRIVEE) ou compteur présent quelques jours seulement.
-  const etatFlux = (cle: keyof FluxRoles, v: number) => {
-    const role = ROLE_DU_FLUX[cle];
-    const lignesRole = e.lignes.filter(r => r.role === role);
-    const ids = new Set(lignesRole.map(r => r.deviceId).filter(Boolean));
-    const jours = new Set(lignesRole.map(r => cleJour(r.date))).size;
-    const aZero = nettoyage.groupes.some(g => g.regle === 'ZERO_ARRIVEE' && g.plages.some(sg => sg.device_id && ids.has(sg.device_id)));
-    if (Math.abs(v) >= 0.0005) return { valeur: v, precision: 'Mesuré à part, jamais additionné aux autres flux' };
-    if (aZero) return { valeur: null, precision: 'Non mesuré : le compteur émet mais compte 0 (règle « Compteur principal à zéro »)' };
-    return {
-      valeur: v,
-      precision: `0 kWh compté, compteur présent ${jours} jour(s) sur ${analyse.nbJours}`
-        + (e.options.quarantaine && nettoyage.kwhQuarantaine > 0 ? ' (après retrait de la quarantaine)' : ''),
-    };
-  };
+  const etatFlux = (cle: keyof FluxRoles, v: number) =>
+    etatDuFlux(cle, v, { lignes: e.lignes, nettoyage, nbJours: analyse.nbJours, quarantaine: e.options.quarantaine });
   const retenus = analyse.parJour.filter(j => !j.exclu);
   const nbExclus = analyse.nbJours - analyse.nbJoursRetenus;
 
