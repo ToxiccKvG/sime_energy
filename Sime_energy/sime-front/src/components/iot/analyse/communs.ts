@@ -3,7 +3,7 @@
 // infobulles, format des nombres). Extrait d'AnalyseTab.tsx (16/10).
 // ============================================================
 
-import { seriesColor, type Palette } from '@/lib/chart-preferences';
+import { couleurDonnee, getChartPreferences, seriesColor, type Palette } from '@/lib/chart-preferences';
 import type { ShellyRow } from '../shared';
 
 export type MetricKey =
@@ -65,10 +65,10 @@ export const METRIQUES_ENV: { key: EnvMetricKey; label: string; unit: string; co
  */
 export function colorForMetric(palette: Palette, key: string): string {
   const iE = METRIQUES.findIndex(m => m.key === key);
-  if (iE >= 0) return seriesColor(palette, iE);
   const iV = METRIQUES_ENV.findIndex(m => m.key === key);
-  if (iV >= 0) return seriesColor(palette, iV);
-  return seriesColor(palette, 0);
+  const defaut = seriesColor(palette, iE >= 0 ? iE : iV >= 0 ? iV : 0);
+  // Couleur choisie pour cette grandeur (sélecteur « Couleurs »), sinon la palette
+  return couleurDonnee(getChartPreferences(), key, defaut);
 }
 
 /**
@@ -92,7 +92,7 @@ export function grandeursDisponibles(rows: ShellyRow[], palette: Palette): Grand
   for (const r of rows) if (r.grandeurs) for (const k of Object.keys(r.grandeurs)) autres.add(k);
   for (const k of autres) {
     const m = k.match(/^(.*?)\s*\(([^()]*)\)$/);
-    defs.push({ key: k, label: m ? m[1] : k, unit: m ? m[2] : '', color: seriesColor(palette, defs.length) });
+    defs.push({ key: k, label: m ? m[1] : k, unit: m ? m[2] : '', color: couleurDonnee(getChartPreferences(), k, seriesColor(palette, defs.length)) });
   }
   return defs;
 }

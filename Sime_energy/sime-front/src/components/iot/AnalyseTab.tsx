@@ -786,9 +786,15 @@ export function AnalyseTab() {
 
   // Grandeurs env réellement présentes → pilote l'affichage des modes env_*
   const paletteGrandeurs = usePalette();
+  // Couleurs choisies par donnée : leur changement doit recalculer les couleurs
+  const prefsGraph = useChartPreferences();
+  const couleurMetrique = useCallback((k: string) => colorForMetric(paletteGrandeurs, k),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [paletteGrandeurs, prefsGraph]);
   const envMetricsAvailable = useMemo(
     () => grandeursDisponibles(envRows, paletteGrandeurs),
-    [envRows, paletteGrandeurs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [envRows, paletteGrandeurs, prefsGraph]);
   const hasEnvData = envMetricsAvailable.length > 0;
   // Signature = consommation × température extérieure : il faut une température
   const hasTemperature = useMemo(() => envRows.some(r => typeof r.temperature === 'number'), [envRows]);
@@ -800,6 +806,25 @@ export function AnalyseTab() {
 
   const [envMetric, setEnvMetric] = useState<string>('temperature');
   const grandeurActive = envMetricsAvailable.find(m => m.key === envMetric) ?? envMetricsAvailable[0];
+
+  // Données affichées par la vue courante → un sélecteur de couleur chacune.
+  // (La Courbe de charge porte son propre sélecteur.)
+  const donneesCouleur = useMemo(() => {
+    const deMetriques = (keys: string[]) => keys.map(k => {
+      const m = METRIQUES.find(x => x.key === k);
+      return { key: k, label: m ? `${m.label}${m.unit ? ` (${m.unit})` : ''}` : k, color: couleurMetrique(k) };
+    });
+    if (ENV_MODES.includes(mode)) {
+      return grandeurActive
+        ? [{ key: grandeurActive.key, label: `${grandeurActive.label}${grandeurActive.unit ? ` (${grandeurActive.unit})` : ''}`, color: grandeurActive.color }]
+        : [];
+    }
+    if (mode === 'serie') return deMetriques([...serieMetrics]);
+    if (mode === 'tcd') return deMetriques([...tcdMetrics]);
+    if (mode === 'profil_semaine' || mode === 'distribution' || mode === 'correlation') return deMetriques(['kwhNet']);
+    if (mode === 'signature') return deMetriques(['kwhTotal']);
+    return [];
+  }, [mode, grandeurActive, serieMetrics, tcdMetrics, couleurMetrique]);
   // Fichier aux grandeurs quelconques (PM2.5, tension…) : « Grandeurs » plutôt qu'« Environnement »
   const libelleGrandeurs = envMetricsAvailable.some(m => !METRIQUES_ENV.some(e => e.key === m.key)) ? 'Grandeurs' : 'Environnement';
   // Grandeur sélectionnée absente des données chargées → retomber sur la première dispo
@@ -1300,7 +1325,7 @@ export function AnalyseTab() {
                         </PopoverContent>
                       </Popover>
                       {/* Couleurs, légendes et titre — mêmes réglages que le module Mesures. */}
-                      <ChartOptions chartId={`iot:${mode}`} defaultTitle={autoChartTitle} />
+                      <ChartOptions chartId={`iot:${mode}`} defaultTitle={autoChartTitle} donnees={donneesCouleur} chaleur={mode === 'env_heatmap'} />
                       <span className="text-slate-500 text-xs">
                         {(ENV_MODES.includes(mode) ? envRows.length : filteredRows.length).toLocaleString('fr-FR')} relevés
                       </span>
@@ -1340,10 +1365,10 @@ export function AnalyseTab() {
                       {METRIQUES.filter(m => serieMetrics.has(m.key)).slice(0, 5).map(m => (
                         <span key={m.key}
                           className="inline-flex items-center gap-1 text-[0.625rem] px-2 py-0.5 rounded-full"
-                          style={{ backgroundColor: m.color + '25', color: m.color }}
+                          style={{ backgroundColor: couleurMetrique(m.key) + '25', color: couleurMetrique(m.key) }}
                           title={`${m.label} (${m.unit})`}
                         >
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.color }} />
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: couleurMetrique(m.key) }} />
                           {m.label.split(' — ').pop()?.split(' (')[0] ?? m.label}
                           <span className="opacity-60">{m.unit}</span>
                         </span>
@@ -1387,7 +1412,7 @@ export function AnalyseTab() {
                                       className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer"
                                     >
                                       <Checkbox checked={checked} onCheckedChange={() => toggleSerieMetric(m.key)} />
-                                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+                                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: couleurMetrique(m.key) }} />
                                       <span className="text-white text-xs flex-1 truncate">{m.label}</span>
                                       <span className="text-slate-500 text-[0.625rem]">{m.unit}</span>
                                     </label>
@@ -1512,7 +1537,7 @@ export function AnalyseTab() {
                           label={{ value: `Moy. ${fmt1(stats.moyenne)} ${METRIQUES.find(m => m.key === primarySerieMetric)?.unit ?? ''}`, fill: '#f59e0b', fontSize: 10, position: 'right' }} />
                         {METRIQUES.filter(m => serieMetrics.has(m.key)).map(m => (
                           <Area key={m.key} yAxisId={serieMetricAxis(m.unit)} type="monotone" dataKey={m.key} name={`${m.label} (${m.unit})`}
-                            stroke={m.color} fill={`${m.color}25`}
+                            stroke={couleurMetrique(m.key)} fill={`${couleurMetrique(m.key)}25`}
                             strokeWidth={m.key === primarySerieMetric ? 2.5 : 1.5}
                             dot={false}
                             hide={isHidden(m.key)} />
@@ -1561,7 +1586,7 @@ export function AnalyseTab() {
                         {METRIQUES.map(m => (
                           <button key={m.key} onClick={() => toggleTcdMetric(m.key)}
                             className={`px-2 py-1 rounded text-xs font-medium border transition-all ${tcdMetrics.has(m.key) ? 'border-transparent text-white' : 'border-white/10 text-slate-400 hover:text-white'}`}
-                            style={tcdMetrics.has(m.key) ? { backgroundColor: m.color + '30', borderColor: m.color + '60', color: m.color } : {}}
+                            style={tcdMetrics.has(m.key) ? { backgroundColor: couleurMetrique(m.key) + '30', borderColor: couleurMetrique(m.key) + '60', color: couleurMetrique(m.key) } : {}}
                           >{m.label}</button>
                         ))}
                       </div>
@@ -1658,7 +1683,7 @@ export function AnalyseTab() {
                           {['Catégorie', 'N'].map(h => <th key={h} className="px-4 py-3 text-left text-slate-300 font-medium text-xs">{h}</th>)}
                           {Array.from(tcdMetrics).map(mk => {
                             const meta = METRIQUES.find(m => m.key === mk);
-                            return <th key={mk} className="px-4 py-3 text-left font-medium text-xs" style={{ color: meta?.color }}>
+                            return <th key={mk} className="px-4 py-3 text-left font-medium text-xs" style={{ color: couleurMetrique(mk) }}>
                               {meta?.label ?? mk}{meta?.unit && <span className="text-slate-500 ml-1 font-normal">({meta.unit})</span>}
                             </th>;
                           })}
@@ -1677,7 +1702,7 @@ export function AnalyseTab() {
                             <td className="px-4 py-2 text-slate-400 text-xs">{row.n}</td>
                             {Array.from(tcdMetrics).map(mk => {
                               const meta = METRIQUES.find(m => m.key === mk);
-                              return <td key={mk} className="px-4 py-2 font-medium text-xs" style={{ color: meta?.color }}>
+                              return <td key={mk} className="px-4 py-2 font-medium text-xs" style={{ color: couleurMetrique(mk) }}>
                                 {fmtFr((row as unknown as Record<string, number>)[mk] ?? 0, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                               </td>;
                             })}
@@ -1693,7 +1718,7 @@ export function AnalyseTab() {
                           {Array.from(tcdMetrics).map(mk => {
                             const meta = METRIQUES.find(m => m.key === mk);
                             const total = tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
-                            return <td key={mk} className="px-4 py-2 text-xs" style={{ color: meta?.color }}>
+                            return <td key={mk} className="px-4 py-2 text-xs" style={{ color: couleurMetrique(mk) }}>
                               {fmtFr(total, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                             </td>;
                           })}
@@ -1777,7 +1802,7 @@ export function AnalyseTab() {
                       <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4" />
                       <Bar dataKey="kwhMoyen" name="kwhNet" radius={[4, 4, 0, 0]}>
                         {profilSemaineData.map((_, i) => (
-                          <Cell key={i} fill={i === 0 || i === 6 ? '#a78bfa' : ACCENT_COLOR} />
+                          <Cell key={i} fill={i === 0 || i === 6 ? '#a78bfa' : couleurMetrique('kwhNet')} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -1814,7 +1839,7 @@ export function AnalyseTab() {
                       <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
                       <Bar dataKey="count" name="Nb jours" radius={[4, 4, 0, 0]}>
                         {distributionData.map((d, i) => (
-                          <Cell key={i} fill={d.min < safeNum(stats.p25, 0) ? '#a78bfa' : d.min < safeNum(stats.p75, 0) ? ACCENT_COLOR : '#f59e0b'} />
+                          <Cell key={i} fill={d.min < safeNum(stats.p25, 0) ? '#a78bfa' : d.min < safeNum(stats.p75, 0) ? couleurMetrique('kwhNet') : '#f59e0b'} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -1823,7 +1848,7 @@ export function AnalyseTab() {
                 <div className="flex gap-3 text-xs">
                   {[
                     { color: 'bg-purple-500', label: `Faible (< ${fmt0(stats.p25)})` },
-                    { color: '', label: 'Normal (P25–P75)', style: { backgroundColor: ACCENT_COLOR } },
+                    { color: '', label: 'Normal (P25–P75)', style: { backgroundColor: couleurMetrique('kwhNet') } },
                     { color: 'bg-yellow-500', label: `Élevé (> ${fmt0(stats.p75)})` },
                   ].map(l => (
                     <div key={l.label} className="flex items-center gap-1.5 text-slate-400">
@@ -1854,7 +1879,7 @@ export function AnalyseTab() {
                           name === 'y' ? 'Énergie nette' : 'Jour',
                         ]}
                       />
-                      <Scatter data={correlationData} fill={ACCENT_COLOR} opacity={0.7} r={3} />
+                      <Scatter data={correlationData} fill={couleurMetrique('kwhNet')} opacity={0.7} r={3} />
                       <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4" />
                     </ScatterChart>
                   </ResponsiveContainer>
@@ -1867,7 +1892,7 @@ export function AnalyseTab() {
                       <XAxis dataKey="jour" tick={{ fill: '#cbd5e1', fontSize: 12 }} />
                       <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
-                      <Line type="monotone" dataKey="kwhMoyen" name="kwhNet" stroke={ACCENT_COLOR} strokeWidth={2} dot={{ fill: ACCENT_COLOR, r: 4 }} />
+                      <Line type="monotone" dataKey="kwhMoyen" name="kwhNet" stroke={couleurMetrique('kwhNet')} strokeWidth={2} dot={{ fill: couleurMetrique('kwhNet'), r: 4 }} />
                       <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4" />
                     </LineChart>
                   </ResponsiveContainer>
@@ -1896,7 +1921,7 @@ export function AnalyseTab() {
                 <button key={m.key} onClick={() => toggleTcdMetric(m.key)}
                   className="px-2.5 py-1 rounded text-xs font-medium border transition-all"
                   style={tcdMetrics.has(m.key)
-                    ? { backgroundColor: m.color + '25', borderColor: m.color + '60', color: m.color }
+                    ? { backgroundColor: couleurMetrique(m.key) + '25', borderColor: couleurMetrique(m.key) + '60', color: couleurMetrique(m.key) }
                     : { borderColor: 'rgba(255,255,255,0.1)', color: '#64748b' }}
                 >{m.label}</button>
               ))}
@@ -2011,20 +2036,20 @@ export function AnalyseTab() {
                   <AreaChart data={stackedData} margin={{ top: 5, right: 10, bottom: 20, left: 0 }}>
                     <defs>
                       <linearGradient id="phA" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#a855f7" stopOpacity={0.5} />
-                        <stop offset="95%" stopColor="#a855f7" stopOpacity={0.05} />
+                        <stop offset="5%"  stopColor={couleurMetrique('kwhA')} stopOpacity={0.5} />
+                        <stop offset="95%" stopColor={couleurMetrique('kwhA')} stopOpacity={0.05} />
                       </linearGradient>
                       <linearGradient id="phB" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#f59e0b" stopOpacity={0.5} />
-                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.05} />
+                        <stop offset="5%"  stopColor={couleurMetrique('kwhB')} stopOpacity={0.5} />
+                        <stop offset="95%" stopColor={couleurMetrique('kwhB')} stopOpacity={0.05} />
                       </linearGradient>
                       <linearGradient id="phC" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#06b6d4" stopOpacity={0.5} />
-                        <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.05} />
+                        <stop offset="5%"  stopColor={couleurMetrique('kwhC')} stopOpacity={0.5} />
+                        <stop offset="95%" stopColor={couleurMetrique('kwhC')} stopOpacity={0.05} />
                       </linearGradient>
                       <linearGradient id="phTot" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#22c55e" stopOpacity={0.4} />
-                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0.02} />
+                        <stop offset="5%"  stopColor={couleurMetrique('kwhTotal')} stopOpacity={0.4} />
+                        <stop offset="95%" stopColor={couleurMetrique('kwhTotal')} stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -2037,10 +2062,10 @@ export function AnalyseTab() {
                       formatter={(v: number, name: string) => [`${fmtFr(v, 3)} kWh`, name]}
                     />
                     <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8', cursor: 'pointer' }} onClick={(e) => toggleSeries(String(e.dataKey ?? ''))} />
-                    <Area type="monotone" dataKey="Total"   stroke="#22c55e" fill="url(#phTot)" strokeWidth={2}   hide={isHidden('Total')} />
-                    <Area type="monotone" dataKey="Phase A" stroke="#a855f7" fill="url(#phA)"   strokeWidth={1.5} hide={isHidden('Phase A')} />
-                    <Area type="monotone" dataKey="Phase B" stroke="#f59e0b" fill="url(#phB)"   strokeWidth={1.5} hide={isHidden('Phase B')} />
-                    <Area type="monotone" dataKey="Phase C" stroke="#06b6d4" fill="url(#phC)"   strokeWidth={1.5} hide={isHidden('Phase C')} />
+                    <Area type="monotone" dataKey="Total"   stroke={couleurMetrique('kwhTotal')} fill="url(#phTot)" strokeWidth={2}   hide={isHidden('Total')} />
+                    <Area type="monotone" dataKey="Phase A" stroke={couleurMetrique('kwhA')} fill="url(#phA)"   strokeWidth={1.5} hide={isHidden('Phase A')} />
+                    <Area type="monotone" dataKey="Phase B" stroke={couleurMetrique('kwhB')} fill="url(#phB)"   strokeWidth={1.5} hide={isHidden('Phase B')} />
+                    <Area type="monotone" dataKey="Phase C" stroke={couleurMetrique('kwhC')} fill="url(#phC)"   strokeWidth={1.5} hide={isHidden('Phase C')} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -2064,7 +2089,7 @@ export function AnalyseTab() {
                     <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
                     {Array.from(tcdMetrics).map(mk => {
                       const meta = METRIQUES.find(m => m.key === mk);
-                      return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? ACCENT_COLOR} fill={(meta?.color ?? ACCENT_COLOR) + '15'} strokeWidth={2} dot={false} />;
+                      return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={couleurMetrique(mk)} fill={couleurMetrique(mk) + '15'} strokeWidth={2} dot={false} />;
                     })}
                   </AreaChart>
                 </ResponsiveContainer>
@@ -2078,7 +2103,7 @@ export function AnalyseTab() {
                     {['Catégorie', 'N'].map(h => <th key={h} className="px-3 py-1.5 text-left text-slate-400 font-medium">{h}</th>)}
                     {Array.from(tcdMetrics).map(mk => {
                       const meta = METRIQUES.find(m => m.key === mk);
-                      return <th key={mk} className="px-3 py-1.5 text-left font-medium" style={{ color: meta?.color }}>
+                      return <th key={mk} className="px-3 py-1.5 text-left font-medium" style={{ color: couleurMetrique(mk) }}>
                         {meta?.label ?? mk}{meta?.unit && <span className="text-slate-500 ml-1 font-normal">({meta.unit})</span>}
                       </th>;
                     })}
@@ -2095,7 +2120,7 @@ export function AnalyseTab() {
                         <td className="px-3 py-1.5 text-slate-400">{row.n}</td>
                         {Array.from(tcdMetrics).map(mk => {
                           const meta = METRIQUES.find(m => m.key === mk);
-                          return <td key={mk} className="px-3 py-1.5 font-medium" style={{ color: meta?.color }}>
+                          return <td key={mk} className="px-3 py-1.5 font-medium" style={{ color: couleurMetrique(mk) }}>
                             {fmtFr((row as unknown as Record<string, number>)[mk] ?? 0, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                           </td>;
                         })}
@@ -2110,7 +2135,7 @@ export function AnalyseTab() {
                       {Array.from(tcdMetrics).map(mk => {
                         const meta = METRIQUES.find(m => m.key === mk);
                         const total = tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
-                        return <td key={mk} className="px-3 py-1.5" style={{ color: meta?.color }}>
+                        return <td key={mk} className="px-3 py-1.5" style={{ color: couleurMetrique(mk) }}>
                           {fmtFr(total, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                         </td>;
                       })}

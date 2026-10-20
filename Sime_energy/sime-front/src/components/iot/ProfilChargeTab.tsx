@@ -5,6 +5,8 @@ import {
   Tooltip, Legend, ReferenceLine,
 } from 'recharts';
 import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
+import { CouleursDonnees } from '@/components/shared/CouleursDonnees';
+import { couleurDonnee, useChartPreferences } from '@/lib/chart-preferences';
 import { Download, Zap, Calendar, Database, RefreshCw, ChevronDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +22,13 @@ import { fetchDisponibles, fetchProfilCharge, fetchSiteBilan, type ProfilChargeJ
 import type { PerimetreAnalyse } from './PerimetreBar';
 import { fetchRegles, fetchSignalements, versionRegles, type RegleQualite, type Signalement } from '@/lib/iot-qualite-service';
 import { fetchAccounts } from '@/lib/shelly-account-service';
+
+/** Clé de couleur partagée avec Analyse (communs.METRIQUES) quand la donnée est la même. */
+const CLE_COULEUR: Partial<Record<string, string>> = {
+  total: 'kwhTotal', net: 'kwhNet', retour: 'kwhRetourTotal',
+  phaseA: 'kwhA', phaseB: 'kwhB', phaseC: 'kwhC',
+  puissTotal: 'puissKwTotal', puissA: 'puissKwA', puissB: 'puissKwB', puissC: 'puissKwC',
+};
 
 // Format français : remplace . par ,
 const fmtFr = (n: number, digits = 2) => n.toFixed(digits).replace('.', ',');
@@ -559,7 +568,8 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
   // qu'elle est (consommation, énergie réseau, départs) ; « nette » n'a plus de
   // sens à l'échelle du site et les flux par rôle deviennent des courbes à part.
   const bilan = nettoyageFlux;
-  const METRICS: { key: MetricKey; label: string; color: string; unit: string; mensuelKey?: string }[] = [
+  const prefsGraph = useChartPreferences();
+  const METRICS_DEFAUT: { key: MetricKey; label: string; color: string; unit: string; mensuelKey?: string }[] = [
     { key: 'total', label: bilan ? TITRE_NATURE[bilan.nature] : 'Consommation totale', color: '#3b82f6', unit: 'kWh', mensuelKey: 'kwhTotal' },
     ...(bilan ? [] : [{ key: 'net' as MetricKey, label: 'Énergie nette', color: '#06b6d4', unit: 'kWh', mensuelKey: 'kwhNet' }]),
     // Injection : seulement s'il y a un compteur réseau pour la mesurer
@@ -578,6 +588,11 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
     { key: 'puissB', label: 'Puissance — Phase B', color: '#fbbf24', unit: 'kW' },
     { key: 'puissC', label: 'Puissance — Phase C', color: '#f87171', unit: 'kW' },
   ];
+  // Couleur choisie par la personne (sélecteur « Couleurs »). Mêmes clés que
+  // dans Analyse quand la donnée est la même, pour qu'elle garde sa couleur.
+  const METRICS = METRICS_DEFAUT.map(m => ({
+    ...m, color: couleurDonnee(prefsGraph, CLE_COULEUR[m.key] ?? `courbe:${m.key}`, m.color),
+  }));
 
   const analyse = useMemo(
     () => analyserDonneesShelly(nettoyage.rowsCalcul, nettoyage.joursExclus, enSupabase ? chargement.heures : 24),
@@ -1033,6 +1048,11 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
               {selectedMetrics.size === 0 && (
                 <span className="text-amber-400 text-xs ml-2">Aucune métrique sélectionnée</span>
               )}
+              <span className="ml-2">
+                <CouleursDonnees donnees={METRICS.filter(m => isMetric(m.key)).map(m => ({
+                  key: CLE_COULEUR[m.key] ?? `courbe:${m.key}`, label: `${m.label} (${m.unit})`, color: m.color,
+                }))} />
+              </span>
             </div>
           </div>
 

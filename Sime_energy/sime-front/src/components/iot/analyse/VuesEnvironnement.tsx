@@ -3,15 +3,16 @@
 // profil 24 h) et Signature énergétique. Extrait d'AnalyseTab.tsx (16/10).
 // ============================================================
 
-import { useMemo, Fragment } from 'react';
+import { useMemo } from 'react';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, Scatter, Line, Area, ComposedChart,
 } from 'recharts';
 import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { Badge } from '@/components/ui/badge';
-import { usePalette, heatColor } from '@/lib/chart-preferences';
+import { usePalette, useChartPreferences, stopsChaleur } from '@/lib/chart-preferences';
+import { CarteChaleur } from '@/components/shared/CarteChaleur';
 import type { ShellyRow } from '../shared';
-import { TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, fmtFr, valeurGrandeur, type GrandeurDef } from './communs';
+import { TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, colorForMetric, fmtFr, valeurGrandeur, type GrandeurDef } from './communs';
 
 interface EnvDayAgg { jour: string; ts: number; range: [number, number]; moy: number; n: number }
 
@@ -119,73 +120,54 @@ export function EnvBandeView({ rows, g }: { rows: ShellyRow[]; g: GrandeurDef })
   );
 }
 
-// Vue 2 — Heatmap heures × jours (couleur = moyenne horaire)
+// Vue 2 — Carte de chaleur : heures en ordonnée (0 h en bas), jours en abscisse (en bas)
 export function EnvHeatmapView({ rows, g }: { rows: ShellyRow[]; g: GrandeurDef }) {
   const meta = g;
   const metric = g.key;
-  const envPalette = usePalette();
-  const envColor = g.color;
-  const { days, grid, vmin, vmax } = useMemo(() => {
-    // (jour, heure) → moyenne
+  const palette = usePalette();
+  const prefs = useChartPreferences();
+  const { colonnes, valeurs } = useMemo(() => {
+    // (jour local, heure locale) → moyenne. Jour et heure pris dans le même
+    // fuseau : avant le 20/10, le jour était en UTC et l'heure en local.
     const acc = new Map<string, { ts: number; sums: number[]; counts: number[] }>();
     for (const r of rows) {
       const v = valeurGrandeur(r, metric);
       if (v === undefined) continue;
       const d = r.date instanceof Date ? r.date : new Date(r.date);
-      const key = d.toISOString().slice(0, 10);
-      const cur = acc.get(key) ?? { ts: new Date(key).getTime(), sums: Array(24).fill(0), counts: Array(24).fill(0) };
+      const jour = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const key = String(jour.getTime());
+      const cur = acc.get(key) ?? { ts: jour.getTime(), sums: Array(24).fill(0), counts: Array(24).fill(0) };
       cur.sums[d.getHours()] += v;
       cur.counts[d.getHours()]++;
       acc.set(key, cur);
     }
-    const entries = [...acc.entries()].sort((a, b) => a[1].ts - b[1].ts);
-    const days = entries.map(([key]) => new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }));
-    const grid = entries.map(([, { sums, counts }]) =>
-      sums.map((s, h) => (counts[h] > 0 ? s / counts[h] : null)));
-    const flat = grid.flat().filter((v): v is number => v !== null);
-    return { days, grid, vmin: Math.min(...flat), vmax: Math.max(...flat) };
+    const jours = [...acc.values()].sort((a, b) => a.ts - b.ts);
+    return {
+      colonnes: jours.map(({ ts }) => {
+        const date = new Date(ts);
+        return {
+          date,
+          libelle: date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
+          libelleComplet: date.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }),
+        };
+      }),
+      valeurs: jours.map(({ sums, counts }) => sums.map((s, h) => (counts[h] > 0 ? s / counts[h] : null))),
+    };
   }, [rows, metric]);
 
-  if (days.length === 0) {
+  if (colonnes.length === 0) {
     return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
   }
 
-  // Dégradé de la palette choisie (commun avec le module Mesures).
-  const colorFor = (v: number | null): string => {
-    if (v === null) return 'rgba(255,255,255,0.03)';
-    const t = vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5;
-    return heatColor(envPalette, t);
-  };
-
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between px-1 flex-wrap gap-2">
-        <p className="text-slate-300 text-sm font-medium">{meta.label} — moyenne par heure et par jour</p>
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          {fmtFr(vmin, 1)} {meta.unit}
-          <span className="inline-block h-2.5 w-24 rounded-full"
-            style={{ background: `linear-gradient(90deg, ${envPalette.heat[0]}, ${envPalette.heat[1]}, ${envPalette.heat[2]})` }} />
-          {fmtFr(vmax, 1)} {meta.unit}
-        </div>
-      </div>
-      <div className="overflow-x-auto pb-1">
-        <div className="inline-grid gap-px" style={{ gridTemplateColumns: `2.4rem repeat(${days.length}, minmax(1.4rem, 1fr))`, minWidth: '100%' }}>
-          <div />
-          {days.map((d, i) => (
-            <div key={i} className="text-[0.625rem] text-slate-500 text-center pb-1 whitespace-nowrap">{d}</div>
-          ))}
-          {Array.from({ length: 24 }, (_, h) => (
-            <Fragment key={h}>
-              <div className="text-[0.625rem] text-slate-500 pr-1.5 text-right leading-4">{String(h).padStart(2, '0')}h</div>
-              {grid.map((day, di) => (
-                <div key={di} className="h-4 rounded-[2px]"
-                  style={{ backgroundColor: colorFor(day[h]) }}
-                  title={day[h] !== null ? `${days[di]} ${String(h).padStart(2, '0')}h — ${fmtFr(day[h]!, 1)} ${meta.unit}` : `${days[di]} ${String(h).padStart(2, '0')}h — pas de données`} />
-              ))}
-            </Fragment>
-          ))}
-        </div>
-      </div>
+      <p className="text-slate-300 text-sm font-medium px-1">{meta.label} — moyenne par heure et par jour</p>
+      <CarteChaleur
+        colonnes={colonnes}
+        valeurs={valeurs}
+        stops={stopsChaleur(prefs, palette, g.color)}
+        formatValeur={v => `${fmtFr(v, 1)}${meta.unit ? ` ${meta.unit}` : ''}`}
+      />
     </div>
   );
 }
@@ -249,6 +231,7 @@ export function EnvProfil24View({ rows, g }: { rows: ShellyRow[]; g: GrandeurDef
 // moyenne extérieure. Nuage de points + droite de régression : la pente
 // (kWh/°C) mesure la sensibilité thermique du site (clim/chauffage).
 export function SignatureView({ envRows, energyRows }: { envRows: ShellyRow[]; energyRows: ShellyRow[] }) {
+  const couleurConso = colorForMetric(usePalette(), 'kwhTotal');
   const { points, reg } = useMemo(() => {
     const byDay = new Map<string, { temps: number[]; kwh: number }>();
     for (const r of envRows) {
@@ -326,7 +309,7 @@ export function SignatureView({ envRows, energyRows }: { envRows: ShellyRow[]; e
             formatter={(value: number, name: string) =>
               name === 'Consommation' ? [`${fmtFr(value, 2)} kWh`, name] : [`${fmtFr(value, 1)} °C`, name]}
             labelFormatter={(_, payload) => (payload?.[0]?.payload as { jour?: string })?.jour ?? ''} />
-          <Scatter dataKey="y" name="Consommation" fill="#f97316" />
+          <Scatter dataKey="y" name="Consommation" fill={couleurConso} />
           {reg && (
             <Line data={reg.line} dataKey="y" name="Régression" stroke="#22d3ee"
               strokeWidth={2} strokeDasharray="6 3" dot={false} legendType="none" />

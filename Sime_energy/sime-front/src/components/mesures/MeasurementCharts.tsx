@@ -44,7 +44,8 @@ import { ChartOptions } from '@/components/shared/ChartOptions';
 import { ChartZoom } from '@/components/shared/ChartZoom';
 import { PieOfPie, groupSmallParts, MAX_PARTS_CHOICES, type SliceLabelMode } from '@/components/shared/PieOfPie';
 import { formatQuantity, useUnitSettings } from '@/lib/unit-format';
-import { useChartPreferences, usePalette, seriesColor, chartTitle, heatColor, type Palette } from '@/lib/chart-preferences';
+import { useChartPreferences, usePalette, seriesColor, chartTitle, couleurDonnee, stopsChaleur, type Palette } from '@/lib/chart-preferences';
+import { CarteChaleur } from '@/components/shared/CarteChaleur';
 import {
   Activity,
   BarChart3,
@@ -214,11 +215,13 @@ export function MeasurementCharts({
       key,
       // La grandeur principale porte son unité dans son nom, comme les colonnes secondaires ("P apparente (VA)").
       name: key === 'consumption' ? (unit ? `${label} (${unit})` : label) : key,
-      color: seriesColor(palette, i),
+      // Couleur choisie pour cette donnée (sélecteur « Couleurs »), mémorisée sous son nom
+      color: couleurDonnee(prefs, key === 'consumption' ? (unit ? `${label} (${unit})` : label) : key, seriesColor(palette, i)),
     }));
-  }, [measurements, label, unit, palette]);
+  }, [measurements, label, unit, palette, prefs]);
 
   const primary = series[0]?.key ?? 'consumption';
+  const couleurPrincipale = series[0]?.color ?? seriesColor(palette, 0);
 
   const stats = useMemo(() => {
     const points = (measurements ?? [])
@@ -324,7 +327,8 @@ export function MeasurementCharts({
         </ModeButton>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <ChartOptions chartId={`mesures:${mode}`} defaultTitle={autoTitle} unit={unit} />
+        <ChartOptions chartId={`mesures:${mode}`} defaultTitle={autoTitle} unit={unit}
+          donnees={series.map(x => ({ key: x.name, label: x.name, color: x.color }))} chaleur={mode === 'profile'} />
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none" title="Image exportée sur fond blanc, pour les rapports et l'impression">
           <input type="checkbox" className="h-3.5 w-3.5" checked={whiteBg} onChange={(e) => setWhiteBg(e.target.checked)} />
           Fond blanc
@@ -354,8 +358,8 @@ export function MeasurementCharts({
             siblings={siblings} dateRange={dateRange} bounds={bounds}
           />
         )}
-        {mode === 'distribution' && <DistributionView measurements={measurements} primary={primary} label={label} unit={unit} showLegend={prefs.showLegend} color={seriesColor(palette, 0)} />}
-        {mode === 'profile' && <DailyProfileView measurements={measurements} primary={primary} unit={unit} palette={palette} />}
+        {mode === 'distribution' && <DistributionView measurements={measurements} primary={primary} label={label} unit={unit} showLegend={prefs.showLegend} color={couleurPrincipale} />}
+        {mode === 'profile' && <DailyProfileView measurements={measurements} primary={primary} unit={unit} stops={stopsChaleur(prefs, palette, couleurPrincipale)} />}
         {mode === 'period' && (
           <PeriodView
             measurements={measurements}
@@ -365,7 +369,7 @@ export function MeasurementCharts({
             quantityKind={primary === 'consumption' ? quantityKind : 'other'}
             onDrillDay={drillToDay}
             showLegend={prefs.showLegend}
-            color={seriesColor(palette, 0)}
+            color={couleurPrincipale}
           />
         )}
         </ChartZoom>
@@ -657,7 +661,7 @@ function DistributionView({
 
 /* ----------------------------------------------------- vue Profil journalier */
 
-function DailyProfileView({ measurements, primary, unit, palette }: { measurements: Measurement[]; primary: string; unit: string; palette: Palette }) {
+function DailyProfileView({ measurements, primary, unit, stops }: { measurements: Measurement[]; primary: string; unit: string; stops: string[] }) {
   // Deux regroupements, parce que les campagnes n'ont pas la même durée :
   //  · « Jour de semaine » révèle les habitudes sur plusieurs semaines
   //    (un compteur qui tourne en continu) ;
@@ -688,21 +692,22 @@ function DailyProfileView({ measurements, primary, unit, palette }: { measuremen
       byDay.set(key, cur);
     }
 
-    const stats = (rows: (number | null)[][]) => {
-      const flat = rows.flat().filter((x): x is number => x != null);
-      return { min: flat.length ? Math.min(...flat) : 0, max: flat.length ? Math.max(...flat) : 0 };
-    };
-
     const wdRows = wdSum.map((row, i) => row.map((sum, h) => (wdCnt[i][h] ? sum / wdCnt[i][h] : null)));
     const days = [...byDay.entries()].sort((a, b) => a[1].ts - b[1].ts);
     const calRows = days.map(([, { sums, counts }]) => sums.map((sum, h) => (counts[h] ? sum / counts[h] : null)));
 
     return {
-      weekday: { labels: WEEKDAYS, rows: wdRows, ...stats(wdRows) },
+      weekday: { colonnes: WEEKDAYS.map(libelle => ({ libelle })), rows: wdRows },
       calendar: {
-        labels: days.map(([key]) => new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })),
+        colonnes: days.map(([, { ts }]) => {
+          const date = new Date(ts);
+          return {
+            date,
+            libelle: date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
+            libelleComplet: date.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }),
+          };
+        }),
         rows: calRows,
-        ...stats(calRows),
       },
       subDaily: hoursSeen.size > 1,
     };
@@ -711,7 +716,7 @@ function DailyProfileView({ measurements, primary, unit, palette }: { measuremen
   // Campagne courte : le jour calendaire parle, le jour de semaine non.
   const [grouping, setGrouping] = useState<'auto' | 'weekday' | 'calendar'>('auto');
   const effective = grouping === 'auto'
-    ? (calendar.labels.length > 0 && calendar.labels.length <= 14 ? 'calendar' : 'weekday')
+    ? (calendar.colonnes.length > 0 && calendar.colonnes.length <= 14 ? 'calendar' : 'weekday')
     : grouping;
   const active = effective === 'calendar' ? calendar : weekday;
 
@@ -721,22 +726,14 @@ function DailyProfileView({ measurements, primary, unit, palette }: { measuremen
     );
   }
 
-  // Dégradé repris de la palette choisie (demande du 18/09 : pouvoir passer
-  // la carte de chaleur en rouge pour comparer deux relevés).
-  const color = (v: number | null) => {
-    if (v == null) return 'hsl(var(--muted))';
-    const t = active.max === active.min ? 0.5 : (v - active.min) / (active.max - active.min);
-    return heatColor(palette, t);
-  };
-
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           {effective === 'calendar'
-            ? `Moyenne par heure, jour par jour — ${calendar.labels.length} jour(s) de mesure.`
+            ? `Moyenne par heure, jour par jour — ${calendar.colonnes.length} jour(s) de mesure.`
             : 'Moyenne par heure et jour de semaine — révèle les habitudes.'}
-          {' '}(plus la couleur est vive, plus la valeur est élevée)
+          {' '}(échelle des couleurs sous la carte)
         </p>
         <div className="flex items-center gap-1 p-1 bg-muted rounded-lg">
           <ModeButton active={effective === 'calendar'} onClick={() => setGrouping('calendar')} icon={<CalendarRange className="h-3.5 w-3.5" />}>
@@ -747,36 +744,15 @@ function DailyProfileView({ measurements, primary, unit, palette }: { measuremen
           </ModeButton>
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <div className="inline-block min-w-full">
-          <div className="flex">
-            <div className="w-16 shrink-0" />
-            {Array.from({ length: 24 }, (_, h) => (
-              <div key={h} className="flex-1 text-center text-[0.5625rem] text-muted-foreground min-w-[18px]">
-                {h % 3 === 0 ? `${h}h` : ''}
-              </div>
-            ))}
-          </div>
-          {active.rows.map((row, r) => (
-            <div key={active.labels[r] ?? r} className="flex items-center">
-              <div className="w-16 shrink-0 text-xs text-muted-foreground pr-1 text-right truncate">{active.labels[r]}</div>
-              {row.map((v, h) => (
-                <div
-                  key={h}
-                  title={v == null ? '—' : `${active.labels[r]} ${h}h : ${formatValue(v, unit)}`}
-                  className="flex-1 aspect-square min-w-[18px] m-[1px] rounded-sm"
-                  style={{ backgroundColor: color(v) }}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span>{formatValue(active.min, unit)}</span>
-        <div className="h-2 w-32 rounded" style={{ background: `linear-gradient(to right, ${palette.heat[0]}, ${palette.heat[1]}, ${palette.heat[2]})` }} />
-        <span>{formatValue(active.max, unit)}</span>
-      </div>
+      {/* Heures en ordonnée (0 h en bas), jours en abscisse en bas — remarque du 20/10 */}
+      <CarteChaleur
+        colonnes={active.colonnes}
+        valeurs={active.rows}
+        stops={stops}
+        formatValeur={v => formatValue(v, unit)}
+        couleurVide="hsl(var(--muted))"
+        classeTexte="text-muted-foreground"
+      />
     </div>
   );
 }

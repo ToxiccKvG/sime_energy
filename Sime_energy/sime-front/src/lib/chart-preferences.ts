@@ -83,9 +83,37 @@ export interface ChartPreferences {
   showLegend: boolean;
   /** Titres personnalisés, par identifiant de graphique (`module:vue`). */
   titles: Record<string, string>;
+  /**
+   * Couleur choisie pour une donnée précise (clé de la grandeur ou nom de la
+   * série), prioritaire sur la palette. Demande du 20/10 : « laisser la
+   * personne choisir la couleur qu'elle veut sur la donnée choisie ».
+   */
+  seriesColors: Record<string, string>;
+  /** Dégradé des cartes de chaleur (voir ECHELLES_CHALEUR). */
+  echelleChaleur: EchelleChaleurId;
 }
 
-const DEFAULTS: ChartPreferences = { palette: 'defaut', showLegend: true, titles: {} };
+/**
+ * Dégradés des cartes de chaleur, du plus faible au plus fort.
+ *  · « donnee »  : part de la couleur de la donnée affichée (sombre → couleur → clair) ;
+ *  · « palette » : dégradé de la palette générale (comportement d'avant le 20/10) ;
+ *  · viridis / inferno : fort contraste, lisibles en noir et blanc et par les daltoniens ;
+ *  · divergent : bleu → clair → rouge, pour lire l'écart autour du milieu.
+ */
+export type EchelleChaleurId = 'donnee' | 'palette' | 'viridis' | 'inferno' | 'divergent';
+
+export const ECHELLES_CHALEUR: { id: EchelleChaleurId; label: string; hint: string; stops?: string[] }[] = [
+  { id: 'donnee', label: 'Couleur de la donnée', hint: 'Dégradé de la couleur choisie pour la grandeur affichée.' },
+  { id: 'palette', label: 'Palette générale', hint: 'Dégradé de la palette choisie ci-dessus.' },
+  { id: 'viridis', label: 'Viridis (contraste)', hint: 'Violet → vert → jaune : lisible imprimé en gris et par les daltoniens.',
+    stops: ['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725'] },
+  { id: 'inferno', label: 'Inferno (contraste)', hint: 'Noir → rouge → jaune : très fort contraste.',
+    stops: ['#000004', '#57106e', '#bc3754', '#f98e09', '#fcffa4'] },
+  { id: 'divergent', label: 'Divergent bleu-rouge', hint: 'Bleu sous la moyenne, rouge au-dessus.',
+    stops: ['#2166ac', '#67a9cf', '#f7f7f7', '#ef8a62', '#b2182b'] },
+];
+
+const DEFAULTS: ChartPreferences = { palette: 'defaut', showLegend: true, titles: {}, seriesColors: {}, echelleChaleur: 'donnee' };
 const STORAGE_KEY = 'sime-chart-prefs-v1';
 
 function load(): ChartPreferences {
@@ -97,6 +125,8 @@ function load(): ChartPreferences {
       palette: PALETTES.some(p => p.id === parsed.palette) ? parsed.palette! : DEFAULTS.palette,
       showLegend: typeof parsed.showLegend === 'boolean' ? parsed.showLegend : DEFAULTS.showLegend,
       titles: parsed.titles && typeof parsed.titles === 'object' ? parsed.titles : {},
+      seriesColors: parsed.seriesColors && typeof parsed.seriesColors === 'object' ? parsed.seriesColors : {},
+      echelleChaleur: ECHELLES_CHALEUR.some(e => e.id === parsed.echelleChaleur) ? parsed.echelleChaleur! : DEFAULTS.echelleChaleur,
     };
   } catch {
     return DEFAULTS;
@@ -124,6 +154,16 @@ export function setChartTitle(chartId: string, title: string) {
   persist();
 }
 
+/** Couleur d'une donnée ; chaîne vide = revenir à la couleur de la palette. */
+export function setSeriesColor(key: string, color: string) {
+  const seriesColors = { ...state.seriesColors };
+  if (/^#[0-9a-f]{6}$/i.test(color)) seriesColors[key] = color; else delete seriesColors[key];
+  state = { ...state, seriesColors };
+  persist();
+}
+
+export function setEchelleChaleur(echelleChaleur: EchelleChaleurId) { state = { ...state, echelleChaleur }; persist(); }
+
 export function resetChartPreferences() { state = DEFAULTS; persist(); }
 
 function subscribe(listener: () => void) {
@@ -150,6 +190,15 @@ export function seriesColor(palette: Palette, index: number): string {
   return palette.colors[index % palette.colors.length];
 }
 
+/**
+ * Couleur d'une donnée : celle choisie par la personne, sinon `defaut`
+ * (couleur de la palette). Toujours au format #rrggbb, ce qui permet aux
+ * graphiques d'y accoler une opacité (`${couleur}25`).
+ */
+export function couleurDonnee(prefs: ChartPreferences, key: string, defaut: string): string {
+  return prefs.seriesColors[key] ?? defaut;
+}
+
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '');
   const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
@@ -167,6 +216,28 @@ export function heatColor(palette: Palette, t: number): string {
   const a = hexToRgb(from), b = hexToRgb(to);
   const mix = a.map((v, i) => Math.round(v + (b[i] - v) * local));
   return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
+}
+
+function mixHex(a: string, b: string, t: number): string {
+  const x = hexToRgb(a), y = hexToRgb(b);
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('');
+}
+
+/** Teintes du dégradé d'une carte de chaleur, du plus faible au plus fort. */
+export function stopsChaleur(prefs: ChartPreferences, palette: Palette, couleur: string): string[] {
+  const e = ECHELLES_CHALEUR.find(x => x.id === prefs.echelleChaleur);
+  if (e?.stops) return e.stops;
+  if (prefs.echelleChaleur === 'palette') return [...palette.heat];
+  // Couleur de la donnée : faible = presque noir teinté, fort = couleur éclaircie.
+  return [mixHex(couleur, '#0b1020', 0.85), couleur, mixHex(couleur, '#ffffff', 0.6)];
+}
+
+/** Couleur pour une intensité `t` entre 0 et 1, interpolée sur `stops`. */
+export function couleurSurEchelle(stops: string[], t: number): string {
+  const x = Math.min(1, Math.max(0, isFinite(t) ? t : 0));
+  const n = stops.length - 1;
+  const i = Math.min(n - 1, Math.floor(x * n));
+  return mixHex(stops[i], stops[i + 1], x * n - i);
 }
 
 /** Titre affiché : celui saisi par l'utilisateur, sinon celui calculé. */

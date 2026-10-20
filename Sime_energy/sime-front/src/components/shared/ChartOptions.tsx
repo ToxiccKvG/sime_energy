@@ -17,6 +17,7 @@ import {
   availablePrefixes, setUnitMode, setUnitPrefix, useUnitSettings,
   type UnitPrefix,
 } from '@/lib/unit-format';
+import { CouleursDonnees, type DonneeCouleur } from './CouleursDonnees';
 
 interface ChartOptionsProps {
   /** Identifiant stable du graphique, ex. « mesures:courbe » — porte le titre personnalisé. */
@@ -27,10 +28,14 @@ interface ChartOptionsProps {
   hideTitle?: boolean;
   /** Unité de la grandeur affichée — active le réglage d'écriture des valeurs. */
   unit?: string;
+  /** Données affichées : chacune reçoit son sélecteur de couleur. */
+  donnees?: DonneeCouleur[];
+  /** Vue carte de chaleur : propose aussi le choix du dégradé. */
+  chaleur?: boolean;
   className?: string;
 }
 
-export function ChartOptions({ chartId, defaultTitle, hideTitle = false, unit, className = '' }: ChartOptionsProps) {
+export function ChartOptions({ chartId, defaultTitle, hideTitle = false, unit, donnees = [], chaleur = false, className = '' }: ChartOptionsProps) {
   const prefs = useChartPreferences();
   const active = usePalette();
   const units = useUnitSettings();
@@ -155,6 +160,8 @@ export function ChartOptions({ chartId, defaultTitle, hideTitle = false, unit, c
           )}
         </div>
       )}
+
+      <CouleursDonnees donnees={donnees} chaleur={chaleur} />
 
       <div className="relative">
         <button
