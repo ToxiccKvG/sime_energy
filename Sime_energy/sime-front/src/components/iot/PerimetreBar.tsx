@@ -14,7 +14,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useIOT } from './IOTContext';
-import { DevicePeriodsNotice } from './DevicePeriodsNotice';
 import { fetchDisponibles, exporterDonneesSupabase, type SupabaseExportOptions } from '@/lib/iot-supabase-service';
 
 /** Ce que l'utilisateur a choisi d'analyser, partagé par toutes les vues. */
@@ -248,14 +247,6 @@ export function PerimetreBar({ colonnesRecommandees, onCharge }: {
         {erreur && <span className="text-xs text-red-400 self-center">{erreur}</span>}
       </div>
 
-      {/* Capteur déplacé pendant la période : avertir, proposer de commencer à l'affectation actuelle */}
-      <DevicePeriodsNotice
-        deviceIds={cibles.map(d => d.device_id)}
-        deviceName={id => catalogue.devices.find(d => d.device_id === id)?.name ?? id}
-        dateDebut={dateDebut}
-        dateFin={dateFin}
-        onStartAt={d => { setDateDebut(d); setPeriode('perso'); }}
-      />
     </div>
   );
 }
