@@ -45,10 +45,18 @@ app.include_router(api_router, prefix="/api/V1")
 
 
 
+def origines_autorisees() -> list[str]:
+    """Front de production (FRONTEND_URL) + origines de développement (CORS_EXTRA_ORIGINS)."""
+    extra = os.environ.get("CORS_EXTRA_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080")
+    origines = [os.environ.get("FRONTEND_URL", ""), *extra.split(",")]
+    return [o.strip().rstrip("/") for o in origines if o.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
-    allow_credentials=True,
+    allow_origins=origines_autorisees(),
+    # Authentification par en-tête Authorization, pas par cookie
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -1,19 +1,21 @@
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
 from typing import Dict, List, Any, Optional
 from fastapi.responses import JSONResponse, FileResponse
 from pdf2image import convert_from_bytes
+from pdf2image.exceptions import PDFPageCountError
 import io
 import logging
 import base64
 from app.core.llm import _textract_analyze_bytes, _parse_trp, _normalize_with_llm, _analyze_energy_label_with_mistral
-from app.core.utils import calculate_kpis, _strip_coordinates_for_mistral, _pil_image_to_bytes, extract_invoice_fields, parse_voltcraft_csv, parse_th30_csv, parse_smart_energy_csv, parse_rht10_txt, parse_sentinel_excel, prepare_chart_data
+from app.core.utils import calculate_kpis, _strip_coordinates_for_mistral, _pil_image_to_bytes, extract_invoice_fields, normaliser_date, parse_voltcraft_csv, parse_th30_csv, parse_smart_energy_csv, parse_rht10_txt, parse_sentinel_excel, prepare_chart_data
+from app.core.auth import Utilisateur, auth_requise, controler_facture, utilisateur_courant, verifier_membre
+from app.core.supabase_client import supabase
 from app.core.unified_invoice_processor import UnifiedInvoiceProcessor
 from pydantic import BaseModel
 import pandas as pd
 import chardet
 import tempfile
 import os
-from supabase import create_client
 from datetime import datetime
 import re
 
@@ -23,15 +25,25 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["processing"])
 
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # Utiliser la clé service_role pour les opérations d'écriture
+# Capteurs dont le fichier est du texte (Sentinel est un classeur Excel binaire)
+TEXT_SENSOR_PARSERS = {
+    "89_VOLTCRAFT": parse_voltcraft_csv,
+    "TH_30": parse_th30_csv,
+    "SMART_ENERGY_METER": parse_smart_energy_csv,
+    "RHT_10": parse_rht10_txt,
+}
+SENSOR_TYPES = set(TEXT_SENSOR_PARSERS) | {"8_SENTINEL"}
 
-if not supabase_url or not supabase_key:
-    logger.error("[SUPABASE] ERREUR CRITIQUE: SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY non définis dans .env")
-    raise ValueError("Configuration Supabase manquante. Vérifiez votre fichier .env")
 
-supabase = create_client(supabase_url, supabase_key)
-logger.info(f"[SUPABASE] Client initialisé avec succès - URL: {supabase_url[:30]}...")
+def decoder_texte(contents: bytes) -> str:
+    """Décode un fichier texte de capteur : encodage détecté, puis UTF-8, puis Latin-1."""
+    candidats = [chardet.detect(contents).get("encoding"), "utf-8", "latin-1"]
+    for encodage in [c for c in candidats if c]:
+        try:
+            return contents.decode(encodage)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    raise HTTPException(status_code=400, detail="Encodage du fichier illisible. Utilisez UTF-8 ou ISO-8859-1")
 
 class MeasurementData(BaseModel):
     timestamp: str
@@ -86,15 +98,25 @@ class InvoiceData(BaseModel):
 async def process_file_structured(
     file: UploadFile = File(...),
     file_name: str = Form(...),
-    invoice_id: str = Form(...)
+    invoice_id: str = Form(...),
+    utilisateur: Optional[Utilisateur] = Depends(utilisateur_courant),
 ):
     """
     Process PDF invoices with multi-invoice support.
     Creates separate entries for each invoice detected in the PDF.
     """
     logger.info(f"Début du traitement du fichier: {file.filename}")
+    controler_facture(utilisateur, invoice_id)
     try:
         pdf_bytes = await file.read()
+
+        # Les pages suivantes deviennent des factures du même projet / de la même organisation
+        principale_rows = (
+            supabase.table('audit_invoices')
+            .select('audit_id, organization_id, uploaded_by, file_url')
+            .eq('id', invoice_id).limit(1).execute().data
+        )
+        principale = principale_rows[0] if principale_rows else {}
         size_bytes = len(pdf_bytes)
         logger.info(f"PDF reçu: {size_bytes} bytes")
 
@@ -253,7 +275,10 @@ async def process_file_structured(
                 
                 try:
                     insert_result = supabase.table('audit_invoices').insert({
-                        'original_file_name': file.filename,
+                        'audit_id': principale.get('audit_id'),
+                        'organization_id': principale.get('organization_id'),
+                        'uploaded_by': principale.get('uploaded_by'),
+                        'file_url': principale.get('file_url') or '',
                         'file_name': new_file_name,
                         'status': 'processing',
                         'ocr_data': {
@@ -309,7 +334,11 @@ async def process_file_structured(
         logger.info(f"Traitement terminé: {len(created_invoices)} factures créées/mises à jour")
         
         return JSONResponse(content=structured_response)
-    
+
+    except HTTPException:
+        raise
+    except PDFPageCountError:
+        raise HTTPException(status_code=400, detail="PDF illisible ou corrompu")
     except Exception as e:
         logger.error(f"Erreur globale lors du traitement: {str(e)}")
         logger.error(f"Type d'erreur: {type(e).__name__}")
@@ -317,17 +346,22 @@ async def process_file_structured(
         logger.error(f"Stack trace: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Erreur lors du traitement du fichier: {str(e)}")
 
-@router.post('/process-file/excel-invoices')
+@router.post('/excel-invoices')
 async def process_file_excel(
     file: UploadFile = File(...),
     file_name: str = Form(...),
     invoice_id: str = Form(...),
     audit_id: str = Form(...),
-    organization_id: str = Form(...)
+    organization_id: str = Form(...),
+    utilisateur: Optional[Utilisateur] = Depends(utilisateur_courant),
 ):
     """
     Traite les factures Excel et met à jour la base de données.
     """
+    if auth_requise():
+        verifier_membre(utilisateur, organization_id)
+        if controler_facture(utilisateur, invoice_id) != organization_id:
+            raise HTTPException(status_code=403, detail="La facture n'appartient pas à cette organisation")
     try:
         contents = await file.read()
         excel_file = io.BytesIO(contents)
@@ -353,28 +387,25 @@ async def process_file_excel(
             "confidence_score": 0,
         }
 
-        # Try to extract amount from Excel (sum if multiple rows)
-        if "Montant" in df.columns or "Amount" in df.columns:
-            amount_col = "Montant" if "Montant" in df.columns else "Amount"
-            try:
-                extracted_fields["amount"] = float(df[amount_col].sum()) * 1_000_000
-            except:
-                pass
+        # Montant total : somme des TTC (template SENELEC), sinon colonne générique
+        amount_col = next((c for c in ["Montant Facture TTC", "Montant", "Amount"] if c in df.columns), None)
+        if amount_col:
+            total = pd.to_numeric(df[amount_col], errors="coerce").sum()
+            extracted_fields["amount"] = float(total) if pd.notna(total) else None
 
         # Try to extract supplier
         if "Fournisseur" in df.columns or "Supplier" in df.columns:
             supplier_col = "Fournisseur" if "Fournisseur" in df.columns else "Supplier"
             extracted_fields["supplier"] = str(df[supplier_col].iloc[0]) if len(df) > 0 else None
 
-        # Try to extract date (first entry)
-        if "Date" in df.columns or "Date Facture" in df.columns:
-            date_col = "Date Facture" if "Date Facture" in df.columns else "Date"
-            if len(df) > 0:
-                extracted_fields["invoice_date"] = str(df[date_col].iloc[0])
+        # Date de la première facture, normalisée en AAAA-MM-JJ (colonne date en base)
+        date_col = next((c for c in ["Date comptable Facture", "Date Facture", "Date"] if c in df.columns), None)
+        if date_col and len(df) > 0:
+            extracted_fields["invoice_date"] = normaliser_date(df[date_col].iloc[0])
 
-        # Set confidence score
-        fields_found = sum(1 for v in extracted_fields.values() if v is not None and v != 0)
-        extracted_fields["confidence_score"] = min(100, (fields_found / 3) * 100)
+        # Score de confiance : entier (colonne integer)
+        fields_found = sum(1 for k in ("supplier", "invoice_date", "amount") if extracted_fields[k] not in (None, 0))
+        extracted_fields["confidence_score"] = round(min(100, fields_found / 3 * 100))
 
         # Update audit_invoices table
         logger.info(f"[SUPABASE] Début mise à jour facture Excel - ID: {invoice_id}, FileName: {file_name}")
@@ -409,6 +440,8 @@ async def process_file_excel(
 
         return JSONResponse(content=json_response)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Excel processing error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -424,54 +457,44 @@ async def process_measures(
     Traite un fichier CSV de mesures selon le type de capteur
     """
     try:
-        print(sensor_type)
-        # Lire le contenu du fichier
-        contents = await file.read()
-        encoding = chardet.detect(contents)['encoding']
-        print(f"Encodage détecté : {encoding}")
-
-        # Lire avec le bon encodage
-        content_str = contents.decode(encoding)
-        
-        # Traitement selon le type de capteur
-        if sensor_type == "89_VOLTCRAFT":
-            df, metadata = parse_voltcraft_csv(content_str)
-        elif sensor_type == "TH_30":
-            df, metadata = parse_th30_csv(content_str)
-        elif sensor_type == "SMART_ENERGY_METER":
-            df, metadata = parse_smart_energy_csv(content_str)
-        elif sensor_type == "RHT_10":
-            df, metadata = parse_rht10_txt(content_str)
-        elif sensor_type == "8_SENTINEL":
-            # Pour Sentinel, on traite un fichier Excel
-            import tempfile
-            import os
-            
-            # Créer un fichier temporaire avec le contenu
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-                tmp_file.write(contents)
-                tmp_file_path = tmp_file.name
-            
-            try:
-                df, metadata = parse_sentinel_excel(tmp_file_path)
-            finally:
-                # Nettoyer le fichier temporaire
-                if os.path.exists(tmp_file_path):
-                    os.unlink(tmp_file_path)
-        else:
+        if sensor_type not in SENSOR_TYPES:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"Type de capteur '{sensor_type}' non supporté pour le moment"
             )
+        contents = await file.read()
+        if not contents.strip():
+            raise HTTPException(status_code=400, detail="Le fichier est vide")
+
+        try:
+            if sensor_type == "8_SENTINEL":
+                # Classeur Excel : lu tel quel, surtout pas décodé comme du texte
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                    tmp_file.write(contents)
+                    tmp_file_path = tmp_file.name
+                try:
+                    df, metadata = parse_sentinel_excel(tmp_file_path)
+                finally:
+                    if os.path.exists(tmp_file_path):
+                        os.unlink(tmp_file_path)
+            else:
+                df, metadata = TEXT_SENSOR_PARSERS[sensor_type](decoder_texte(contents))
+        except HTTPException:
+            raise
+        except (ValueError, KeyError, IndexError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+            raise HTTPException(status_code=400, detail=f"Fichier de mesure illisible pour {sensor_type} : {e}")
+
         # Vérifier que nous avons des données
         if df.empty:
             raise HTTPException(status_code=400, detail="Aucune donnée valide trouvée dans le fichier")
         # lui il met 
         # Calculer les KPIs
         kpi_sensor_type = "SENTINEL" if sensor_type == "8_SENTINEL" else sensor_type
-        kpis = calculate_kpis(df, metadata, kpi_sensor_type)
-        # Préparer les données pour le graphique
-        chart_data = prepare_chart_data(df, kpi_sensor_type)
+        try:
+            kpis = calculate_kpis(df, metadata, kpi_sensor_type)
+            chart_data = prepare_chart_data(df, kpi_sensor_type)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Fichier de mesure incomplet : {e}")
         # Informations de traitement
         processing_info = {
             "original_rows": len(df),
@@ -489,10 +512,8 @@ async def process_measures(
 
         # Puis valider avec Pydantic
         return response_data
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="Erreur d'encodage du fichier. Utilisez UTF-8 ou ISO-8859-1")
-    except pd.errors.EmptyDataError:
-        raise HTTPException(status_code=400, detail="Le fichier CSV est vide ou mal formaté")
+    except HTTPException:
+        raise
     except Exception as e:
         print(e)
         raise HTTPException(status_code=500, detail=f"Erreur lors du traitement: {str(e)}")
@@ -566,7 +587,9 @@ async def process_invoice_tables_to_excel(invoice_data: InvoiceData):
                 media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 headers={"Content-Disposition": f"attachment; filename={output_filename}"}
             )
-    
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Erreur lors du traitement des tableaux: {str(e)}")
         logger.error(f"Type d'erreur: {type(e).__name__}")
@@ -579,7 +602,10 @@ async def process_invoice_tables_to_excel(invoice_data: InvoiceData):
 
 
 @router.post("/invoice-tables-to-json")
-async def process_invoice_tables_to_json(invoice_data: InvoiceData):
+async def process_invoice_tables_to_json(
+    invoice_data: InvoiceData,
+    utilisateur: Optional[Utilisateur] = Depends(utilisateur_courant),
+):
     """
     Traite une facture unique et retourne les données unifiées en JSON en s'appuyant
     sur les templates de dictionnaire (table_name fourni par le front).
@@ -608,13 +634,14 @@ async def process_invoice_tables_to_json(invoice_data: InvoiceData):
             try:
                 dictionary_resp = (
                     supabase.table('annotation_dictionaries')
-                    .select('id,name,table_templates')
+                    .select('id,name,table_templates,organization_id')
                     .eq('id', invoice_data.dictionary_id)
                     .limit(1)
                     .execute()
                 )
                 if dictionary_resp.data:
                     record = dictionary_resp.data[0]
+                    verifier_membre(utilisateur, record.get("organization_id"))
                     dictionary_info["name"] = dictionary_info["name"] or record.get("name")
                     templates = record.get("table_templates") or []
                     templates_by_name = {
@@ -623,6 +650,8 @@ async def process_invoice_tables_to_json(invoice_data: InvoiceData):
                         if tpl and tpl.get("name")
                     }
                     logger.info(f"{len(templates_by_name)} template(s) de dictionnaire chargés")
+            except HTTPException:
+                raise
             except Exception as fetch_error:
                 logger.warning(f"Impossible de récupérer le dictionnaire {invoice_data.dictionary_id}: {fetch_error}")
 

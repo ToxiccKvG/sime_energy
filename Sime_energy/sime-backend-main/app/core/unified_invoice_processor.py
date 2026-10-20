@@ -9,6 +9,8 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
+from app.core.utils import normaliser_date
+
 class TableType(Enum):
     KEY_VALUE = 'key_value'
     CROSS_TABLE = 'cross_table'
@@ -261,7 +263,8 @@ class UnifiedInvoiceProcessor:
                 value = row[1].get('text', '').strip() if row[1] else ''
                 
                 if key and value:
-                    clean_key = key.replace(':', '').replace(' ', '_').upper()
+                    # « N° Facture : » → « N°_FACTURE » (pas de « _ » final)
+                    clean_key = key.replace(':', '').strip().replace(' ', '_').upper()
                     flattened[clean_key] = value
         
         return flattened
@@ -327,7 +330,9 @@ class UnifiedInvoiceProcessor:
         
         # Parcourir les lignes de données (skip header)
         for row_idx, row in enumerate(table_data[1:], 1):
-            designation = row[0].get('text', '').strip() if row[0] else ''
+            if not row:  # ligne vide renvoyée par l'OCR
+                continue
+            designation = (row[0] or {}).get('text', '').strip()
             
             if designation:
                 # Nettoyer la désignation pour créer une clé
@@ -463,13 +468,8 @@ class UnifiedInvoiceProcessor:
         if transform == "string":
             return str(value)
         if transform == "date":
-            try:
-                parsed = pd.to_datetime(value, errors="coerce")
-                if pd.isna(parsed):
-                    return value
-                return parsed.isoformat()
-            except Exception:
-                return value
+            # JJ/MM/AAAA (factures SENELEC) ou ISO → AAAA-MM-JJ ; valeur d'origine si illisible
+            return normaliser_date(value) or value
         return value
 
     def _resolve_excel_mappings(
@@ -517,6 +517,13 @@ class UnifiedInvoiceProcessor:
             if row_idx is None and source.get("rowIndex") is not None:
                 row_idx = int(source.get("rowIndex")) + header_offset
 
+            # Ligne ou colonne demandée mais absente du tableau : ne jamais lire une autre cellule
+            ligne_introuvable = bool(source_row_header) and row_idx is None
+            colonne_introuvable = bool(source_col) and col_idx is None
+            if ligne_introuvable or colonne_introuvable:
+                results[target] = default_val
+                continue
+
             # Resolve value with priority rules
             value: Any = None
             combine = source.get("combine")
@@ -543,7 +550,7 @@ class UnifiedInvoiceProcessor:
                     value = self._get_cell(table_data, row_idx, col_idx)
 
             # Only column: first data row
-            if value is None and source_col and col_idx is not None:
+            if value is None and source_col and not source_row_header and col_idx is not None:
                 data_row = header_offset if len(table_data) > header_offset else max(0, len(table_data) - 1)
                 value = self._get_cell(table_data, data_row, col_idx)
 
@@ -563,22 +570,31 @@ class UnifiedInvoiceProcessor:
         return results
 
     def _safe_to_number(self, value: Any) -> Optional[float]:
-        """Convertit une valeur en float lorsque c'est possible (gère virgules et espaces)."""
+        """Convertit une cellule en nombre : « 2 238 200 FCFA » → 2238200, « 111,91 » → 111.91.
+
+        Espaces (y compris insécables) = séparateurs de milliers ; la virgule est décimale, sauf si
+        elle se répète (« 1,234,567 »). L'unité ou le texte autour du nombre est ignoré.
+        """
         if value is None:
             return None
         if isinstance(value, (int, float)):
             return float(value)
 
-        try:
-            text = str(value)
-        except Exception:
+        texte = str(value).replace('\xa0', '').replace('\u202f', '').replace(' ', '')
+        m = re.search(r'-?\d+(?:[.,]\d+)*', texte)
+        if not m:
             return None
-
-        cleaned = text.replace('\xa0', ' ').strip()
-        cleaned = cleaned.replace(' ', '').replace(',', '.')
-
+        nombre = m.group(0)
+        if ',' in nombre and '.' in nombre:
+            nombre = nombre.replace('.', '').replace(',', '.')   # 1.234,56
+        elif nombre.count(',') > 1:
+            nombre = nombre.replace(',', '')                     # 1,234,567
+        elif nombre.count('.') > 1:
+            nombre = nombre.replace('.', '')                     # 1.234.567
+        else:
+            nombre = nombre.replace(',', '.')
         try:
-            return float(cleaned)
+            return float(nombre)
         except ValueError:
             return None
 

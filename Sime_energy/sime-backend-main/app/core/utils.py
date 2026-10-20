@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from PIL import Image
 import pandas as pd
 from io import StringIO
@@ -468,7 +469,7 @@ def prepare_chart_data(df: pd.DataFrame, sensor_type: str, max_points: int = 100
         valid_data = df[(df[consumption_col] >= 0) & df[timestamp_col].notna()].copy()
     elif sensor_type == "TH_30":
         valid_data = df[df[consumption_col].notna() & df[timestamp_col].notna()].copy()
-    elif sensor_type == "SENTINEL":
+    elif sensor_type in ("SENTINEL", "SMART_ENERGY_METER"):
         valid_data = df[(df[consumption_col] >= 0) & df[timestamp_col].notna()].copy()
     elif sensor_type == "RHT_10":
         valid_data = df[df[consumption_col].notna() & df[timestamp_col].notna()].copy()
@@ -491,8 +492,8 @@ def prepare_chart_data(df: pd.DataFrame, sensor_type: str, max_points: int = 100
                     timestamp_str = row[timestamp_col].strftime('%Y-%m-%d %H:%M:%S')
                 else:
                     timestamp_str = f"{row.get('date', '')} {row.get('time', '')}"
-            elif sensor_type == "SENTINEL":
-                # Pour Sentinel, utiliser le timestamp datetime
+            elif sensor_type in ("SENTINEL", "SMART_ENERGY_METER"):
+                # Timestamp datetime (Sentinel, Smart Energy Meter)
                 if pd.notna(row[timestamp_col]) and hasattr(row[timestamp_col], 'strftime'):
                     timestamp_str = row[timestamp_col].strftime('%Y-%m-%d %H:%M:%S')
                 else:
@@ -776,6 +777,61 @@ def parse_sentinel_excel(file_path: str) -> tuple[pd.DataFrame, Dict[str, Any]]:
         raise ValueError(f"Impossible de parser le fichier Sentinel: {str(e)}")
 
 
+_DATE_JMA = re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})")
+_DATE_AMJ = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})")
+
+
+def normaliser_date(valeur: Any) -> Optional[str]:
+    """Date OCR ou Excel → 'AAAA-MM-JJ' (format attendu par les colonnes date), None si illisible.
+
+    Accepte JJ/MM/AAAA, JJ-MM-AAAA, JJ.MM.AAAA et AAAA-MM-JJ, avec ou sans heure, ainsi que
+    les objets date / datetime / Timestamp.
+    """
+    if valeur is None:
+        return None
+    if hasattr(valeur, "strftime"):
+        try:
+            return valeur.strftime("%Y-%m-%d")
+        except ValueError:  # NaT
+            return None
+    texte = str(valeur).strip()
+    for motif, ordre in ((_DATE_AMJ, (0, 1, 2)), (_DATE_JMA, (2, 1, 0))):
+        m = motif.match(texte)
+        if m:
+            parties = m.groups()
+            annee, mois, jour = (int(parties[i]) for i in ordre)
+            try:
+                return datetime(annee, mois, jour).strftime("%Y-%m-%d")
+            except ValueError:
+                return None
+    return None
+
+
+def _cle_normalisee(cle: Any) -> str:
+    """Clé OCR comparable, qu'elle vienne du LLM (« RAISON_SOCIALE ») ou brute de Textract
+    (« Raison sociale : ») : minuscules, sans accents, ponctuation et espaces → « _ »."""
+    texte = unicodedata.normalize("NFD", str(cle or "")).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "_", texte).strip("_")
+
+
+# Clés de date propres à la facture, par ordre de préférence ; les dates de période ou
+# d'échéance ne doivent jamais être prises pour la date de facture.
+_CLES_DATE_FACTURE = ["date_facture", "date_comptable", "invoice_date"]
+_CLES_DATE_EXCLUES = ["debut", "fin", "limite", "periode", "echeance"]
+
+
+def _date_facture_depuis_formulaires(forms: List[Dict]) -> Optional[str]:
+    cles = [(_cle_normalisee(f.get("Key")), f.get("Value") or "") for f in forms]
+    for cle_voulue in _CLES_DATE_FACTURE:
+        for cle, valeur in cles:
+            if cle_voulue in cle and normaliser_date(valeur):
+                return normaliser_date(valeur)
+    for cle, valeur in cles:
+        if "date" in cle and not any(ex in cle for ex in _CLES_DATE_EXCLUES) and normaliser_date(valeur):
+            return normaliser_date(valeur)
+    return None
+
+
 def extract_invoice_fields(forms: List[Dict], tables: List[Dict], llm_fields: Optional[Dict] = None) -> Dict[str, Any]:
     """
     Extract key fields from forms and tables for invoice processing.
@@ -797,9 +853,7 @@ def extract_invoice_fields(forms: List[Dict], tables: List[Dict], llm_fields: Op
         if supplier and str(supplier).strip():
             extracted["supplier"] = str(supplier).strip()
 
-        invoice_date = llm_fields.get("invoice_date")
-        if invoice_date and str(invoice_date).strip():
-            extracted["invoice_date"] = str(invoice_date).strip()
+        extracted["invoice_date"] = normaliser_date(llm_fields.get("invoice_date"))
 
         amount = llm_fields.get("amount")
         if amount is not None:
@@ -810,16 +864,12 @@ def extract_invoice_fields(forms: List[Dict], tables: List[Dict], llm_fields: Op
 
     # 2. Fall back to pattern matching for any field still missing
     for form in forms:
-        key = form.get("Key", "").lower()  # normalized keys are UPPER_SNAKE_CASE → lowercase here
+        key = _cle_normalisee(form.get("Key"))  # « RAISON_SOCIALE » (LLM) ou « Raison sociale » (Textract brut)
         value = form.get("Value", "")
 
         if extracted["supplier"] is None:
             if any(k in key for k in ["raison_sociale", "nom_raison", "fournisseur", "supplier", "vendor"]):
-                extracted["supplier"] = value
-
-        if extracted["invoice_date"] is None:
-            if any(k in key for k in ["date_comptable", "date_facture", "invoice_date", "date"]):
-                extracted["invoice_date"] = value
+                extracted["supplier"] = value.strip() or None
 
         if extracted["amount"] is None:
             # Exclude partial-amount keys and arrears-only fields
@@ -838,6 +888,9 @@ def extract_invoice_fields(forms: List[Dict], tables: List[Dict], llm_fields: Op
                         extracted["amount"] = parsed
                 except (ValueError, TypeError):
                     pass
+
+    if extracted["invoice_date"] is None:
+        extracted["invoice_date"] = _date_facture_depuis_formulaires(forms)
 
     # Confidence: based on the 3 key fields
     fields_found = sum(1 for v in [extracted["supplier"], extracted["invoice_date"], extracted["amount"]] if v is not None)
