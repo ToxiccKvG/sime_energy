@@ -8,6 +8,7 @@ import { AuditQuickActions } from '@/components/audits/AuditQuickActions';
 import { AuditDetailTabs } from '@/components/audits/AuditDetailTabs';
 import { AuditActivityTimeline } from '@/components/audits/AuditActivityTimeline';
 import { AddActivityDialog } from '@/components/audits/AddActivityDialog';
+import { ProjectContextDialog } from '@/components/project-context/ProjectContextDialog';
 import { Audit } from '@/types/audit';
 import { AuditInvoiceStats, AuditInventoryStats } from '@/types/auditActivity';
 import { getAudit, getAuditSites, getAuditBuildings, updateAudit, computeAuditCompletion } from '@/lib/audit-service';
@@ -235,6 +236,9 @@ const AuditDetail = () => {
       }}
     >
       <AuditHeader audit={audit} />
+      <div className="flex justify-end -mt-2">
+        <ProjectContextDialog auditId={audit.id} auditName={audit.name} />
+      </div>
 
       {/* KPIs full width */}
       <div className="bg-[#0f111a] border border-slate-700/50 rounded-xl p-5 relative overflow-hidden">

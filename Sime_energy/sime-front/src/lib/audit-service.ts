@@ -17,6 +17,14 @@ export interface AuditDB {
   personnel: Record<string, any>;
   created_at: string;
   updated_at: string;
+  /** Renseigné par getAudits — sert au calcul de progression dans la liste */
+  inventory_counts?: AuditInventoryCounts;
+}
+
+export interface AuditInventoryCounts {
+  totalSites: number;
+  totalBuildings: number;
+  totalEquipment: number;
 }
 
 export interface AuditSiteDB {
@@ -73,15 +81,24 @@ export async function createAudit(audit: Partial<Audit>, organizationId: string,
 }
 
 // Récupérer les audits de l'organisation
-export async function getAudits(organizationId: string) {
+type CountRow = { count: number }[] | null;
+
+export async function getAudits(organizationId: string): Promise<AuditDB[]> {
   const { data, error } = await supabase
     .from('audits')
-    .select('*')
+    .select('*, audit_sites(count), audit_buildings(count), audit_equipment(count)')
     .eq('organization_id', organizationId)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data;
+  return (data ?? []).map(({ audit_sites, audit_buildings, audit_equipment, ...audit }) => ({
+    ...audit,
+    inventory_counts: {
+      totalSites: (audit_sites as CountRow)?.[0]?.count ?? 0,
+      totalBuildings: (audit_buildings as CountRow)?.[0]?.count ?? 0,
+      totalEquipment: (audit_equipment as CountRow)?.[0]?.count ?? 0,
+    },
+  })) as AuditDB[];
 }
 
 // Récupérer un audit spécifique
@@ -310,39 +327,60 @@ export async function getDashboardActivity(auditIds: string[]): Promise<Activity
   return data ?? [];
 }
 
-// Calculer le taux de complétion d'un audit
+// Notes d'inventaire (constats & rapport) — partagées par tous les membres de l'organisation
+export async function getInventoryNotes(auditId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('audits')
+    .select('inventory_notes')
+    .eq('id', auditId)
+    .single();
+  if (error) throw error;
+  return data?.inventory_notes ?? null;
+}
+
+export async function saveInventoryNotes(auditId: string, notes: string): Promise<void> {
+  const { error } = await supabase
+    .from('audits')
+    .update({ inventory_notes: notes, updated_at: new Date().toISOString() })
+    .eq('id', auditId);
+  if (error) throw error;
+}
+
+// Calculer le taux de complétion d'un audit (pondéré, 100 % au total)
 export function computeAuditCompletion(
   audit: any,
-  opts?: { totalSites?: number; totalBuildings?: number; totalEquipment?: number }
+  opts?: Partial<AuditInventoryCounts>
 ): number {
   const gi = audit.general_info || {};
   const pers = audit.personnel || {};
   const hasPersonnel = Object.values(pers).some((v: any) => v && typeof v === 'object' && (v as any).nom?.trim());
+  const sites = opts?.totalSites ?? 0;
+  const buildings = opts?.totalBuildings ?? 0;
+  const equipment = opts?.totalEquipment ?? 0;
 
-  const checks = [
-    // Infos de base (4 × 5 = 20%)
-    !!audit.name?.trim(),
-    !!audit.responsable?.trim(),
-    !!audit.start_date,
-    !!audit.end_date,
-    // Infos générales (4 × 5 = 20%)
-    !!gi.nomEtablissement?.trim(),
-    !!(gi.secteur?.trim() || gi.typeClient?.trim()),
-    !!(gi.ville?.trim() || gi.adresseSiege?.trim()),
-    !!(gi.effectifs || gi.macs),
-    // Personnel (2 × 5 = 10%)
-    hasPersonnel,
-    Object.keys(pers).length > 1,
-    // Statut (2 × 5 = 10%)
-    audit.status === 'in_progress' || audit.status === 'completed',
-    audit.status === 'completed',
-    // Données structurelles (4 × 10 = 40%)
-    (opts?.totalSites ?? 0) > 0,
-    (opts?.totalBuildings ?? 0) > 0,
-    (opts?.totalEquipment ?? 0) > 0,
-    (opts?.totalEquipment ?? 0) > 5,
+  const criteres: Array<[ok: boolean, poids: number]> = [
+    // Infos de base (4 × 5 = 20 %)
+    [!!audit.name?.trim(), 5],
+    [!!audit.responsable?.trim(), 5],
+    [!!audit.start_date, 5],
+    [!!audit.end_date, 5],
+    // Infos générales (4 × 5 = 20 %)
+    [!!gi.nomEtablissement?.trim(), 5],
+    [!!(gi.secteur?.trim() || gi.typeClient?.trim()), 5],
+    [!!(gi.ville?.trim() || gi.adresseSiege?.trim()), 5],
+    [!!(gi.effectifs || gi.macs), 5],
+    // Personnel (2 × 5 = 10 %)
+    [hasPersonnel, 5],
+    [Object.keys(pers).length > 1, 5],
+    // Statut (2 × 5 = 10 %)
+    [audit.status === 'in_progress' || audit.status === 'completed', 5],
+    [audit.status === 'completed', 5],
+    // Données structurelles (4 × 10 = 40 %)
+    [sites > 0, 10],
+    [buildings > 0, 10],
+    [equipment > 0, 10],
+    [equipment > 5, 10],
   ];
 
-  const score = checks.filter(Boolean).length;
-  return Math.round((score / checks.length) * 100);
+  return criteres.reduce((total, [ok, poids]) => total + (ok ? poids : 0), 0);
 }

@@ -3,11 +3,15 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -24,6 +28,7 @@ const mobileNavItems = [
 
 export function AppHeader() {
   const { user, signOut } = useAuth();
+  const { organization, organizations, switchOrganization } = useOrganization();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -122,6 +127,21 @@ export function AppHeader() {
               <p className="text-sm font-medium text-foreground">{fullName}</p>
               <p className="text-xs text-muted-foreground">{userEmail}</p>
             </div>
+            {organizations.length > 1 && (
+              <>
+                <DropdownMenuSeparator className="bg-border" />
+                <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+                  Organisation
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={organization?.id} onValueChange={switchOrganization}>
+                  {organizations.map(org => (
+                    <DropdownMenuRadioItem key={org.id} value={org.id} className="cursor-pointer">
+                      <span className="truncate">{org.name}</span>
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </>
+            )}
             <DropdownMenuSeparator className="bg-border" />
             <DropdownMenuItem asChild className="hover:bg-accent">
               <Link to="/compte" className="cursor-pointer text-foreground">

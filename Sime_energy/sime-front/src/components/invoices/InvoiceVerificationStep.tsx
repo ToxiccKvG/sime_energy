@@ -181,7 +181,7 @@ export function InvoiceVerificationStep({
               <p className="text-center text-muted-foreground">Aucun champ détecté</p>
             </Card>
           ) : (
-            allFields.entries().map(([fieldKey, fieldData]) => (
+            Array.from(allFields.entries()).map(([fieldKey, fieldData]) => (
               <Card key={fieldKey} className="p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">

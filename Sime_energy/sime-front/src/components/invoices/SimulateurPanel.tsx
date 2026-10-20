@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { runSimulateur } from '@/lib/senelec-simulator'
+import { calcNJ } from '@/lib/senelec-rules'
 import { quarantineInvoice, unquarantineInvoice } from '@/lib/invoice-service'
 import { mapOcrToInvoiceData } from '@/lib/invoice-mapper'
 import {
@@ -241,15 +242,7 @@ function mapSenelecCategorie(
 }
 
 function prefillFromSenelec(row: FactureSenelecForSelector): Partial<SimulateurInput> {
-  let nbre_jours_cons = row.nb_jour_facturation ?? 30
-  if (row.date_debut_periode && row.date_fin_periode) {
-    // date_fin - date_debut + 1 (both endpoints included)
-    const diff = Math.abs(
-      new Date(row.date_fin_periode).getTime() - new Date(row.date_debut_periode).getTime()
-    )
-    const days = Math.round(diff / 86_400_000) + 1
-    if (days > 0 && days <= 100) nbre_jours_cons = days
-  }
+  const nbre_jours_cons = calcNJ(row.date_debut_periode, row.date_fin_periode) ?? row.nb_jour_facturation ?? 30
 
   const categorie = mapSenelecCategorie(row.categorie_tarifaire, row.type_tarif_numero)
   const domaine: 'BT' | 'MT' | 'HT' = CATEGORIES_BY_TENSION['BT'].includes(categorie as any) ? 'BT'

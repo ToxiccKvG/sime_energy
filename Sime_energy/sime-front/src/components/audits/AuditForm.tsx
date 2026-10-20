@@ -31,22 +31,9 @@ import {
   Factory, Briefcase, HelpCircle, ChevronDown, ChevronRight, Layers, FolderOpen,
 } from 'lucide-react';
 import AuditQuestionnaire from './AuditQuestionnaire';
+import { refreshProjectContext } from '@/services/project-context-builder';
+import { BUILDING_TYPES } from '@/constants/building-types';
 
-const BUILDING_TYPES = [
-  'Administratif',
-  'Industriel / Usine',
-  'Commercial / Retail',
-  'Hôtel / Hébergement',
-  'Hôpital / Clinique',
-  'École / Université',
-  'Résidentiel',
-  'Entrepôt / Logistique',
-  'Restauration',
-  'Sport / Loisirs',
-  'Atelier / Maintenance',
-  'Mixte',
-  'Autre',
-];
 
 interface AuditFormProps {
   audit?: Audit;
@@ -375,6 +362,10 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
       toast({ title: 'Erreur', description: 'Veuillez remplir le nom et l\'adresse du site', variant: 'destructive' });
       return;
     }
+    if (newZone.name && newBuilding.name && !newBuilding.type) {
+      toast({ title: 'Erreur', description: 'Veuillez choisir le type du bâtiment', variant: 'destructive' });
+      return;
+    }
     let siteToAdd: FormSite = { ...newSite, zones: [] };
     if (newZone.name) {
       const zone: FormZone = {
@@ -544,6 +535,9 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
         }
         toast({ title: 'Succès', description: 'Projet créé' });
       }
+      // Snapshot JSON du projet (audits.project_context) — non bloquant
+      refreshProjectContext(auditId, user.id).catch(() =>
+        toast({ title: 'Contexte JSON non régénéré', description: 'Le projet est enregistré, mais son JSON n\'a pas pu être mis à jour.', variant: 'destructive' }));
       onSave(formData);
     } catch (error: any) {
       toast({
@@ -1674,7 +1668,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                     <Input placeholder="ex: Bâtiment A" value={newBuilding.name} onChange={e => setNewBuilding(prev => ({ ...prev, name: e.target.value }))} className="bg-slate-700/50 border-slate-600 text-slate-100" />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-slate-400">Type</Label>
+                    <Label className="text-xs text-slate-400">Type *</Label>
                     <Select value={newBuilding.type} onValueChange={v => setNewBuilding(prev => ({ ...prev, type: v }))}>
                       <SelectTrigger className="bg-slate-700/50 border-slate-600 text-slate-100"><SelectValue placeholder="Sélectionner…" /></SelectTrigger>
                       <SelectContent className="bg-[#1a1d2e] border-slate-700">{BUILDING_TYPES.map(t => <SelectItem key={t} value={t} className="text-slate-100 focus:bg-slate-700/50">{t}</SelectItem>)}</SelectContent>

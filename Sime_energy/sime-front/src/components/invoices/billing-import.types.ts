@@ -190,6 +190,8 @@ export interface BillingRow {
   penalitesDepassement: number | null;
   anneeFacturation: number | null;
   moisFacturation: string | null;
+  /** Accès dynamique par clé de colonne (les clés connues ci-dessus gardent leur type précis) */
+  [key: string]: unknown;
 }
 
 export interface BillingImportResult {

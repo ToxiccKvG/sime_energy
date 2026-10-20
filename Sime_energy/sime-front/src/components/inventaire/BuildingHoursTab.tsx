@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { refreshProjectContextInBackground } from '@/hooks/useProjectContext';
 import {
   BuildingTypeParams,
   FUNCTIONAL_TYPES,
@@ -324,6 +325,7 @@ export function BuildingHoursTab({ buildingId, auditId }: Props) {
       await upsertBuildingTypeParam(buildingId, auditId, form.typeFonctionnel, formToParams(form));
       await load();
       toast.success('Paramètres enregistrés');
+      refreshProjectContextInBackground(auditId, null);
       setDialogOpen(false);
     } catch (err: any) {
       toast.error(err.message || 'Erreur enregistrement');
@@ -338,6 +340,7 @@ export function BuildingHoursTab({ buildingId, auditId }: Props) {
       await deleteBuildingTypeParam(deleteTarget.id);
       setParams(prev => prev.filter(p => p.id !== deleteTarget.id));
       toast.success('Type supprimé');
+      refreshProjectContextInBackground(auditId, null);
     } catch (err: any) {
       toast.error(err.message || 'Erreur suppression');
     } finally {

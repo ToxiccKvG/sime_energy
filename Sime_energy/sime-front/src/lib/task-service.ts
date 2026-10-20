@@ -81,7 +81,7 @@ export async function updateTask(taskId: string, updates: Partial<AuditTask>, au
   // If status is being changed to 'done', set completed_at
   if (updates.status === 'done') {
     updateData.completed_at = new Date().toISOString();
-  } else if (updates.status !== 'done' && updates.status !== undefined) {
+  } else if (updates.status !== undefined) {
     updateData.completed_at = null;
   }
 

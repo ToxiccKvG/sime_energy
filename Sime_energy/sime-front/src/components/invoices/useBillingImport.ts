@@ -7,7 +7,20 @@ import {
   BillingRow,
   BillingImportResult,
   CategorieTarifaire,
+  BillingColumnKey,
 } from './billing-import.types';
+import {
+  ColumnMapping,
+  DateFormat,
+  MatchOrigin,
+  SourceColumn,
+  autoMatch,
+  coerceCell,
+  countDataRows,
+  detectHeaderRow,
+  extractSourceColumns,
+  isStandardTemplate,
+} from './billing-column-mapping';
 import {
   getTariffGrid,
   getAvailableTariffYears,
@@ -15,6 +28,7 @@ import {
   TCO_RATE_BT,
   TariffGrid,
 } from '@/constants/senelec-tariffs';
+import { calcNJ, penaliteDepassement, primeFixe } from '@/lib/senelec-rules';
 
 const CHUNK_SIZE = 200;
 
@@ -47,32 +61,6 @@ function lookupTariffRates(typeTarif: string | null, invoiceYear: number | null)
   return none;
 }
 
-// ─── Date parsing ─────────────────────────────────────────────────────────────
-
-function parseExcelDate(value: unknown): Date | null {
-  if (value == null) return null;
-  if (value instanceof Date) return value;
-  if (typeof value === 'number') {
-    // Excel serial date → JS Date
-    const d = XLSX.SSF.parse_date_code(value);
-    if (!d) return null;
-    return new Date(d.y, d.m - 1, d.d);
-  }
-  if (typeof value === 'string') {
-    const s = value.trim();
-    if (!s) return null;
-    // Try DD/MM/YYYY
-    const ddmm = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (ddmm) return new Date(+ddmm[3], +ddmm[2] - 1, +ddmm[1]);
-    // Try YYYY-MM-DD
-    const yymm = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (yymm) return new Date(+yymm[1], +yymm[2] - 1, +yymm[3]);
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  return null;
-}
-
 // ─── Auto-fix engine ──────────────────────────────────────────────────────────
 
 /** Taux de TVA standard SENELEC (18%). */
@@ -84,10 +72,10 @@ function autoFixRow(row: BillingRow): BillingRow {
 
   // ── NIVEAU 1 — Index & consommations ────────────────────────────────────────
 
-  // Nombre de jours depuis les dates de période
-  if (r.nbJourFacturation == null && r.dateDebutPeriode && r.dateFinPeriode) {
-    const d = Math.round((r.dateFinPeriode.getTime() - r.dateDebutPeriode.getTime()) / 86400000);
-    if (d > 0) r.nbJourFacturation = d;
+  // Nombre de jours depuis les dates de période (bornes incluses)
+  if (r.nbJourFacturation == null) {
+    const nj = calcNJ(r.dateDebutPeriode, r.dateFinPeriode);
+    if (nj != null) r.nbJourFacturation = nj;
   }
 
   // Consommations K1/K2 depuis les index (priorité aux index K1/K2 dédiés)
@@ -184,20 +172,24 @@ function autoFixRow(row: BillingRow): BillingRow {
 
   // ── NIVEAU 6 — Prime fixe & pénalités ────────────────────────────────────────
 
+  // PF = Tpf × PS × NJ/30 ; PDP = 1,5 × Tpf × (Pmax − PS) × NJ/30 (règles partagées)
   if (tarif.pf != null && r.nbJourFacturation != null && r.puissanceSouscriteKW != null) {
-    // Tpf_mensuel = (NJ / 365) × Tpf_annuel = (NJ / 365) × pf × 12
-    const tpfMensuel = tarif.pf * r.nbJourFacturation * 12 / 365;
-    if (r.montantPrimeFixe == null) r.montantPrimeFixe = Math.round(tpfMensuel * r.puissanceSouscriteKW);
-    // PDP = 1.5 × Tpf_mensuel × (Pmax − Ps)  si Pmax > Ps
+    if (r.montantPrimeFixe == null) {
+      r.montantPrimeFixe = Math.round(primeFixe(tarif.pf, r.puissanceSouscriteKW, r.nbJourFacturation));
+    }
     if (r.penalitesDepassement == null && r.puissanceMaxKW != null && r.puissanceMaxKW > r.puissanceSouscriteKW) {
-      r.penalitesDepassement = Math.round(1.5 * tpfMensuel * (r.puissanceMaxKW - r.puissanceSouscriteKW));
+      r.penalitesDepassement = Math.round(
+        penaliteDepassement(tarif.pf, r.puissanceSouscriteKW, r.puissanceMaxKW, r.nbJourFacturation),
+      );
     }
   }
-  // Pénalités depuis PF déjà connu (si grille absente mais PF présent)
-  if (r.penalitesDepassement == null && r.montantPrimeFixe != null && r.nbJourFacturation != null
-    && r.puissanceSouscriteKW != null && r.puissanceMaxKW != null && r.puissanceMaxKW > r.puissanceSouscriteKW) {
-    const tpfMensuel = r.montantPrimeFixe / r.puissanceSouscriteKW;
-    r.penalitesDepassement = Math.round(1.5 * tpfMensuel * (r.puissanceMaxKW - r.puissanceSouscriteKW));
+  // Pénalités depuis PF déjà connu (grille absente) : Tpf = PF / (PS × NJ/30)
+  if (r.penalitesDepassement == null && r.montantPrimeFixe != null && r.nbJourFacturation
+    && r.puissanceSouscriteKW && r.puissanceMaxKW != null && r.puissanceMaxKW > r.puissanceSouscriteKW) {
+    const tpf = r.montantPrimeFixe / (r.puissanceSouscriteKW * r.nbJourFacturation / 30);
+    r.penalitesDepassement = Math.round(
+      penaliteDepassement(tpf, r.puissanceSouscriteKW, r.puissanceMaxKW, r.nbJourFacturation),
+    );
   }
 
   // ── NIVEAU 7 — TCO (2,5 % — BT uniquement) ───────────────────────────────────
@@ -210,8 +202,13 @@ function autoFixRow(row: BillingRow): BillingRow {
     r.montantTCO = Math.round(TCO_RATE_BT * baseTco);
   }
 
-  // ── NIVEAU 8 — Reconstruction HT depuis composantes ──────────────────────────
+  // ── NIVEAU 8 — Reconstruction HT ────────────────────────────────────────────
 
+  // Montants déclarés prioritaires : HT = TTC − TVA garde l'identité comptable de la facture
+  if (r.montantHorsTVA == null && r.montantFactureTTC != null && r.montantTVA != null)
+    r.montantHorsTVA = Math.round(r.montantFactureTTC - r.montantTVA);
+
+  // Sinon, reconstruction depuis les composantes
   if (r.montantHorsTVA == null && r.montantTotalEnergie != null) {
     r.montantHorsTVA = Math.round(
       r.montantTotalEnergie
@@ -421,7 +418,7 @@ function validateRow(row: BillingRow): void {
 
 // ─── Parse a raw Excel row into BillingRow ────────────────────────────────────
 
-function parseRow(rawValues: unknown[], rowIndex: number): BillingRow {
+function parseRow(rawValues: unknown[], rowIndex: number, mapping: ColumnMapping, dateFormat: DateFormat): BillingRow {
   const row: BillingRow = {
     _rowIndex: rowIndex,
     rowErrors: [],
@@ -446,71 +443,104 @@ function parseRow(rawValues: unknown[], rowIndex: number): BillingRow {
     puissanceMaxKW: null, penalitesDepassement: null, anneeFacturation: null, moisFacturation: null,
   };
 
-  BILLING_TEMPLATE_COLUMNS.forEach((col, i) => {
-    const raw = rawValues[i];
+  for (const col of BILLING_TEMPLATE_COLUMNS) {
+    const sourceIndex = mapping[col.key];
+    // Champ non associé à une colonne du fichier → reste vide (calculé ou signalé ensuite)
+    if (sourceIndex == null) continue;
+    const { value, skipped } = coerceCell(rawValues[sourceIndex], col.type, dateFormat);
+    (row as Record<string, unknown>)[col.key] = value;
     // "-" in any field means "not applicable for this project" — never flag as missing
-    const rawStr = raw == null ? '' : String(raw).trim();
-    if (rawStr === '-') {
-      (row as Record<string, unknown>)[col.key] = null;
-      if (col.required) row._skippedFields.push(col.key);
-      return;
-    }
-    if (col.type === 'date') {
-      (row as Record<string, unknown>)[col.key] = parseExcelDate(raw);
-    } else if (col.type === 'number') {
-      if (raw == null || raw === '') {
-        (row as Record<string, unknown>)[col.key] = null;
-      } else if (typeof raw === 'string' && raw.startsWith('=')) {
-        (row as Record<string, unknown>)[col.key] = null;
-      } else {
-        const n = parseFloat(String(raw));
-        (row as Record<string, unknown>)[col.key] = isNaN(n) ? null : n;
-      }
-    } else {
-      if (typeof raw === 'string' && raw.startsWith('=')) {
-        (row as Record<string, unknown>)[col.key] = null;
-      } else {
-        const s = raw == null ? null : String(raw).trim();
-        (row as Record<string, unknown>)[col.key] = s === '' ? null : s;
-      }
-    }
-  });
+    if (skipped && col.required) row._skippedFields.push(col.key);
+  }
 
   return row;
 }
 
-// ─── Main async parser with chunking ─────────────────────────────────────────
+// ─── Lecture du classeur & correspondance des colonnes ───────────────────────
 
-async function parseWorkbook(file: File): Promise<BillingImportResult> {
+export interface MappingState {
+  fileName: string;
+  workbook: XLSX.WorkBook;
+  sheetName: string;
+  /** Lignes brutes de la feuille (tableau de cellules) */
+  rawRows: unknown[][];
+  /** Ligne d'en-tête retenue (0-based) */
+  headerRow: number;
+  /** Ligne d'en-tête détectée automatiquement (0-based) */
+  detectedHeaderRow: number;
+  dataRowCount: number;
+  columns: SourceColumn[];
+  mapping: ColumnMapping;
+  origin: MatchOrigin;
+  dateFormat: DateFormat;
+  /** En-têtes identiques au template SENELEC, colonne par colonne */
+  isStandard: boolean;
+}
+
+function readSheetRows(workbook: XLSX.WorkBook, sheetName: string): unknown[][] {
+  const ws = workbook.Sheets[sheetName];
+  if (!ws) return [];
+  return XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null });
+}
+
+/** Colonnes, détection auto et mapping proposé pour une ligne d'en-tête donnée. */
+function analyzeHeader(rawRows: unknown[][], headerRow: number) {
+  const columns = extractSourceColumns(rawRows, headerRow);
+  const { mapping, origin } = autoMatch(columns);
+  return {
+    headerRow,
+    columns,
+    mapping,
+    origin,
+    dataRowCount: countDataRows(rawRows, headerRow),
+    isStandard: isStandardTemplate(rawRows, headerRow),
+  };
+}
+
+function analyzeSheet(
+  fileName: string,
+  workbook: XLSX.WorkBook,
+  sheetName: string,
+  dateFormat: DateFormat,
+): MappingState {
+  const rawRows = readSheetRows(workbook, sheetName);
+  const detectedHeaderRow = detectHeaderRow(rawRows);
+  return {
+    fileName,
+    workbook,
+    sheetName,
+    rawRows,
+    detectedHeaderRow,
+    dateFormat,
+    ...analyzeHeader(rawRows, detectedHeaderRow),
+  };
+}
+
+async function readWorkbook(file: File): Promise<MappingState> {
   const buffer = await file.arrayBuffer();
-  const wb = XLSX.read(buffer, { type: 'array', cellDates: false });
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
+  const nonEmpty = workbook.SheetNames.filter(name => !!workbook.Sheets[name]?.['!ref']);
+  if (nonEmpty.length === 0) throw new Error('Le fichier est vide.');
+  // Feuille historique du template SENELEC en priorité, sinon la première non vide
+  const sheetName = nonEmpty.includes('Feuil1') ? 'Feuil1' : nonEmpty[0];
+  return analyzeSheet(file.name, workbook, sheetName, 'auto');
+}
 
-  const ws = wb.Sheets['Feuil1'];
-  if (!ws) throw new Error("Feuille 'Feuil1' introuvable dans ce fichier.");
+/** Construit les lignes de factures à partir du mapping — par paquets pour ne pas bloquer l'UI. */
+async function buildRows(state: MappingState): Promise<BillingImportResult> {
+  const { rawRows, headerRow, mapping, dateFormat } = state;
+  // Numéro de ligne Excel réel conservé avant de filtrer les lignes vides
+  const dataRows = rawRows
+    .slice(headerRow + 1)
+    .map((cells, i) => ({ cells, line: headerRow + 2 + i }))
+    .filter(r => Array.isArray(r.cells) && r.cells.some(c => c != null && String(c).trim() !== ''));
 
-  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null });
-  if (raw.length < 1) throw new Error('Le fichier est vide.');
-
-  // Validate headers
-  const headers = raw[0] as unknown[];
-  const expectedHeaders = BILLING_TEMPLATE_COLUMNS.map(c => c.label);
-  for (let i = 0; i < expectedHeaders.length; i++) {
-    const expected = expectedHeaders[i].trim().toLowerCase().replace(/\s+/g, ' ');
-    const actual = headers[i] == null ? '' : String(headers[i]).trim().toLowerCase().replace(/\s+/g, ' ');
-    if (expected !== actual) {
-      throw new Error(`Template invalide : colonne ${i + 1} attendue "${expectedHeaders[i]}", trouvée "${headers[i] ?? '(vide)'}"`);
-    }
-  }
-
-  const dataRows = raw.slice(1).filter(r => Array.isArray(r) && r.some(c => c != null));
-
-  // Parse in chunks to avoid blocking the UI thread
   const rows: BillingRow[] = [];
   for (let start = 0; start < dataRows.length; start += CHUNK_SIZE) {
     const chunk = dataRows.slice(start, start + CHUNK_SIZE);
     await new Promise<void>(resolve => setTimeout(() => {
-      chunk.forEach((rawRow, idx) => {
-        const row = parseRow(rawRow as unknown[], start + idx + 2);
+      chunk.forEach(({ cells, line }) => {
+        const row = parseRow(cells, line, mapping, dateFormat);
         computeDerived(row);
         validateRow(row);
         rows.push(row);
@@ -523,7 +553,7 @@ async function parseWorkbook(file: File): Promise<BillingImportResult> {
     rows,
     totalRows: rows.length,
     errorRows: rows.filter(r => r.rowErrors.length > 0).length,
-    fileName: file.name,
+    fileName: state.fileName,
   };
 }
 
@@ -533,7 +563,18 @@ interface UseBillingImportReturn {
   result: BillingImportResult | null;
   isParsing: boolean;
   parseError: string | null;
-  parseFile: (file: File) => Promise<void>;
+  /** Fichier lu, en attente de validation de la correspondance des colonnes */
+  mappingState: MappingState | null;
+  /** Des lignes de l'aperçu ont été modifiées (édition, réparation, doublons…) */
+  isDirty: boolean;
+  loadFile: (file: File) => Promise<void>;
+  selectSheet: (sheetName: string) => void;
+  setHeaderRow: (headerRow: number) => void;
+  setDateFormat: (dateFormat: DateFormat) => void;
+  setMappingField: (key: BillingColumnKey, sourceIndex: number | null) => void;
+  resetAutoMatch: () => void;
+  applyMapping: () => Promise<void>;
+  backToMapping: () => void;
   updateRow: (rowIndex: number, updated: BillingRow) => void;
   reset: () => void;
   autoRepair: () => void;
@@ -548,22 +589,74 @@ export function useBillingImport(): UseBillingImportReturn {
   const [result, setResult] = useState<BillingImportResult | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
+  const [mappingState, setMappingState] = useState<MappingState | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
 
-  const parseFile = useCallback(async (file: File) => {
+  const loadFile = useCallback(async (file: File) => {
     setIsParsing(true);
     setParseError(null);
     setResult(null);
+    setMappingState(null);
     try {
-      const res = await parseWorkbook(file);
-      setResult(res);
+      setMappingState(await readWorkbook(file));
     } catch (e) {
-      setParseError(e instanceof Error ? e.message : 'Erreur de parsing inconnue');
+      setParseError(e instanceof Error ? e.message : 'Erreur de lecture du fichier');
     } finally {
       setIsParsing(false);
     }
   }, []);
 
+  const selectSheet = useCallback((sheetName: string) => {
+    setMappingState(prev => prev && analyzeSheet(prev.fileName, prev.workbook, sheetName, prev.dateFormat));
+  }, []);
+
+  const setHeaderRow = useCallback((headerRow: number) => {
+    setMappingState(prev => {
+      if (!prev) return prev;
+      const row = Math.max(0, Math.min(headerRow, Math.max(0, prev.rawRows.length - 1)));
+      return { ...prev, ...analyzeHeader(prev.rawRows, row) };
+    });
+  }, []);
+
+  const setDateFormat = useCallback((dateFormat: DateFormat) => {
+    setMappingState(prev => prev && { ...prev, dateFormat });
+  }, []);
+
+  const setMappingField = useCallback((key: BillingColumnKey, sourceIndex: number | null) => {
+    setMappingState(prev => {
+      if (!prev) return prev;
+      const origin = { ...prev.origin };
+      delete origin[key];
+      return { ...prev, mapping: { ...prev.mapping, [key]: sourceIndex }, origin };
+    });
+  }, []);
+
+  const resetAutoMatch = useCallback(() => {
+    setMappingState(prev => prev && { ...prev, ...autoMatch(prev.columns) });
+  }, []);
+
+  const applyMapping = useCallback(async () => {
+    if (!mappingState) return;
+    setIsParsing(true);
+    setParseError(null);
+    try {
+      setResult(await buildRows(mappingState));
+      setIsDirty(false);
+    } catch (e) {
+      setParseError(e instanceof Error ? e.message : 'Erreur de parsing inconnue');
+    } finally {
+      setIsParsing(false);
+    }
+  }, [mappingState]);
+
+  const backToMapping = useCallback(() => {
+    setResult(null);
+    setParseError(null);
+    setIsDirty(false);
+  }, []);
+
   const updateRow = useCallback((rowIndex: number, updated: BillingRow) => {
+    setIsDirty(true);
     setResult(prev => {
       if (!prev) return prev;
       const rows = prev.rows.map(r => r._rowIndex === rowIndex ? updated : r);
@@ -579,9 +672,12 @@ export function useBillingImport(): UseBillingImportReturn {
     setResult(null);
     setParseError(null);
     setIsParsing(false);
+    setMappingState(null);
+    setIsDirty(false);
   }, []);
 
   const autoRepair = useCallback(() => {
+    setIsDirty(true);
     setResult(prev => {
       if (!prev) return prev;
       const rows = prev.rows.map(r => r.rowErrors.length > 0 ? autoFixRow(r) : r);
@@ -590,6 +686,7 @@ export function useBillingImport(): UseBillingImportReturn {
   }, []);
 
   const skipErrors = useCallback(() => {
+    setIsDirty(true);
     setResult(prev => {
       if (!prev) return prev;
       const rows = prev.rows.filter(r => r.rowErrors.length === 0);
@@ -598,6 +695,7 @@ export function useBillingImport(): UseBillingImportReturn {
   }, []);
 
   const forceAccept = useCallback(() => {
+    setIsDirty(true);
     setResult(prev => {
       if (!prev) return prev;
       const rows = prev.rows.map(r => ({ ...r, rowErrors: [] as string[] }));
@@ -608,6 +706,7 @@ export function useBillingImport(): UseBillingImportReturn {
   // Retire les doublons (même n° facture), conserve la version la plus cohérente
   // (= la facture redressée le cas échéant), supprime les versions incohérentes.
   const removeDuplicates = useCallback((): void => {
+    setIsDirty(true);
     setResult(prev => {
       if (!prev) return prev;
       const { dropped } = analyzeDuplicates(prev.rows);
@@ -620,6 +719,7 @@ export function useBillingImport(): UseBillingImportReturn {
   // Résolution manuelle : keptIndexes = ensemble des _rowIndex à conserver (un par groupe de doublons).
   // Toutes les autres versions dans le même groupe (même numeroFacture) sont retirées.
   const resolveManual = useCallback((keptIndexes: Set<number>): void => {
+    setIsDirty(true);
     setResult(prev => {
       if (!prev) return prev;
       const groups = new Map<number, number[]>();
@@ -645,6 +745,7 @@ export function useBillingImport(): UseBillingImportReturn {
   const keepSingleRow = useCallback((rowIndex: number): { removed: number; anomalousRemoved: number } => {
     let removed = 0;
     let anomalousRemoved = 0;
+    setIsDirty(true);
     setResult(prev => {
       if (!prev) return prev;
       const target = prev.rows.find(r => r._rowIndex === rowIndex);
@@ -659,7 +760,11 @@ export function useBillingImport(): UseBillingImportReturn {
     return { removed, anomalousRemoved };
   }, []);
 
-  return { result, isParsing, parseError, parseFile, updateRow, reset, autoRepair, skipErrors, forceAccept, removeDuplicates, resolveManual, keepSingleRow };
+  return {
+    result, isParsing, parseError, mappingState, isDirty,
+    loadFile, selectSheet, setHeaderRow, setDateFormat, setMappingField, resetAutoMatch, applyMapping, backToMapping,
+    updateRow, reset, autoRepair, skipErrors, forceAccept, removeDuplicates, resolveManual, keepSingleRow,
+  };
 }
 
 // Re-export for convenience

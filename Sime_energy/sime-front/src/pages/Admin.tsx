@@ -106,6 +106,7 @@ export default function Admin() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function OrgsTab() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [loading, setLoading] = useState(true);
@@ -154,6 +155,7 @@ function OrgsTab() {
         name: newOrgName.trim(),
         slug: newOrgName.trim().toLowerCase().replace(/\s+/g, '-'),
         description: newOrgDesc.trim() || null,
+        created_by: user?.id,  // obligatoire (NOT NULL + RLS created_by = auth.uid())
       });
       if (error) throw error;
       toast.success(`Organisation "${newOrgName}" créée`);
@@ -167,10 +169,9 @@ function OrgsTab() {
     if (!inviteEmail.trim() || !inviteOrgId) return;
     setInviting(true);
     try {
-      // Call Supabase admin invite (via backend or direct)
-      // For now: insert a placeholder — in prod this would call the backend /auth/invite
-      toast.info('Invitation envoyée (nécessite le backend FastAPI /auth/invite)');
-      setInviteEmail(''); setInviteOrgId(null);
+      // L'envoi d'invitation par email n'existe pas encore côté backend : ne pas annoncer un envoi
+      toast.warning("L'invitation par email n'est pas encore disponible. Demandez à la personne de créer son compte et de rejoindre l'organisation depuis l'inscription.");
+      setInviteOrgId(null);
     } catch (e: any) { toast.error(e.message); }
     finally { setInviting(false); }
   };
@@ -447,7 +448,7 @@ function RequestsTab() {
     setLoading(true);
     const [{ data: reqs }, { data: orgData }] = await Promise.all([
       supabase.from('join_requests').select('*').order('created_at', { ascending: false }),
-      supabase.from('organizations').select('id, name'),
+      supabase.from('organizations').select('id, name, created_at'),
     ]);
     setRequests(reqs ?? []);
     setOrgs(orgData ?? []);

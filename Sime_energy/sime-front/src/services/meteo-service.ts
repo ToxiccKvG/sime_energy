@@ -28,11 +28,12 @@ export interface GeoLocation {
 
 export interface MeteoSettings {
   location: GeoLocation;
-  monthly_temps: number[];    // 12 valeurs [Jan..Déc] en °C
-  comfort_threshold: number;  // température intérieure cible (°C)
-  coef_c: number;             // coefficient isolation BTU
-  coef_g: number;             // coefficient vitrage/murs BTU
-  fetched_at?: string;        // ISO date du dernier fetch API
+  monthly_temps: number[];      // 12 valeurs [Jan..Déc] en °C
+  t_ref_chauffage: number;      // seuil extérieur déclenchement chauffage — base DJU chauf.
+  t_ref_climatisation: number;  // seuil extérieur déclenchement clim — base DJU clim
+  coef_c: number;               // coefficient isolation BTU
+  coef_g: number;               // coefficient vitrage/murs BTU
+  fetched_at?: string;          // ISO date du dernier fetch API
 }
 
 /** Un enregistrement météo pour un pas de temps (jour ou heure) */
@@ -230,7 +231,8 @@ export const DEFAULT_METEO_SETTINGS: MeteoSettings = {
     elevation: 22,
   },
   monthly_temps: [24.2, 24.1, 25.1, 26.0, 27.7, 29.5, 30.2, 30.1, 30.5, 30.0, 27.8, 25.0],
-  comfort_threshold: 24,
+  t_ref_chauffage: 18,
+  t_ref_climatisation: 26,
   coef_c: 0.8,
   coef_g: 1.2,
 };
@@ -376,13 +378,13 @@ export async function fetchMonthlyTemps(lat: number, lng: number): Promise<numbe
 
 // ─── Stats helpers ────────────────────────────────────────────────────────────
 
-export function computeDJU(records: WeatherRecord[], baseTemp = 18) {
+export function computeDJU(records: WeatherRecord[], baseChauffage = 18, baseClimatisation = 26) {
   let djc = 0, djf = 0;
   for (const r of records) {
     const t = r.temperature_2m_mean;
     if (t == null || isNaN(t)) continue;
-    djc += Math.max(0, baseTemp - t);
-    djf += Math.max(0, t - baseTemp);
+    djc += Math.max(0, baseChauffage - t);
+    djf += Math.max(0, t - baseClimatisation);
   }
   return {
     djc: Math.round(djc * 10) / 10,

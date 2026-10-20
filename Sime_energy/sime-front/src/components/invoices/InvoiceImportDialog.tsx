@@ -9,9 +9,15 @@ import { useToast } from '@/hooks/use-toast';
 import { useOrganization } from '@/context/OrganizationContext';
 import { useAuth } from '@/context/AuthContext';
 import { getAudits } from '@/lib/audit-service';
-import { createInvoice } from '@/lib/invoice-service';
+import { createInvoice, updateInvoice } from '@/lib/invoice-service';
+import { processInvoiceFile } from '@/services/invoiceService';
 import type { AuditDB } from '@/lib/audit-service';
 import { ManualInvoiceForm } from '@/components/invoices/ManualInvoiceForm';
+
+interface StoredInvoice {
+  file: File;
+  invoiceId: string;
+}
 
 interface InvoiceImportDialogProps {
   open: boolean;
@@ -139,7 +145,7 @@ export function InvoiceImportDialog({ open, onOpenChange, onImportComplete }: In
     setUploading(true);
 
     try {
-      const storedInvoiceIds: string[] = [];
+      const stored: StoredInvoice[] = [];
       for (const file of files) {
         try {
           const invoice = await createInvoice(
@@ -147,17 +153,17 @@ export function InvoiceImportDialog({ open, onOpenChange, onImportComplete }: In
             { file_name: file.name, status: 'pending', confidence_score: 0, ocr_data: {} },
             user.id
           );
-          storedInvoiceIds.push(invoice.id);
+          stored.push({ file, invoiceId: invoice.id });
         } catch {
           console.error(`Error storing ${file.name}`);
         }
       }
 
-      toast({ title: 'Fichiers importés', description: `${storedInvoiceIds.length} fichier(s) en cours de traitement…` });
+      toast({ title: 'Fichiers importés', description: `${stored.length} fichier(s) en cours de traitement…` });
       onImportComplete();
       setFiles([]);
       setUploadProgress({});
-      processFilesInBackground(files, storedInvoiceIds);
+      processFilesInBackground(stored, selectedAudit, organization.id);
     } catch {
       toast({ title: 'Erreur', description: 'Une erreur est survenue lors du stockage', variant: 'destructive' });
     } finally {
@@ -165,33 +171,21 @@ export function InvoiceImportDialog({ open, onOpenChange, onImportComplete }: In
     }
   };
 
-  const processFilesInBackground = async (filesToProcess: File[], invoiceIds: string[]) => {
-    for (let i = 0; i < filesToProcess.length; i++) {
-      const file = filesToProcess[i];
-      const invoiceId = invoiceIds[i];
+  const processFilesInBackground = async (stored: StoredInvoice[], auditId: string, organizationId: string) => {
+    for (const { file, invoiceId } of stored) {
       setProcessingFile(file.name);
-
-      let endpoint = '';
-      if (file.name.endsWith('.pdf')) endpoint = '/processing/process-file/pdf-invoices';
-      else if (file.name.endsWith('.xls') || file.name.endsWith('.xlsx')) endpoint = '/process-file/excel-invoices';
-      else continue;
-
       try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('invoice_id', invoiceId);
-        formData.append('file_name', file.name);
-
-        const response = await fetch(`${import.meta.env.VITE_API_URL}${endpoint}`, {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!response.ok) console.error(`Server error processing ${file.name}`);
-        else await response.json();
+        await processInvoiceFile(file, { invoiceId, auditId, organizationId });
       } catch (error) {
-        console.error(`Background processing error for ${file.name}:`, error);
+        // La facture ne doit pas rester « En attente » sans que l'utilisateur le sache
+        await updateInvoice(invoiceId, { status: 'rejected' }).catch(() => {});
+        toast({
+          title: `Échec du traitement de ${file.name}`,
+          description: error instanceof Error ? error.message : 'Erreur inconnue',
+          variant: 'destructive',
+        });
       }
+      onImportComplete();
     }
     setProcessingFile(null);
   };

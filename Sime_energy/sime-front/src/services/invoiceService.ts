@@ -3,6 +3,8 @@
  * Endpoints: /process-file/pdf-invoices, /process-file/excel-invoices, /process-file/invoice-tables-to-json
  */
 
+import { backendHeaders } from './backend-client';
+
 export interface StructuredExtractedData {
   isPdf: boolean;
   fileName: string;
@@ -95,15 +97,64 @@ export interface BackendInvoiceResponse {
 
 const API_URL = import.meta.env.VITE_API_URL;
 
+const INVOICE_ENDPOINTS = {
+  pdf: "/processing/process-file/pdf-invoices",
+  excel: "/processing/process-file/excel-invoices",
+} as const;
+
+function invoiceEndpoint(fileName: string): string | null {
+  const name = fileName.toLowerCase();
+  if (name.endsWith(".pdf")) return INVOICE_ENDPOINTS.pdf;
+  if (name.endsWith(".xls") || name.endsWith(".xlsx")) return INVOICE_ENDPOINTS.excel;
+  return null;
+}
+
+export interface InvoiceProcessingContext {
+  invoiceId: string;
+  auditId: string;
+  organizationId: string;
+}
+
+/**
+ * Envoie une facture déjà créée en base (statut « pending ») au backend pour OCR / lecture Excel.
+ * Le backend met lui-même la facture à jour. Lève une erreur (avec `status` HTTP) en cas d'échec.
+ */
+export async function processInvoiceFile(file: File, ctx: InvoiceProcessingContext): Promise<void> {
+  const endpoint = invoiceEndpoint(file.name);
+  if (!endpoint) throw new Error("Format de fichier non supporté. Veuillez utiliser PDF, XLS ou XLSX.");
+
+  await withRetry(
+    async () => {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("file_name", file.name);
+      formData.append("invoice_id", ctx.invoiceId);
+      formData.append("audit_id", ctx.auditId);
+      formData.append("organization_id", ctx.organizationId);
+
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        method: "POST",
+        headers: await backendHeaders(),
+        body: formData,
+      });
+      if (!response.ok) {
+        const detail = await response.json().then(b => b?.detail).catch(() => null);
+        const error = new Error(detail || `HTTP ${response.status}`) as Error & { status: number };
+        error.status = response.status;
+        throw error;
+      }
+    },
+    // L'OCR d'un PDF de plusieurs pages peut dépasser une minute
+    { maxAttempts: 2, timeoutMs: 180_000 },
+    `processInvoiceFile:${file.name}`,
+  );
+}
+
 /**
  * Upload et traite un fichier de facture (PDF ou Excel)
  */
 export async function uploadInvoiceFile(file: File): Promise<StructuredExtractedData[]> {
-  const endpoint = file.name.endsWith(".pdf")
-    ? "/processing/process-file/pdf-invoices"
-    : file.name.endsWith(".xls") || file.name.endsWith(".xlsx")
-      ? "/processing/process-file/excel-invoices"
-      : null;
+  const endpoint = invoiceEndpoint(file.name);
 
   if (!endpoint) {
     throw new Error("Format de fichier non supporté. Veuillez utiliser PDF, XLS ou XLSX.");
@@ -116,6 +167,7 @@ export async function uploadInvoiceFile(file: File): Promise<StructuredExtracted
 
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: "POST",
+        headers: await backendHeaders(),
         body: formData,
       });
 
@@ -255,9 +307,7 @@ export async function transformInvoiceTablesToJson(
 
   const response = await fetch(`${API_URL}/processing/process-file/invoice-tables-to-json`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: await backendHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(invoiceData),
   });
 

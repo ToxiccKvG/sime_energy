@@ -619,8 +619,8 @@ export function InvoiceClasseur({ auditId }: { auditId: string }) {
                         {/* Source icon + status dot */}
                         <div className="flex items-center gap-1 shrink-0">
                           {inv.source === 'senelec'
-                            ? <FileSpreadsheet className="w-3.5 h-3.5 text-blue-400" title="SENELEC Excel" />
-                            : <FileText className="w-3.5 h-3.5 text-emerald-400" title="Facture OCR" />
+                            ? <span title="SENELEC Excel" className="inline-flex shrink-0"><FileSpreadsheet className="w-3.5 h-3.5 text-blue-400" /></span>
+                            : <span title="Facture OCR" className="inline-flex shrink-0"><FileText className="w-3.5 h-3.5 text-emerald-400" /></span>
                           }
                           <div className={cn(
                             'w-1.5 h-1.5 rounded-full',

@@ -250,7 +250,7 @@ export function InvoiceViewDialog({ invoice, open, onOpenChange }: InvoiceViewDi
   // ── Key field extraction ──────────────────────────────────────────────
   const factureNo = findValue(fields,
     'NUMERO_FACTURE', 'FACTURE N°', 'FACTURE N', 'N° FACTURE', 'FACTURE NO', 'N° FACTURE :',
-  ) || invoice.invoice_number || '';
+  ) || (invoice as Record<string, any>).invoice_number || '';
 
   const fournisseur = invoice.supplier
     || findValue(fields, 'NOM_OU_RAISON_SOCIALE', 'NOM OU RAISON SOCIALE', 'NOM OU RAISON SOCIALE :') || '—';

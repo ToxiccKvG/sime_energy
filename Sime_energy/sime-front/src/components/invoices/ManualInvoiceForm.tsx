@@ -33,6 +33,7 @@ import {
   calcNJ, calcTranches, calcTVABase_BT_PP, calcMajoration, calcCosphi,
   calcPrimeFix, buildOcrData_A, buildOcrData_B, REDEVANCE_DEFAULTS,
 } from './manual-invoice-calc'
+import { penaliteDepassement } from '@/lib/senelec-rules'
 import { Check, RotateCcw, PenLine, AlertTriangle, ChevronRight, Zap, Calculator } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -493,7 +494,7 @@ export function ManualInvoiceForm({
     const prime_fixe = nj ? calcPrimeFix(ps, pf_tarif, nj) : 0
 
     const depassement = ps > 0 && pmax > ps ? pmax - ps : 0
-    const pdp_auto = depassement > 0 ? Math.round(depassement * k2_tarif * 1.5) : 0
+    const pdp_auto = nj ? Math.round(penaliteDepassement(pf_tarif, ps, pmax, nj)) : 0
     const pdp = fB.pdp_manual ? toNum(fB.pdp_montant_override) : pdp_auto
 
     const cosphi = toNum(fB.cosphi)
@@ -1314,7 +1315,7 @@ export function ManualInvoiceForm({
                   Pénalité dépassement PS
                   {depassement > 0 && <span className="ml-1 text-red-400 text-[10px]">(+{fmt(depassement)} kW)</span>}
                 </td>
-                <td className="px-3 py-1.5 text-right text-slate-500">K2×1.5</td>
+                <td className="px-3 py-1.5 text-right text-slate-500">1,5 × Tpf × NJ/30</td>
                 <td className="px-3 py-1.5" />
                 <td className="px-3 py-1.5">
                   <div className="flex items-center justify-end gap-1.5">

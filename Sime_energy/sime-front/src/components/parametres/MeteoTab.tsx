@@ -6,13 +6,13 @@
  *   Exploration    — date/plage précise + variables sélectionnables + chart + table
  *
  * Source : Open-Meteo (geocoding + archive), fetch() direct depuis le navigateur.
- * Stockage : user_metadata.energy_settings.meteo_settings
+ * Stockage : organizations.settings.meteo (réglages partagés par l'organisation)
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, ReferenceLine,
+  Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -29,7 +29,8 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { useOrganization } from '@/context/OrganizationContext';
+import { useOrganizationSettings, useUpdateOrganizationSettings } from '@/hooks/useOrganizationSettings';
 import {
   searchLocations,
   fetchMonthlyTemps,
@@ -79,11 +80,17 @@ function daysDiff(a: string, b: string) {
 
 export default function MeteoTab() {
   const { user } = useAuth();
-  const energyMeta = (user?.user_metadata?.energy_settings ?? {}) as Record<string, any>;
-  const saved = (energyMeta.meteo_settings ?? null) as MeteoSettings | null;
+  const { organization } = useOrganization();
+  const { data: orgSettings } = useOrganizationSettings(organization?.id);
+  const updateSettings = useUpdateOrganizationSettings(organization?.id, user?.id);
 
-  const [settings, setSettings] = useState<MeteoSettings>(saved ?? DEFAULT_METEO_SETTINGS);
-  const [saving, setSaving]     = useState(false);
+  const [settings, setSettings] = useState<MeteoSettings>(DEFAULT_METEO_SETTINGS);
+  const saving = updateSettings.isPending;
+
+  // Réglages de l'organisation chargés en asynchrone
+  useEffect(() => {
+    if (orgSettings?.meteo) setSettings({ ...DEFAULT_METEO_SETTINGS, ...orgSettings.meteo });
+  }, [orgSettings?.meteo]);
   const [activeView, setActiveView] = useState<'config' | 'explore'>('config');
 
   // ── Location search ──
@@ -222,19 +229,12 @@ export default function MeteoTab() {
   };
 
   const handleSave = async () => {
-    setSaving(true);
+    if (!organization?.id || !user?.id) { toast.error('Organisation introuvable'); return; }
     try {
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          energy_settings: { ...energyMeta, meteo_settings: settings },
-        },
-      });
-      if (error) throw error;
-      toast.success('Paramètres météo sauvegardés');
+      await updateSettings.mutateAsync({ meteo: settings });
+      toast.success("Paramètres météo sauvegardés pour l'organisation");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erreur');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -244,7 +244,7 @@ export default function MeteoTab() {
     );
   };
 
-  const { location, monthly_temps, comfort_threshold, coef_c, coef_g } = settings;
+  const { location, monthly_temps, t_ref_chauffage, t_ref_climatisation, coef_c, coef_g } = settings;
 
   return (
     <div className="space-y-4">
@@ -484,15 +484,7 @@ export default function MeteoTab() {
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-3 gap-4">
-                <CoefField
-                  label="Confort intérieur"
-                  unit="°C"
-                  hint="Température cible (ex: 24)"
-                  value={comfort_threshold}
-                  color="text-cyan-400"
-                  onChange={v => setSettings(p => ({ ...p, comfort_threshold: v }))}
-                />
+              <div className="grid grid-cols-2 gap-4">
                 <CoefField
                   label="CoefC — Isolation"
                   hint="Coefficient enveloppe bâtiment"
@@ -510,11 +502,30 @@ export default function MeteoTab() {
                   onChange={v => setSettings(p => ({ ...p, coef_g: v }))}
                 />
               </div>
+              <Separator className="border-slate-800" />
+              <div className="grid grid-cols-2 gap-4">
+                <CoefField
+                  label="T° réf. Climatisation"
+                  unit="°C"
+                  hint="Seuil déclenchement clim — base DJU clim"
+                  value={t_ref_climatisation ?? 26}
+                  color="text-orange-400"
+                  onChange={v => setSettings(p => ({ ...p, t_ref_climatisation: v }))}
+                />
+                <CoefField
+                  label="T° réf. Chauffage"
+                  unit="°C"
+                  hint="Seuil déclenchement chauffage — base DJU chauf."
+                  value={t_ref_chauffage ?? 18}
+                  color="text-blue-400"
+                  onChange={v => setSettings(p => ({ ...p, t_ref_chauffage: v }))}
+                />
+              </div>
               <div className="rounded-xl border border-slate-700/30 bg-slate-800/20 px-4 py-3">
                 <p className="text-[10px] text-slate-500 font-mono leading-relaxed">
                   BTU = (Vol × <span className="text-emerald-400">CoefC</span>)
                   {' '}+ (Ouvertures × 1000)
-                  {' '}+ (T_ext − <span className="text-cyan-400">T_confort</span>) × <span className="text-amber-400">CoefG</span> × Vol
+                  {' '}+ (T_ext − <span className="text-orange-400">T_réf</span>) × <span className="text-amber-400">CoefG</span> × Vol
                   {' '}+ (P_pers × nb_pers × 3.415)
                 </p>
               </div>
@@ -618,11 +629,26 @@ export default function MeteoTab() {
           {/* Variable selector */}
           <Card className="bg-[#1a1d2e] border-slate-800">
             <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-emerald-500/15 shrink-0">
-                  <Database className="h-3.5 w-3.5 text-emerald-400" />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/15 shrink-0">
+                    <Database className="h-3.5 w-3.5 text-emerald-400" />
+                  </div>
+                  <CardTitle className="text-sm text-slate-100">Variables météorologiques</CardTitle>
                 </div>
-                <CardTitle className="text-sm text-slate-100">Variables météorologiques</CardTitle>
+                <button
+                  onClick={() => {
+                    const allKeys = availableVars.map(v => v.key);
+                    const allSelected = allKeys.every(k => selectedVarKeys.includes(k));
+                    setSelectedVarKeys(allSelected ? [] : allKeys);
+                  }}
+                  className="text-[11px] font-medium text-emerald-400 hover:text-emerald-300 transition-colors px-2 py-1 rounded-lg hover:bg-emerald-500/10"
+                >
+                  {availableVars.every(v => selectedVarKeys.includes(v.key))
+                    ? 'Tout désélectionner'
+                    : 'Tout sélectionner'
+                  }
+                </button>
               </div>
               <p className="text-[11px] text-slate-500 ml-8 mt-0.5">
                 Source : Open-Meteo Archive API ·{' '}
@@ -687,7 +713,8 @@ export default function MeteoTab() {
             <ExploreResults
               result={exploreResult}
               variables={availableVars.filter(v => exploreResult.variables.includes(v.key))}
-              comfortThreshold={comfort_threshold}
+              tRefClimatisation={t_ref_climatisation ?? 26}
+              tRefChauffage={t_ref_chauffage ?? 18}
               tablePage={tablePage}
               setTablePage={setTablePage}
               pageSize={TABLE_PAGE_SIZE}
@@ -704,14 +731,16 @@ export default function MeteoTab() {
 function ExploreResults({
   result,
   variables,
-  comfortThreshold,
+  tRefClimatisation,
+  tRefChauffage,
   tablePage,
   setTablePage,
   pageSize,
 }: {
   result: WeatherResult;
   variables: VariableMeta[];
-  comfortThreshold: number;
+  tRefClimatisation: number;
+  tRefChauffage: number;
   tablePage: number;
   setTablePage: (n: number) => void;
   pageSize: number;
@@ -727,8 +756,8 @@ function ExploreResults({
   const dju = useMemo(() => {
     const hasMean = records.some(r => r.temperature_2m_mean != null);
     if (result.granularity !== 'daily' || !hasMean) return null;
-    return computeDJU(records);
-  }, [records, result.granularity]);
+    return computeDJU(records, tRefChauffage, tRefClimatisation);
+  }, [records, result.granularity, tRefChauffage, tRefClimatisation]);
 
   // Chart toggle
   const [hiddenVars, setHiddenVars] = useState<Set<string>>(new Set());
@@ -845,16 +874,6 @@ function ExploreResults({
                   );
                 }}
               />
-              {/* Comfort reference line */}
-              {tempVars.length > 0 && (
-                <ReferenceLine
-                  yAxisId="temp"
-                  y={comfortThreshold}
-                  stroke="#06b6d4"
-                  strokeDasharray="4 4"
-                  label={{ value: `Confort ${comfortThreshold}°C`, fill: '#06b6d4', fontSize: 10, position: 'insideTopLeft' }}
-                />
-              )}
               {tempVars.map(v => (
                 <Line
                   key={v.key}
@@ -887,15 +906,15 @@ function ExploreResults({
 
           {dju && (
             <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-slate-800">
-              <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3">
-                <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-1">DJU Chauffage</p>
-                <p className="text-xl font-bold font-mono text-blue-300">{dju.djc} <span className="text-xs text-slate-500 font-normal">°C·j</span></p>
-                <p className="text-[10px] text-slate-600 mt-0.5">Σ max(0, 18 − T_moy) · base 18°C</p>
-              </div>
               <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 px-4 py-3">
                 <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-1">DJU Climatisation</p>
                 <p className="text-xl font-bold font-mono text-orange-300">{dju.djf} <span className="text-xs text-slate-500 font-normal">°C·j</span></p>
-                <p className="text-[10px] text-slate-600 mt-0.5">Σ max(0, T_moy − 18) · base 18°C</p>
+                <p className="text-[10px] text-slate-600 mt-0.5">Σ max(0, T_moy − {tRefClimatisation}) · base {tRefClimatisation}°C</p>
+              </div>
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3">
+                <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-1">DJU Chauffage</p>
+                <p className="text-xl font-bold font-mono text-blue-300">{dju.djc} <span className="text-xs text-slate-500 font-normal">°C·j</span></p>
+                <p className="text-[10px] text-slate-600 mt-0.5">Σ max(0, {tRefChauffage} − T_moy) · base {tRefChauffage}°C</p>
               </div>
             </div>
           )}

@@ -89,7 +89,7 @@ export async function upsertFacturesSenelec(
     const batch = records.slice(i, i + BATCH_SIZE);
     const { error, count } = await supabase
       .from('factures_senelec')
-      .upsert(batch, { onConflict: 'numero_compte_contrat,numero_facture', count: 'exact' });
+      .upsert(batch, { onConflict: 'organization_id,numero_compte_contrat,numero_facture', count: 'exact' });
     if (error) throw error;
     inserted += count ?? batch.length;
   }
@@ -176,7 +176,7 @@ export async function getFacturesSenelecForSelector(auditId: string): Promise<Fa
     .order('date_debut_periode', { ascending: false });
 
   if (error) throw error;
-  return (data ?? []) as FactureSenelecForSelector[];
+  return (data ?? []) as unknown as FactureSenelecForSelector[];
 }
 
 export interface FactureSenelec {

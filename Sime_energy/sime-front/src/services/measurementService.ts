@@ -33,6 +33,8 @@ export interface EnergyLabelAnalysis {
   [key: string]: string | number;
 }
 
+import { backendHeaders } from './backend-client';
+
 const API_URL = import.meta.env.VITE_API_URL;
 
 /**
@@ -50,6 +52,7 @@ export async function uploadMeasurementFile(
 
   const response = await fetch(`${API_URL}/processing/process-file/measures`, {
     method: "POST",
+    headers: await backendHeaders(),
     body: formData,
   });
 
@@ -69,6 +72,7 @@ export async function analyzeEnergyLabel(file: File): Promise<EnergyLabelAnalysi
 
   const response = await fetch(`${API_URL}/processing/process-file/analyze-energy-label`, {
     method: "POST",
+    headers: await backendHeaders(),
     body: formData,
   });
 
@@ -87,9 +91,7 @@ export async function processHierarchy(
 ): Promise<{ hierarchy: HierarchyData; [key: string]: any }> {
   const response = await fetch(`${API_URL}/processing/process-file/process-hierarchy`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: await backendHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       hierarchy: hierarchyData,
     }),

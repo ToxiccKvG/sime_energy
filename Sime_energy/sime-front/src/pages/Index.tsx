@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useOrganization } from '@/context/OrganizationContext';
 import { useAudits } from '@/hooks/useAudits';
+import { computeAuditCompletion } from '@/lib/audit-service';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ArrowRight } from 'lucide-react';
@@ -134,7 +135,7 @@ export default function Dashboard() {
             <div className="space-y-0">
               {audits.map((audit, i) => {
                 const cfg = STATUS[audit.status as keyof typeof STATUS] ?? STATUS.planned;
-                const pct = audit.completion_percentage ?? 0;
+                const pct = computeAuditCompletion(audit, audit.inventory_counts);
                 const isLast = i === audits.length - 1;
 
                 return (

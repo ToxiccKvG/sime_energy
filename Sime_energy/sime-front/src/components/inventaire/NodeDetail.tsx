@@ -76,22 +76,8 @@ import {
   calculateHoursParametric,
 } from '@/types/inventory';
 import { BuildingHoursTab } from './BuildingHoursTab';
+import { BUILDING_TYPES } from '@/constants/building-types';
 
-const BUILDING_TYPES = [
-  'Administratif',
-  'Industriel / Usine',
-  'Commercial / Retail',
-  'Hôtel / Hébergement',
-  'Hôpital / Clinique',
-  'École / Université',
-  'Résidentiel',
-  'Entrepôt / Logistique',
-  'Restauration',
-  'Sport / Loisirs',
-  'Atelier / Maintenance',
-  'Mixte',
-  'Autre',
-];
 
 function SelectInput({
   value,
@@ -467,11 +453,15 @@ function ZoneView({
       toast.error('Le nom du bâtiment est requis');
       return;
     }
+    if (!buildingForm.building_type) {
+      toast.error('Le type de bâtiment est requis');
+      return;
+    }
     setSaving(true);
     try {
       await createAuditBuilding(siteId, auditId, {
         building_name: buildingForm.building_name,
-        building_type: buildingForm.building_type || undefined,
+        building_type: buildingForm.building_type,
         surface_terrain: buildingForm.surface_terrain ? parseFloat(buildingForm.surface_terrain) : undefined,
         surface_batie: buildingForm.surface_batie ? parseFloat(buildingForm.surface_batie) : undefined,
         surface_toiture: buildingForm.surface_toiture ? parseFloat(buildingForm.surface_toiture) : undefined,
@@ -579,7 +569,7 @@ function ZoneView({
             <Field label="Nom du bâtiment *">
               <TextInput value={buildingForm.building_name} onChange={v => setBuildingForm(f => ({ ...f, building_name: v }))} placeholder="ex: Bâtiment A" />
             </Field>
-            <Field label="Type de bâtiment">
+            <Field label="Type de bâtiment *">
               <SelectInput value={buildingForm.building_type} onChange={v => setBuildingForm(f => ({ ...f, building_type: v }))} options={BUILDING_TYPES} placeholder="Sélectionner un type…" />
             </Field>
             <div className="grid grid-cols-3 gap-3">

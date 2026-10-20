@@ -26,6 +26,20 @@ export async function saveBillingParams(
   return data as AuditBillingParamsDB
 }
 
+export async function saveBillingThresholds(
+  auditId: string,
+  siteId: string,
+  thresholds: Pick<AuditBillingParamsDB, 'k2_seuil_pct' | 'ps_seuil_pct' | 'cosphi_seuil'>,
+) {
+  const { error } = await supabase
+    .from('audit_billing_params')
+    .update({ ...thresholds, updated_at: new Date().toISOString() })
+    .eq('audit_id', auditId)
+    .eq('site_id', siteId)
+
+  if (error) throw error
+}
+
 export interface InvoiceForSelector {
   id:           string
   file_name:    string

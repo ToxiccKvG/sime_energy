@@ -23,12 +23,35 @@ export interface PVTableRow {
   readings?: PVTableRowReading[];
 }
 
-// One Woyofal prepaid meter entry: code on meter display → value read
+// Legacy — kept for backward compat, superseded by MesureSession
 export interface WoyofalEntry {
   id: string;
   code: string;
   valeur: string;
   dateTime?: string;
+}
+
+// Sub-value within a multi-value index row.
+// code = clé OBIS sélectionnée (ex. "1.8.0", "DATE_1.6.0") ; la signification et
+// le libellé affichés sont dérivés de la table OBIS. valeur = valeur numérique.
+export interface IndexSubValue {
+  id: string;
+  code: string;
+  valeur: string;
+}
+
+// One reading within a MesureSession
+export type MesureReading =
+  | { kind: 'woyofal'; id: string; code: string; valeur: string }
+  | { kind: 'index'; id: string; key: string; valeur: string; date?: string; subValues?: IndexSubValue[]; fixed?: boolean };
+
+// A dated measurement session (factorized date for all readings inside)
+export interface MesureSession {
+  id: string;
+  label: string;
+  dateTime: string;
+  type: 'WOYOFAL' | 'INDEX';
+  readings: MesureReading[];
 }
 
 export interface PVSectionData {
@@ -40,6 +63,7 @@ export interface PVSectionData {
   freeText?: string;
   customFields?: { id: string; key: string; value: string }[];
   woyofalEntries?: WoyofalEntry[];
+  mesureSessions?: MesureSession[];
 }
 
 export interface PVQuestionnaire {

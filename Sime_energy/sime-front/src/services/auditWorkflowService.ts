@@ -127,15 +127,6 @@ export async function analyzeEnergyLabelImage(file: File): Promise<EnergyLabelAn
 }
 
 /**
- * Effectue la transformation complète des données
- */
-export async function transformAuditData(
-  extractedData: StructuredExtractedData[]
-): Promise<{ invoices: InvoiceResult[]; processingInfo: ProcessingInfo }> {
-  return transformInvoiceTablesToJson(extractedData);
-}
-
-/**
  * Génère et traite une hiérarchie de schéma électrique
  */
 export async function generateAndProcessHierarchy(

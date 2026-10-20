@@ -3,23 +3,40 @@ import { Save, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import { getInventoryNotes, saveInventoryNotes } from '@/lib/audit-service';
 
 interface InventaireNotesProps {
   auditId: string;
 }
 
-function storageKey(id: string) {
+/** Ancien stockage navigateur — lu une seule fois pour reprendre les notes existantes en base */
+function legacyStorageKey(id: string) {
   return `simee_inventaire_notes_${id}`;
 }
 
 export function InventaireNotes({ auditId }: InventaireNotesProps) {
   const [notes, setNotes] = useState('');
   const [saved, setSaved] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(storageKey(auditId));
-    setNotes(stored ?? '');
+    let cancelled = false;
+    setNotes('');
     setSaved(true);
+    getInventoryNotes(auditId)
+      .then(async enBase => {
+        let texte = enBase ?? '';
+        const local = localStorage.getItem(legacyStorageKey(auditId));
+        if (!texte && local) {
+          // Reprise des notes saisies avant leur passage en base
+          await saveInventoryNotes(auditId, local);
+          texte = local;
+        }
+        if (local != null) localStorage.removeItem(legacyStorageKey(auditId));
+        if (!cancelled) setNotes(texte);
+      })
+      .catch(() => toast.error('Impossible de charger les notes'));
+    return () => { cancelled = true; };
   }, [auditId]);
 
   const handleChange = (v: string) => {
@@ -27,10 +44,17 @@ export function InventaireNotes({ auditId }: InventaireNotesProps) {
     setSaved(false);
   };
 
-  const handleSave = () => {
-    localStorage.setItem(storageKey(auditId), notes);
-    setSaved(true);
-    toast.success('Notes sauvegardées');
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await saveInventoryNotes(auditId, notes);
+      setSaved(true);
+      toast.success('Notes sauvegardées');
+    } catch {
+      toast.error('Échec de la sauvegarde des notes');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Keyboard shortcut Ctrl+S / Cmd+S
@@ -60,7 +84,7 @@ export function InventaireNotes({ auditId }: InventaireNotesProps) {
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={saved}
+            disabled={saved || saving}
             className="h-7 text-xs bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 gap-1.5"
           >
             <Save className="w-3.5 h-3.5" />

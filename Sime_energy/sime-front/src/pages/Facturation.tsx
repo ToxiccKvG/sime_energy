@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useOrganization } from '@/context/OrganizationContext';
 import { useAuth } from '@/context/AuthContext';
+import { refreshProjectContextInBackground } from '@/hooks/useProjectContext';
 import { logActivity } from '@/lib/activity-service';
 import { getAudits } from '@/lib/audit-service';
 import { getAuditInvoices, deleteInvoice } from '@/lib/invoice-service';
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { SimulateurPanel } from '@/components/invoices/SimulateurPanel';
 import { QuarantinePanel } from '@/components/invoices/QuarantinePanel';
+import { getAllQuarantineItems } from '@/lib/billing-quarantine-service';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
@@ -362,6 +364,16 @@ const Facturation = () => {
     return () => { mockTimersRef.current.forEach(clearTimeout); mockTimersRef.current = []; };
   }, [organization?.id]);
 
+  // Compteur du bouton Quarantaine : même source que le panneau, chargée sans attendre son ouverture
+  const refreshQuarantineCount = () => {
+    if (!organization?.id || MOCK_MODE) return;
+    getAllQuarantineItems(organization.id)
+      .then(items => setQuarantineCount(items.length))
+      .catch(err => console.error('Erreur comptage quarantaine', err));
+  };
+
+  useEffect(refreshQuarantineCount, [organization?.id]);
+
   useEffect(() => {
     if (!organization?.id || MOCK_MODE) return;
     const sub = supabase
@@ -424,6 +436,7 @@ const Facturation = () => {
     if (!organization?.id) return;
     const { inserted } = await upsertFacturesSenelec(rows, organization.id, auditId);
     toast.success(`${inserted.toLocaleString('fr-FR')} facture${inserted > 1 ? 's' : ''} SENELEC importée${inserted > 1 ? 's' : ''}`);
+    refreshProjectContextInBackground(auditId, user?.id ?? null);
 
     // Trace l'import + la déduplication / les redressements dans l'historique de l'audit.
     if (user?.id) {
@@ -729,16 +742,16 @@ const Facturation = () => {
                   onClick={() => setActiveTab('quarantine')}
                   className={`flex items-center gap-2.5 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 border
                     justify-center flex-1 lg:flex-none
-                    ${activeTab === 'quarantine'
+                    ${(activeTab as string) === 'quarantine'
                       ? 'bg-orange-500/[0.12] border-orange-500/30 text-orange-300'
                       : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] hover:border-white/[0.12]'
                     }`}
                 >
-                  <ShieldAlert className={`h-4 w-4 ${activeTab === 'quarantine' ? 'text-orange-400' : 'text-slate-500'}`} />
+                  <ShieldAlert className={`h-4 w-4 ${(activeTab as string) === 'quarantine' ? 'text-orange-400' : 'text-slate-500'}`} />
                   <span>Quarantaine</span>
                   {quarantineCount > 0 && (
                     <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 tabular-nums
-                      ${activeTab === 'quarantine' ? 'bg-orange-500/30 text-orange-200' : 'bg-orange-500/20 text-orange-400'}`}>
+                      ${(activeTab as string) === 'quarantine' ? 'bg-orange-500/30 text-orange-200' : 'bg-orange-500/20 text-orange-400'}`}>
                       {quarantineCount}
                     </span>
                   )}
@@ -956,7 +969,9 @@ const Facturation = () => {
                               {invoice.file_name}
                             </p>
                             {invoice.is_quarantined && (
-                              <ShieldAlert className="h-3.5 w-3.5 text-orange-400 shrink-0" title={`En quarantaine — delta ${invoice.quarantine_delta_pct?.toFixed(1)}%`} />
+                              <span title={`En quarantaine — delta ${invoice.quarantine_delta_pct?.toFixed(1)}%`} className="inline-flex shrink-0">
+                                <ShieldAlert className="h-3.5 w-3.5 text-orange-400" />
+                              </span>
                             )}
                           </div>
                           {audit && (
@@ -1377,13 +1392,13 @@ const Facturation = () => {
         <SimulateurPanel
           invoices={invoices}
           audits={audits.map(a => ({ id: a.id, name: a.name }))}
-          onQuarantineChange={() => { loadData(); setQuarantineCount(c => c + 1); }}
+          onQuarantineChange={() => { loadData(); refreshQuarantineCount(); }}
           organizationId={organization?.id}
         />
       )}
 
       {/* ══════════════════════════ TAB: QUARANTAINE ═════════════════════ */}
-      {activeTab === 'quarantine' && (
+      {(activeTab as string) === 'quarantine' && (
         <QuarantinePanel onCountChange={setQuarantineCount} />
       )}
 

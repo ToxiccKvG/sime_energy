@@ -1,5 +1,6 @@
 import type { InvoiceData } from '@/types/billing'
 import type { FactureSenelecForSelector } from '@/lib/factures-senelec-service'
+import { calcNJ, NJ_MAX } from '@/lib/senelec-rules'
 
 // ─── Types internes ───────────────────────────────────────────────────────────
 
@@ -123,8 +124,12 @@ function parseDate(raw: string | null | undefined): Date | null {
   return isNaN(d.getTime()) ? null : d
 }
 
-function diffDays(a: Date, b: Date): number {
-  return Math.round(Math.abs(b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
+/** Date locale → "YYYY-MM-DD", sans dérive de fuseau horaire (pas de toISOString) */
+function isoDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 /** Parse un montant FCFA — conserve le signe négatif (bonification cosφ) */
@@ -457,9 +462,11 @@ export function mapOcrToInvoiceData(ocr_data: unknown, amount_ttc_db?: number): 
   const cosphi_str = raw(['Cosinus phi', 'COSPHI', 'FACTEUR DE PUISSANCE', 'COS PHI', 'COSINUS PHI'])
   const k1_form_str = raw(['HEURES HORS POINTE', 'CONSO HHP', 'K1 KWH', 'HHP'])
   const k2_form_str = raw(['HEURES POINTE', 'CONSO HP', 'K2 KWH', 'HP', 'HEURES DE POINTE'])
-  const nj_str         = raw(['Nombre de jours', 'NOMBRE DE JOURS', 'NJ', 'Durée periode', 'Nb jours', 'Jours'])
-  const date_debut_str = raw(['Date début période', 'Date de début', 'Début période', 'Du', 'Date début'])
-  const date_fin_str   = raw(['Date fin période', 'Date de fin', 'Fin période', 'Au', 'Date fin'])
+  const nj_str         = raw(['Nombre de jours', 'NOMBRE DE JOURS', 'NJ', 'Durée periode', 'Nb jours', 'Jours', 'NBR_JOURS'])
+  // ⚠ 'PERIODE_DU'/'PERIODE_AU' = clés normalisées par le lexique LLM (config.py) — priorité
+  // sur les libellés OCR bruts, qui varient selon le type de facture (BT/MT/GP)
+  const date_debut_str = raw(['PERIODE_DU', 'Période du', 'Date début période', 'Date de début', 'Début période', 'Du', 'Date début'])
+  const date_fin_str   = raw(['PERIODE_AU', 'Période au', 'Date fin période', 'Date de fin', 'Fin période', 'Au', 'Date fin'])
 
   // ── Champs contractuels entête ────────────────────────────────────────────
   const type_abonnement_str = raw([
@@ -493,18 +500,23 @@ export function mapOcrToInvoiceData(ocr_data: unknown, amount_ttc_db?: number): 
   const cosphi_raw = parseXOF(cosphi_str)
   const cosphi_mesure = cosphi_raw > 1 ? cosphi_raw / 100 : cosphi_raw || undefined
 
+  // ── Période réelle de consommation (PERIODE_DU / PERIODE_AU) ─────────────
+  // ⚠ Ne PAS confondre avec DATE_COMPTABLE_FACTURE (date d'émission, tombe
+  //   normalement après la fin de période — ex: période mai, facture émise en juin)
+  //   ni avec la date limite de paiement. C'est cette période réelle qui doit
+  //   servir de référence pour le regroupement mensuel dans l'analyse.
+  const periode_debut_date = parseDate(date_debut_str)
+  const periode_fin_date   = parseDate(date_fin_str)
+  const periode_debut_iso  = periode_debut_date ? isoDate(periode_debut_date) : undefined
+  const periode_fin_iso    = periode_fin_date   ? isoDate(periode_fin_date)   : undefined
+
   // ── NJ : nombre de jours de la période ───────────────────────────────────
   let periode_jours_ocr: number | undefined
   const nj_direct = parseXOF(nj_str)
-  if (nj_direct > 0 && nj_direct <= 95) {
+  if (nj_direct > 0 && nj_direct <= NJ_MAX) {
     periode_jours_ocr = Math.round(nj_direct)
   } else {
-    const d1 = parseDate(date_debut_str)
-    const d2 = parseDate(date_fin_str)
-    if (d1 && d2) {
-      const diff = diffDays(d1, d2)
-      if (diff > 0 && diff <= 95) periode_jours_ocr = diff
-    }
+    periode_jours_ocr = calcNJ(periode_debut_date, periode_fin_date) ?? undefined
   }
 
   // ── Montant TTC — priorité : "TOTAL FACTURE" OCR > TTC > TOTAL SOMMES DUES > DB > HT ──
@@ -649,6 +661,8 @@ export function mapOcrToInvoiceData(ocr_data: unknown, amount_ttc_db?: number): 
     puissance_souscrite_kw,
     // ── Période ──
     periode_jours_ocr,
+    periode_debut_iso,
+    periode_fin_iso,
     // ── Tranches BT (DPP/DMP/PPP/PMP) ──
     tranche1_kwh:     tranches.t1?.kwh     || undefined,
     tranche1_tarif:   tranches.t1?.tarif   || undefined,

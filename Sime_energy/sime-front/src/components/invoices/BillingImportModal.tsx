@@ -8,13 +8,18 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Pencil, X,
-  ChevronLeft, ChevronRight, Search, AlertTriangle, Wand2, Sparkles, Trash2, Copy,
+  ChevronLeft, ChevronRight, Search, AlertTriangle, Wand2, Sparkles, Trash2, Copy, ArrowLeftRight,
 } from 'lucide-react';
 import {
   BILLING_TEMPLATE_COLUMNS, BillingRow, ColumnGroup,
 } from './billing-import.types';
 import { useBillingImport, computeDerived, validateRow, countFixable, analyzeDuplicates, detectAnomalies, DuplicateAnalysis } from './useBillingImport';
+import { BillingColumnMapper } from './BillingColumnMapper';
 import { getAudits } from '@/lib/audit-service';
 import { useOrganization } from '@/context/OrganizationContext';
 import { toast } from 'sonner';
@@ -619,7 +624,11 @@ function ManualConflictResolver({
 
 export function BillingImportModal({ open, onOpenChange, onImportConfirmed }: Props) {
   const { organization } = useOrganization();
-  const { result, isParsing, parseError, parseFile, updateRow, reset, autoRepair, skipErrors, forceAccept, removeDuplicates, resolveManual, keepSingleRow } = useBillingImport();
+  const {
+    result, isParsing, parseError, mappingState, isDirty,
+    loadFile, selectSheet, setHeaderRow, setDateFormat, setMappingField, resetAutoMatch, applyMapping, backToMapping,
+    updateRow, reset, autoRepair, skipErrors, forceAccept, removeDuplicates, resolveManual, keepSingleRow,
+  } = useBillingImport();
   const dropRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -642,6 +651,24 @@ export function BillingImportModal({ open, onOpenChange, onImportConfirmed }: Pr
   const [redressedKept, setRedressedKept] = useState(0);
   const [filterPartenaire, setFilterPartenaire] = useState('');
   const [filterMontantMin, setFilterMontantMin] = useState('');
+  const [confirmRemapOpen, setConfirmRemapOpen] = useState(false);
+
+  // Remet l'aperçu à zéro (filtres, panneaux, compteurs) — ses lignes vont être reconstruites
+  const resetPreviewState = useCallback(() => {
+    setSearch('');
+    setErrorsOnly(false);
+    setPage(1);
+    setEditingRow(null);
+    setMagicOpen(false);
+    setDupOpen(false);
+    setDuplicatesOnly(false);
+    setManualResolverOpen(false);
+    setDuplicatesRemoved(0);
+    setIncoherentRemoved(0);
+    setRedressedKept(0);
+    setFilterPartenaire('');
+    setFilterMontantMin('');
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -653,37 +680,41 @@ export function BillingImportModal({ open, onOpenChange, onImportConfirmed }: Pr
   useEffect(() => {
     if (!open) {
       reset();
-      setSearch('');
-      setErrorsOnly(false);
-      setPage(1);
-      setEditingRow(null);
+      resetPreviewState();
       setSelectedAuditId('');
-      setMagicOpen(false);
-      setDupOpen(false);
-      setDuplicatesOnly(false);
-      setManualResolverOpen(false);
-      setDuplicatesRemoved(0);
-      setIncoherentRemoved(0);
-      setRedressedKept(0);
-      setFilterPartenaire('');
-      setFilterMontantMin('');
+      setConfirmRemapOpen(false);
     }
-  }, [open, reset]);
+  }, [open, reset, resetPreviewState]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     if (!selectedAuditId) { toast.error('Sélectionnez un projet avant d\'importer'); return; }
     const file = e.dataTransfer.files[0];
-    if (file?.name.endsWith('.xlsx')) parseFile(file);
-  }, [parseFile, selectedAuditId]);
+    if (file?.name.endsWith('.xlsx')) loadFile(file);
+  }, [loadFile, selectedAuditId]);
 
   const handleFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedAuditId) { toast.error('Sélectionnez un projet avant d\'importer'); return; }
     const file = e.target.files?.[0];
-    if (file) parseFile(file);
+    if (file) loadFile(file);
     e.target.value = '';
-  }, [parseFile, selectedAuditId]);
+  }, [loadFile, selectedAuditId]);
+
+  async function handleApplyMapping() {
+    resetPreviewState();
+    await applyMapping();
+  }
+
+  function handleBackToMapping() {
+    setConfirmRemapOpen(false);
+    backToMapping();
+  }
+
+  function handleRemapClick() {
+    if (isDirty) setConfirmRemapOpen(true);
+    else handleBackToMapping();
+  }
 
   // Derived filter data
   const allRows = result?.rows ?? [];
@@ -806,21 +837,21 @@ export function BillingImportModal({ open, onOpenChange, onImportConfirmed }: Pr
       <DialogContent
         className="p-0 gap-0 bg-[#0b0d14] border border-white/10 text-slate-100 overflow-hidden flex flex-col"
         style={{
-          maxWidth: result ? '96vw' : 520,
-          width: result ? '96vw' : undefined,
+          maxWidth: result ? '96vw' : mappingState ? 'min(1180px, 96vw)' : 520,
+          width: result ? '96vw' : mappingState ? 'min(1180px, 96vw)' : undefined,
           maxHeight: '92vh',
-          height: result ? '92vh' : undefined,
+          height: result || mappingState ? '92vh' : undefined,
         }}
       >
         {/* ══ ÉTAPE 1 — UPLOAD ══ */}
-        {!result && (
+        {!result && !mappingState && (
           <>
             <DialogHeader className="px-6 pt-5 pb-0 shrink-0">
               <DialogTitle className="text-base font-bold text-slate-100 flex items-center gap-2">
                 <FileSpreadsheet className="h-4 w-4 text-emerald-400" />
                 Import Excel SENELEC
               </DialogTitle>
-              <p className="text-xs text-slate-500 mt-1">Template fixe 63 colonnes · fichier .xlsx uniquement</p>
+              <p className="text-xs text-slate-500 mt-1">Fichier .xlsx · vous associerez ses colonnes aux champs SIMEE à l'étape suivante</p>
             </DialogHeader>
 
             <div className="px-6 pb-6 pt-5 space-y-4 shrink-0">
@@ -889,7 +920,23 @@ export function BillingImportModal({ open, onOpenChange, onImportConfirmed }: Pr
           </>
         )}
 
-        {/* ══ ÉTAPE 2 — VISUALISEUR ══ */}
+        {/* ══ ÉTAPE 2 — CORRESPONDANCE DES COLONNES ══ */}
+        {mappingState && !result && (
+          <BillingColumnMapper
+            state={mappingState}
+            isBuilding={isParsing}
+            error={parseError}
+            onSelectSheet={selectSheet}
+            onHeaderRowChange={setHeaderRow}
+            onDateFormatChange={setDateFormat}
+            onFieldChange={setMappingField}
+            onResetAuto={resetAutoMatch}
+            onBack={reset}
+            onContinue={handleApplyMapping}
+          />
+        )}
+
+        {/* ══ ÉTAPE 3 — VISUALISEUR ══ */}
         {result && (
           <div className="flex flex-col flex-1 min-h-0">
 
@@ -976,6 +1023,13 @@ export function BillingImportModal({ open, onOpenChange, onImportConfirmed }: Pr
                   </div>
                 )}
 
+                <button
+                  onClick={handleRemapClick}
+                  className="h-8 px-3 text-xs rounded-lg border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-colors flex items-center gap-1.5"
+                >
+                  <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  Modifier la correspondance
+                </button>
                 <button
                   onClick={() => onOpenChange(false)}
                   className="h-8 px-3 text-xs rounded-lg border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-colors"
@@ -1301,6 +1355,26 @@ export function BillingImportModal({ open, onOpenChange, onImportConfirmed }: Pr
           onClose={() => setManualResolverOpen(false)}
         />
       )}
+
+      <AlertDialog open={confirmRemapOpen} onOpenChange={setConfirmRemapOpen}>
+        <AlertDialogContent className="bg-[#0b0d14] border-white/10 text-slate-100">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-base">Modifier la correspondance ?</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm text-slate-400">
+              Les factures seront relues depuis le fichier avec la nouvelle correspondance.
+              Vos modifications dans l'aperçu (éditions, résolution auto, doublons retirés) seront perdues.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-transparent border-white/10 text-slate-300 hover:bg-white/5 hover:text-slate-100">
+              Garder l'aperçu
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleBackToMapping} className="bg-amber-500 hover:bg-amber-400 text-black">
+              Revenir à la correspondance
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

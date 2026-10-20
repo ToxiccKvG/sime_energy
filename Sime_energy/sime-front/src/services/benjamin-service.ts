@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { backendHeaders } from './backend-client';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api/V1';
 const STORAGE_KEY = 'benjamin_history';
@@ -237,7 +238,7 @@ export async function* streamChat(
   try {
     response = await fetch(`${API_URL}/ai/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await backendHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ messages, context }),
     });
   } catch {

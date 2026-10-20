@@ -5,6 +5,7 @@
  */
 
 import { BT_TRANCHE_WIDTHS, TCO_RATE_BT, TVA_RATE } from '@/constants/senelec-tariffs'
+import { calcNJ as calcNJRegle, cosphiPenaltyPct, primeFixe } from '@/lib/senelec-rules'
 import type { TariffCategory } from '@/constants/senelec-tariffs'
 
 // ── Redevance forfaitaires par défaut (FCFA) ─────────────────────────────────
@@ -22,15 +23,9 @@ export const REDEVANCE_DEFAULTS: Partial<Record<TariffCategory, number>> = {
   HTG: 19192,
 }
 
-// ── Calcul NJ (nombre de jours de la période) ─────────────────────────────────
+// ── Calcul NJ (nombre de jours de la période) — règle partagée ──────────────
 export function calcNJ(dateDebut: string, dateFin: string): number | null {
-  if (!dateDebut || !dateFin) return null
-  const d1 = new Date(dateDebut)
-  const d2 = new Date(dateFin)
-  if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return null
-  const diff = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24))
-  const nj = diff + 1
-  return diff >= 0 && nj <= 95 ? nj : null
+  return calcNJRegle(dateDebut, dateFin)
 }
 
 // ── Template A — calcul tranches BT PP ────────────────────────────────────────
@@ -98,21 +93,16 @@ export function calcMajoration(
   }
 }
 
-// ── Template B/C — application cos phi SENELEC ────────────────────────────────
-// ≥ 0.93 → Bonus (résultat négatif)  : base × (0.93/cosφ − 1)
-//  < 0.85 → Malus (résultat positif) : base × (0.85/cosφ − 1)
-// [0.85, 0.93[ → 0
+// ── Template B/C — pénalité / bonus cos phi (barème partagé avec le simulateur) ──
+// Résultat > 0 = pénalité, < 0 = bonus, 0 = zone neutre (0,80–0,95)
 export function calcCosphi(cosphi: number, base_fcfa: number): number {
   if (!cosphi || cosphi <= 0 || !base_fcfa) return 0
-  if (cosphi >= 0.93) return Math.round(base_fcfa * (0.93 / cosphi - 1))
-  if (cosphi < 0.85)  return Math.round(base_fcfa * (0.85 / cosphi - 1))
-  return 0
+  return Math.round(base_fcfa * cosphiPenaltyPct(cosphi) / 100)
 }
 
 // ── Template B/C — prime fixe proratisée ──────────────────────────────────────
 export function calcPrimeFix(ps_kw: number, tarif_pf: number, nj: number): number {
-  if (!ps_kw || !tarif_pf || !nj) return 0
-  return Math.round(ps_kw * tarif_pf * (nj / 30))
+  return Math.round(primeFixe(tarif_pf, ps_kw, nj))
 }
 
 // ── OCR data builders (compatibilité mapOcrToInvoiceData) ────────────────────

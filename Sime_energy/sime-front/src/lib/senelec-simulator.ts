@@ -8,6 +8,7 @@
  */
 
 import { calculateBTTranches } from '@/lib/billing-calculator'
+import { cosphiPenaltyPct, penaliteDepassement, primeFixe } from '@/lib/senelec-rules'
 import { getTariffGrid } from '@/constants/senelec-tariffs'
 import type { TariffCategory, TariffYear, MTCategory } from '@/constants/senelec-tariffs'
 
@@ -124,36 +125,9 @@ export interface SimulateurResult {
 }
 
 // ─── CosPhi penalty / bonus bands ────────────────────────────────────────────
-// Source: SENELEC barème facteur de puissance (CER2E)
-// Zone neutre : 0.80 ≤ cosφ ≤ 0.95 → 0%
-// Bonus       : cosφ ≥ 0.96 → rabais = −n × 0.75% (n = steps au-dessus de 0.95, max 5)
-// Pénalité    : cosφ < 0.80 → surcoût progressif
+// Barème partagé : voir senelec-rules.ts (réexporté pour compatibilité)
 
-export const COSPHI_PENALTY_BANDS: Array<{ min: number; max: number; pct: number }> = [
-  { min: 0.80, max: Infinity, pct: 0  },  // zone neutre (0.80–0.95) + bonus (>0.95) géré séparément
-  { min: 0.75, max: 0.80,    pct: 5  },
-  { min: 0.70, max: 0.75,    pct: 10 },
-  { min: 0.65, max: 0.70,    pct: 15 },
-  { min: 0.60, max: 0.65,    pct: 20 },
-  { min: 0.55, max: 0.60,    pct: 30 },
-  { min: 0.50, max: 0.55,    pct: 40 },
-  { min: 0.45, max: 0.50,    pct: 50 },
-  { min: 0.40, max: 0.45,    pct: 65 },
-  { min: 0,    max: 0.40,    pct: 80 },
-]
-
-// Returns signed %: positive = pénalité, negative = bonus, 0 = zone neutre
-function getCosphiPenaltyPct(cosphi: number): number {
-  if (!isFinite(cosphi) || cosphi <= 0) return 0
-  if (cosphi >= 0.80 && cosphi <= 0.95) return 0
-  if (cosphi > 0.95) {
-    // Bonus: −n × 0.75% où n = steps au-dessus de 0.95, plafonné à 5
-    const n = Math.min(5, Math.round((cosphi - 0.95) / 0.01))
-    return -(n * 0.75)
-  }
-  const band = COSPHI_PENALTY_BANDS.find(b => cosphi >= b.min && cosphi < b.max)
-  return band?.pct ?? 0
-}
+export { COSPHI_PENALTY_BANDS } from '@/lib/senelec-rules'
 
 // ─── Transformer loss table (aa, ba, ar, br by transformer kVA) ──────────────
 // Placeholder — values to be filled from CER2E "Données Pertes Transfo" table.
@@ -336,6 +310,8 @@ export function runSimulateur(
   } else if (isGP || isMTHT) {
     let k1 = safe(input.k1_kwh)
     let k2 = safe(input.k2_kwh)
+    // Wr absent de la facture ≠ Wr nul : sans énergie réactive, cos φ ne peut pas être calculé
+    const wrFourni = input.wr_kvarh != null
     let wr = safe(input.wr_kvarh)
     let wa = safe(input.wa_kwh) || k1 + k2
     const h1 = safe(input.h1_h)
@@ -379,7 +355,7 @@ export function runSimulateur(
     }
 
     // Store corrected values for cosφ calculation
-    input = { ...input, wr_kvarh: wr, wa_kwh: wa }
+    input = { ...input, wr_kvarh: wrFourni ? wr : undefined, wa_kwh: wa }
   }
 
   // Active energy total for IPR / conso journalière
@@ -402,17 +378,15 @@ export function runSimulateur(
   const cosphi = cosphi_calcule
   // Signed: >0 = pénalité, <0 = bonus, 0 = zone neutre or BT/WOYOFAL
   const taux_penalite_pct = (cosphi != null && (isGP || isMTHT))
-    ? getCosphiPenaltyPct(cosphi)
+    ? cosphiPenaltyPct(cosphi)
     : 0
   const cosphi_is_bonus = taux_penalite_pct < 0
 
   // ── 3. Prime fixe + Majoration dépassement PS ─────────────────────────────
 
-  const prime_fixe_base = Tpf > 0 ? Tpf * PS * (NJ / 30) : 0
+  const prime_fixe_base = primeFixe(Tpf, PS, NJ)
 
-  const majo_depassement_ps = (Tpf > 0 && Pmaxr > PS && NJ_dep > 0)
-    ? 1.5 * Tpf * (Pmaxr - PS) * (NJ_dep / 30)
-    : 0
+  const majo_depassement_ps = penaliteDepassement(Tpf, PS, Pmaxr, NJ_dep)
 
   const prime_fixe_totale = prime_fixe_base + majo_depassement_ps
 

@@ -54,6 +54,8 @@ export interface InvoiceData {
 
   // Champs auxiliaires
   periode_jours_ocr?:    number
+  periode_debut_iso?:    string         // "YYYY-MM-DD" — PERIODE_DU (vraie période de consommation, ≠ date d'émission)
+  periode_fin_iso?:      string         // "YYYY-MM-DD" — PERIODE_AU
   total_facture_ocr?:    number         // "TOTAL FACTURE" OCR (sans arriérés) — détection arriérés
 
   // Tranches BT — tableau OCR (1ère / 2ème / 3ème tranche)
@@ -145,4 +147,8 @@ export interface AuditBillingParamsDB {
   has_transformateur:      boolean
   tco_applicable:          boolean
   tva_applicable:          boolean
+  // Seuils d'anomalie des « 4 piliers » (null = valeurs par défaut)
+  k2_seuil_pct?:           number | null
+  ps_seuil_pct?:           number | null
+  cosphi_seuil?:           number | null
 }

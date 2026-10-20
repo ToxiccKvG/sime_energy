@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select'
 import type { InvoiceForSelector } from '@/lib/billing-params-service'
 import type { FactureSenelecForSelector } from '@/lib/factures-senelec-service'
+import { mapOcrToInvoiceData } from '@/lib/invoice-mapper'
 
 interface InvoiceSelectorProps {
   invoices:        InvoiceForSelector[]
@@ -79,7 +80,10 @@ export function InvoiceSelector({ invoices, senelecInvoices, value, onChange, lo
               {contractFiltered && <Filter className="w-2.5 h-2.5 text-emerald-400" />}
             </SelectLabel>
             {invoices.map(inv => {
-              const period = fmtOcrDate(inv.invoice_date)
+              // Période réelle de consommation (PERIODE_DU) plutôt que invoice_date
+              // (date d'émission — tombe après la fin de période, ex: période mai → facture émise juin)
+              const invData = mapOcrToInvoiceData(inv.ocr_data, inv.amount ?? undefined)
+              const period = fmtOcrDate(invData.periode_debut_iso ?? inv.invoice_date)
               return (
                 <SelectItem
                   key={`ocr:${inv.id}`}

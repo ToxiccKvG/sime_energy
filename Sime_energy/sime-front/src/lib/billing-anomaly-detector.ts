@@ -132,15 +132,18 @@ export function detectAnomalies(
     }
 
     // ── 2. Rappel / Arriérés (SOLDE DES IMPAYES) ──
-    if (invData.total_facture_ocr && invData.montant_ttc) {
-      const ratio = invData.montant_ttc / invData.total_facture_ocr
+    // Le montant enregistré en base peut inclure des arriérés ; montant_ttc, lui, dérive de
+    // TOTAL FACTURE OCR quand il existe, d'où la comparaison avec inv.amount.
+    const montantDb = inv.amount ?? 0
+    if (invData.total_facture_ocr && montantDb > 0) {
+      const ratio = montantDb / invData.total_facture_ocr
       if (ratio > 1.10) {  // +10% → probable arriérés
         anomalies.push({
           ...meta,
           type: 'rappel',
           severity: 'warning',
-          message: `Arriérés probables — montant DB (${Math.round(invData.montant_ttc).toLocaleString('fr-FR')} FCFA) dépasse TOTAL FACTURE OCR (${Math.round(invData.total_facture_ocr).toLocaleString('fr-FR')} FCFA) de ${Math.round((ratio - 1) * 100)}%`,
-          valeur: invData.montant_ttc,
+          message: `Arriérés probables — montant DB (${Math.round(montantDb).toLocaleString('fr-FR')} FCFA) dépasse TOTAL FACTURE OCR (${Math.round(invData.total_facture_ocr).toLocaleString('fr-FR')} FCFA) de ${Math.round((ratio - 1) * 100)}%`,
+          valeur: montantDb,
           seuil: invData.total_facture_ocr,
         })
       }

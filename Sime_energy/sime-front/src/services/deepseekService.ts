@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { backendHeaders } from './backend-client';
 import { getAudit, getAuditSites, getAuditBuildings } from '@/lib/audit-service';
 import { getInventorySnapshot } from '@/lib/inventory-service';
 
@@ -127,7 +128,7 @@ export async function analyzeAuditWithAI(
 
   const response = await fetch(`${apiUrl}/ai/synthesize-audit`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await backendHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ context }),
   });
 

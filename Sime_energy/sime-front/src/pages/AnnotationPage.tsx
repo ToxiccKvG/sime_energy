@@ -47,6 +47,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAnnotationDictionary } from '@/hooks/useAnnotationDictionary';
 import type { ValidationResult } from '@/types/annotation-dictionary';
 import { transformInvoiceTablesToJsonWithRetry } from '@/services/invoiceService';
+import { refreshProjectContextInBackground } from '@/hooks/useProjectContext';
 
 interface FormField {
   Key: string;
@@ -226,6 +227,7 @@ export function AnnotationPage() {
           prev.map((inv, i) => (i === currentIndex ? { ...inv, status: 'verified' } : inv))
         );
         toast.success('Facture vérifiée automatiquement — tous les champs requis détectés');
+        refreshProjectContextInBackground(invoice.audit_id, null);
       })
       .catch(console.error);
   // Include status in deps so the effect re-runs when pending → processing
@@ -767,6 +769,7 @@ export function AnnotationPage() {
         ocr_data: updatedOcrData,
         ocr_data_verified: verifiedData,
       });
+      refreshProjectContextInBackground(invoice.audit_id, null);
 
       const newInvoices = [...invoices];
       newInvoices[currentIndex] = {

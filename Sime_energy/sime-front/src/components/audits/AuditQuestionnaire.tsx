@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, X, ChevronDown, ChevronUp, Settings2, Pencil, ClipboardList, MapPin, FileDown, ExternalLink, CalendarIcon, Clock } from 'lucide-react';
 import { format, parse, isValid } from 'date-fns';
 import { fr } from 'date-fns/locale';
@@ -18,252 +18,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import type { PVQuestionnaire, PVSectionData, PVTableRow, PVTableRowReading, PVCheckboxItem, WoyofalEntry } from '@/types/audit';
+import type { PVQuestionnaire, PVSectionData, PVTableRow, PVCheckboxItem, MesureSession, MesureReading, IndexSubValue } from '@/types/audit';
 
-// ─── Schema types (internal, not stored) ─────────────────────────────────────
-
-type PVSchemaFieldType = 'text' | 'textarea';
-
-interface PVSchemaField {
-  id: string;
-  label: string;
-  type: PVSchemaFieldType;
-}
-
-interface PVSchemaTableRowDef {
-  id: string;
-  label: string;
-  subGroup?: string;
-}
-
-interface PVSchemaCheckboxItemDef {
-  id: string;
-  label: string;
-}
-
-interface PVSectionSchema {
-  id: string;
-  title: string;
-  fields?: PVSchemaField[];
-  tableRows?: PVSchemaTableRowDef[];
-  tableMode?: 'senelec' | 'system';
-  checkboxItems?: PVSchemaCheckboxItemDef[];
-  checkboxLabel?: string;
-  extraCheckboxItems?: PVSchemaCheckboxItemDef[];
-  extraCheckboxLabel?: string;
-  hasFreeText?: boolean;
-  freeTextLabel?: string;
-  hasWoyofal?: boolean;
-}
-
-// ─── Schema Definition ────────────────────────────────────────────────────────
-
-const QUESTIONNAIRE_SCHEMA: PVSectionSchema[] = [
-  {
-    id: 's1',
-    title: 'Informations Générales',
-    fields: [
-      { id: 'nomSite', label: 'Nom du site', type: 'text' },
-      { id: 'activiteSite', label: 'Activité du site', type: 'text' },
-      { id: 'localisation', label: 'Localisation (adresse précise)', type: 'text' },
-      { id: 'dateVisite', label: 'Date et heure de la visite', type: 'text' },
-      { id: 'responsableInspection', label: "Responsable de l'inspection (nom et fonction)", type: 'text' },
-      { id: 'equipePresente', label: 'Équipe présente sur site', type: 'text' },
-      { id: 'telephoneContact', label: 'Téléphone de contact sur site', type: 'text' },
-      { id: 'objectifVisite', label: 'Objectif principal de la visite', type: 'text' },
-      { id: 'conditionsMeteo', label: 'Conditions météorologiques détaillées', type: 'text' },
-      { id: 'statutInitialPV', label: 'Statut initial du système photovoltaïque', type: 'text' },
-      { id: 'observationsPreliminaires', label: 'Observations générales préliminaires', type: 'textarea' },
-    ],
-  },
-  {
-    id: 's2',
-    title: 'Relevé Compteur SENELEC',
-    tableMode: 'senelec',
-    hasWoyofal: true,
-    tableRows: [
-      { id: 'indexDepart', label: 'Index départ' },
-      { id: 'indexFin', label: 'Index fin' },
-      { id: 'puissanceMaxMoisCourant', label: 'Puissance max demandée du mois en cours' },
-      { id: 'puissanceMaxMoisN1', label: 'Puissance max demandée du mois antérieur (N-1)' },
-      { id: 'puissanceMaxMoisN2', label: 'Puissance max demandée du mois antérieur (N-2)' },
-      { id: 'puissanceSouscrite', label: 'Puissance souscrite' },
-      { id: 'facteurPuissance', label: 'Facteur de puissance' },
-      { id: 'frequence', label: 'Fréquence' },
-      { id: 'modele', label: 'Modèle' },
-      { id: 'referencesNumero', label: 'Références / numéro' },
-    ],
-    checkboxLabel: 'Défaut réseau constaté',
-    checkboxItems: [
-      { id: 'tensionTropHaute', label: 'Tension trop haute' },
-      { id: 'tensionTropBasse', label: 'Tension trop basse' },
-      { id: 'frequenceTropHaute', label: 'Fréquence trop haute' },
-      { id: 'frequenceTropBasse', label: 'Fréquence trop basse' },
-      { id: 'coupureIntempestive', label: 'Coupure intempestive' },
-    ],
-  },
-  {
-    id: 's3',
-    title: 'Caractéristiques Techniques de la Centrale PV',
-    fields: [
-      { id: 'puissanceInstalleeKwc', label: 'Puissance installée (kWc)', type: 'text' },
-      { id: 'architecture', label: 'Architecture (centralisée, décentralisée)', type: 'text' },
-      { id: 'systemeFixation', label: 'Système de fixation/intégration', type: 'text' },
-      { id: 'dateMiseEnService', label: 'Date de mise en service', type: 'text' },
-      { id: 'installateur', label: 'Installateur', type: 'text' },
-      { id: 'exploitant', label: 'Exploitant', type: 'text' },
-    ],
-  },
-  {
-    id: 's4',
-    title: 'Modules Photovoltaïques (PV)',
-    fields: [
-      { id: 'fabricantModeleType', label: 'Fabricant, modèle, type', type: 'text' },
-      { id: 'numeroSerie', label: 'Numéro de série', type: 'text' },
-      { id: 'puissanceCrete', label: 'Puissance crête (Pmax en Wc)', type: 'text' },
-      { id: 'tensionPuissanceMax', label: 'Tension à puissance max. (Vmp)', type: 'text' },
-      { id: 'courantPuissanceMax', label: 'Courant à puissance max. (Imp)', type: 'text' },
-      { id: 'tensionCircuitOuvert', label: 'Tension circuit ouvert (Voc)', type: 'text' },
-      { id: 'courantCourtCircuit', label: 'Courant court-circuit (Isc)', type: 'text' },
-      { id: 'calibreFusible', label: 'Calibre du fusible maximal (IRM)', type: 'text' },
-      { id: 'rendement', label: 'Rendement (%) sous conditions standard (STC)', type: 'text' },
-      { id: 'dimensionsPoids', label: 'Dimensions, poids, nombre de cellules', type: 'text' },
-      { id: 'garantie', label: 'Garantie produit et performance', type: 'text' },
-    ],
-  },
-  {
-    id: 's5',
-    title: 'Onduleur',
-    fields: [
-      { id: 'marqueModeleSerieAnnee', label: 'Marque, modèle, numéro de série, année fabrication', type: 'text' },
-      { id: 'typeOnduleur', label: "Type d'onduleur", type: 'text' },
-      { id: 'puissanceNominale', label: 'Puissance nominale (kW)', type: 'text' },
-      { id: 'plageTensionFrequence', label: 'Plage tension entrée (DC), tension et fréquence sortie (AC)', type: 'text' },
-      { id: 'efficaciteMaximale', label: 'Efficacité maximale (%)', type: 'text' },
-      { id: 'refroidissementCompatibilite', label: 'Méthode de refroidissement, compatibilité structure PV', type: 'text' },
-      { id: 'dispositifsProtection', label: 'Dispositifs de protection, conformité normes', type: 'text' },
-      { id: 'communicationMonitoring', label: "Communication et intégration à un système de monitoring", type: 'text' },
-      { id: 'etatPhysiqueHistorique', label: 'État physique, température de fonctionnement, historique maintenance', type: 'textarea' },
-      { id: 'zoneImplantation', label: "Zone d'implantation de l'onduleur", type: 'text' },
-    ],
-  },
-  {
-    id: 's6',
-    title: 'Batterie',
-    fields: [
-      { id: 'marqueModeleSerieAnnee', label: 'Marque, modèle, numéro de série, année fabrication', type: 'text' },
-      { id: 'typeBatterie', label: 'Type de batterie (lithium-ion, plomb-acide, etc.)', type: 'text' },
-      { id: 'capaciteNominale', label: 'Capacité nominale (Ah ou kWh)', type: 'text' },
-      { id: 'energieUtilisable', label: 'Énergie utilisable (kWh, %)', type: 'text' },
-      { id: 'tensionNominale', label: 'Tension nominale (V)', type: 'text' },
-      { id: 'dureeVieEstimee', label: 'Durée de vie estimée (cycles ou années)', type: 'text' },
-      { id: 'plagesTension', label: "Plage de tension d'entrée et de sortie", type: 'text' },
-      { id: 'courantMaxChargeDecharge', label: 'Courant maximal de charge/décharge', type: 'text' },
-      { id: 'rendement', label: 'Rendement (%)', type: 'text' },
-      { id: 'profondeurDecharge', label: 'Profondeur de décharge (DoD, %) / Compatibilité avec l\'installation existante', type: 'text' },
-      { id: 'temperatureFonctionnement', label: 'Température de fonctionnement (plage en °C)', type: 'text' },
-      { id: 'systemeBMS', label: "Présence d'un système de gestion (BMS) et ses fonctions", type: 'text' },
-      { id: 'indiceProtection', label: 'Indice de protection (IP)', type: 'text' },
-      { id: 'zoneInstallation', label: 'Zone d\'installation des batteries', type: 'text' },
-    ],
-  },
-  {
-    id: 's7',
-    title: 'Câble DC & AC',
-    fields: [
-      { id: 'type', label: 'Type (isolé, résistant UV, monophasé/triphasé)', type: 'text' },
-      { id: 'tensionNominaleSupportee', label: 'Tension nominale supportée (DC et AC)', type: 'text' },
-      { id: 'sectionCables', label: 'Section câbles (en mm²)', type: 'text' },
-      { id: 'materiauxIsolation', label: 'Matériaux conducteur (cuivre/aluminium) et isolation (PVC/XLPE)', type: 'text' },
-      { id: 'normesCertifications', label: 'Normes et certifications appliquées', type: 'text' },
-    ],
-  },
-  {
-    id: 's8',
-    title: 'Système Solaire Photovoltaïque',
-    tableMode: 'system',
-    tableRows: [
-      { id: 'nombreLignes', label: 'Nombre de lignes', subGroup: 'Générateur PV' },
-      { id: 'caracteristiquesLignes', label: 'Caractéristiques des lignes', subGroup: 'Générateur PV' },
-      { id: 'dispositifsProtectionDC', label: 'Dispositifs de protection DC', subGroup: 'Générateur PV' },
-      { id: 'parafoudre', label: 'Parafoudre', subGroup: 'Générateur PV' },
-      { id: 'miseATerre', label: 'Mise à la terre', subGroup: 'Générateur PV' },
-      { id: 'fusibles', label: 'Fusibles', subGroup: 'Générateur PV' },
-      { id: 'sectionneursDS', label: 'Sectionneurs DC', subGroup: 'Générateur PV' },
-      { id: 'typeStructurePorteuse', label: 'Type de structure porteuse', subGroup: 'Structure porteuse' },
-      { id: 'materiaux', label: 'Matériaux', subGroup: 'Structure porteuse' },
-      { id: 'nombreOnduleurs', label: "Nombre d'onduleurs", subGroup: 'Onduleurs' },
-      { id: 'couplages', label: 'Couplages', subGroup: 'Onduleurs' },
-      { id: 'chainesParTracker', label: 'Nombre de chaînes par tracker (MPP trackers)', subGroup: 'Onduleurs' },
-      { id: 'courantCharge', label: 'Courant de charge', subGroup: 'Système de stockage' },
-      { id: 'batteriesEnSerie', label: 'Nombre de batteries en série', subGroup: 'Système de stockage' },
-      { id: 'chainesParallele', label: 'Nombre de chaînes en parallèle', subGroup: 'Système de stockage' },
-      { id: 'batteriesParChaine', label: 'Nombre de batteries par chaîne', subGroup: 'Système de stockage' },
-    ],
-  },
-  {
-    id: 's9',
-    title: 'Suivi Production à Distance (Monitoring)',
-    checkboxLabel: 'Type de connexion',
-    checkboxItems: [
-      { id: 'adsl', label: 'ADSL' },
-      { id: 'fibreOptique', label: 'Fibre optique' },
-      { id: 'gprsMobile', label: 'GPRS mobile' },
-      { id: 'sigfox', label: 'SIGFOX (onde radio)' },
-      { id: 'm2mMobile', label: 'M2M mobile' },
-      { id: 'ethernetLocal', label: 'Ethernet / Local' },
-      { id: 'autre', label: 'Autre (préciser)' },
-    ],
-    fields: [
-      { id: 'logicielMonitoring', label: 'Logiciel/plateforme de monitoring utilisée', type: 'text' },
-      { id: 'accesDistant', label: 'Accès distant disponible (oui/non)', type: 'text' },
-      { id: 'donneesEnregistrees', label: 'Données enregistrées (types de mesures)', type: 'textarea' },
-    ],
-  },
-  {
-    id: 's10',
-    title: 'Exploitation & Sécurité',
-    fields: [
-      { id: 'planMaintenance', label: 'Plan de maintenance', type: 'text' },
-      { id: 'documentMaintenance', label: 'Document de maintenance', type: 'text' },
-      { id: 'chargeMaintenance', label: 'Chargé de la maintenance', type: 'text' },
-      { id: 'chargeExploitation', label: "Chargé de l'exploitation (si maintenance externalisée)", type: 'text' },
-      { id: 'extincteur', label: "Existence d'extincteur d'incendie aux lieux adéquats", type: 'text' },
-      { id: 'pictogrammes', label: 'Pictogrammes de sensibilisation', type: 'text' },
-    ],
-  },
-  {
-    id: 's11',
-    title: 'Inspection Visuelle Détaillée — Identification Anomalies',
-    checkboxLabel: 'Anomalies constatées',
-    checkboxItems: [
-      { id: 'etatGeneral', label: "État général panneaux (hotspots, traces d'escargots, corrosion, encrassement, délamination, bris de verre, fissures)" },
-      { id: 'etatCables', label: 'État câbles (pincement, frottements, présence de rongeurs, dégradations visibles)' },
-      { id: 'etatConnecteurs', label: 'État connecteurs (brûlés, corrodés ou dégradés)' },
-      { id: 'ombrages', label: 'Ombrage éventuel (végétation, obstacles physiques, accumulation de saletés)' },
-      { id: 'propreteFiltres', label: "Propreté filtres onduleurs, espace ventilation (filtres obstrués, circulation d'air réduite)" },
-      { id: 'zonesCirculation', label: "Zones de circulation autour champ PV (chemins libres, obstacles dangereux, marquage non clair)" },
-      { id: 'prisesDeTerre', label: 'Présence et état des prises de terre (connexions visibles et en bon état)' },
-      { id: 'onduleursEmplacement', label: "Emplacement et accessibilité des onduleurs (poussière, local non ventilé, accès non sécurisé)" },
-      { id: 'fixationsStructures', label: 'Fixations et structures (état des supports — vis, rails, structures rouillées ou instables)' },
-      { id: 'boitiersElectriques', label: "Boîtiers électriques (état des boîtes de jonction, serrage des connexions, étanchéité)" },
-      { id: 'protectionSurtensions', label: 'Système de protection contre les surtensions (parafoudre)' },
-      { id: 'alignementModules', label: 'Alignement des modules (décalages ou mouvements structurels)' },
-    ],
-    extraCheckboxLabel: 'Usages extérieurs',
-    extraCheckboxItems: [
-      { id: 'pompageStockage', label: "Pompage et stockage d'eau" },
-      { id: 'arrosageAutomatique', label: 'Arrosage automatique des espaces verts' },
-      { id: 'parkingService', label: 'Parking service ou privé (Véhicule)' },
-      { id: 'eclairageExterieur', label: 'Éclairage extérieur' },
-      { id: 'cameraSecurite', label: 'Caméras et systèmes de sécurité' },
-      { id: 'barrieresPortails', label: 'Barrières automatiques et portails électriques' },
-      { id: 'posteGardinage', label: 'Poste ou local de gardinage' },
-    ],
-    hasFreeText: true,
-    freeTextLabel: 'Remarques et recommandations complémentaires',
-  },
-];
+import {
+  type PVSectionSchema, QUESTIONNAIRE_SCHEMA,
+  WOYOFAL_CODE_GROUPS, WOYOFAL_CODE_LABELS, WOYOFAL_TIME_CODES, WOYOFAL_DATE_CODES, WOYOFAL_NUMBER_CODES, WOYOFAL_TOKEN_CODES,
+  OBIS_TABLE, OBIS_BY_KEY, obisOptionLabel,
+} from '@/constants/pv-questionnaire-schema';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -277,15 +38,13 @@ function createEmptySectionData(schema: PVSectionSchema): PVSectionData {
       dateTime: '',
       value: '',
       subGroup: r.subGroup,
-      readings: schema.tableMode === 'senelec'
-        ? [{ id: crypto.randomUUID(), dateTime: '', value: '' }]
-        : undefined,
     })),
     checkboxItems: schema.checkboxItems?.map((c) => ({ id: c.id, label: c.label, checked: false, comment: '' })),
     extraCheckboxItems: schema.extraCheckboxItems?.map((c) => ({ id: c.id, label: c.label, checked: false })),
     freeText: schema.hasFreeText ? '' : undefined,
     customFields: [],
     woyofalEntries: schema.hasWoyofal ? [] : undefined,
+    mesureSessions: schema.hasWoyofal ? [] : undefined,
   };
 }
 
@@ -375,14 +134,6 @@ function MapViewDialog({ open, onOpenChange, lat, lng, label }: {
   );
 }
 
-// ─── SenelecTableEditor (Section 2) — multi-readings per row ─────────────────
-
-function resolveReadings(row: PVTableRow): PVTableRowReading[] {
-  if (row.readings && row.readings.length > 0) return row.readings;
-  // backward compat: old data had flat dateTime/value
-  return [{ id: row.id + '_r0', dateTime: row.dateTime || '', value: row.value || '' }];
-}
-
 // value format: "dd/MM/yyyy" or "dd/MM/yyyy HH:mm"
 function splitDateTime(value: string): [string, string] {
   const m = value.trim().match(/^(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{1,2}:\d{2}))?$/);
@@ -446,188 +197,82 @@ function ReadingDateTimePicker({ value, onChange }: {
   );
 }
 
-function SenelecTableEditor({ rows, onChange }: {
-  rows: PVTableRow[];
-  onChange: (rows: PVTableRow[]) => void;
-}) {
-  const commitReadings = (rowId: string, readings: PVTableRowReading[]) => {
-    onChange(rows.map((r) => r.id === rowId
-      ? { ...r, readings, dateTime: readings[0]?.dateTime ?? '', value: readings[0]?.value ?? '' }
-      : r,
-    ));
-  };
-
-  const addReading = (row: PVTableRow) => {
-    const cur = resolveReadings(row);
-    commitReadings(row.id, [...cur, { id: crypto.randomUUID(), dateTime: '', value: '' }]);
-  };
-
-  const removeReading = (row: PVTableRow, readingId: string) => {
-    const cur = resolveReadings(row);
-    if (cur.length <= 1) return;
-    commitReadings(row.id, cur.filter((rd) => rd.id !== readingId));
-  };
-
-  const updateReading = (row: PVTableRow, readingId: string, field: 'dateTime' | 'value', val: string) => {
-    const cur = resolveReadings(row);
-    commitReadings(row.id, cur.map((rd) => rd.id === readingId ? { ...rd, [field]: val } : rd));
-  };
-
+function ReadingTimePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <div className="rounded-lg border border-slate-700/60 overflow-hidden">
-      {/* header */}
-      <div className="grid grid-cols-[minmax(160px,35%)_1fr_1fr_28px] border-b border-slate-700/60 bg-slate-900/40 px-3 py-2 gap-1">
-        <span className="text-xs font-medium text-slate-400">Relevés</span>
-        <span className="text-xs font-medium text-slate-400">Date et heure</span>
-        <span className="text-xs font-medium text-slate-400">Valeur</span>
-        <span />
-      </div>
-
-      {rows.map((row, rowIdx) => {
-        const readings = resolveReadings(row);
-        return (
-          <div key={row.id} className={cn('border-b border-slate-700/40 last:border-0', rowIdx % 2 === 1 && 'bg-slate-800/20')}>
-            {readings.map((rd, rdIdx) => (
-              <div key={rd.id} className="grid grid-cols-[minmax(160px,35%)_1fr_1fr_28px] gap-1 px-2 py-1 items-center">
-                {/* label only on first reading */}
-                <span className={cn('px-1 text-xs text-slate-300 leading-snug', rdIdx > 0 && 'invisible select-none')}>
-                  {row.label}
-                </span>
-
-                <ReadingDateTimePicker
-                  value={rd.dateTime}
-                  onChange={(v) => updateReading(row, rd.id, 'dateTime', v)}
-                />
-
-                <input
-                  type="text"
-                  value={rd.value}
-                  onChange={(e) => updateReading(row, rd.id, 'value', e.target.value)}
-                  placeholder="—"
-                  className="rounded border border-slate-600/60 bg-slate-700/40 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500/60"
-                />
-
-                {/* last reading: show + ; others: show × */}
-                {rdIdx === readings.length - 1 ? (
-                  <button
-                    type="button"
-                    onClick={() => addReading(row)}
-                    title="Ajouter une valeur"
-                    className="flex items-center justify-center text-slate-500 hover:text-blue-400 transition-colors"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => removeReading(row, rd.id)}
-                    title="Supprimer cette valeur"
-                    className="flex items-center justify-center text-slate-600 hover:text-red-400 transition-colors"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        );
-      })}
+    <div className="flex items-center gap-1.5 rounded border border-amber-600/30 bg-slate-700/40 px-2 py-1">
+      <Clock className="h-3 w-3 shrink-0 text-slate-500" />
+      <input
+        type="time"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-transparent text-xs text-slate-100 focus:outline-none [color-scheme:dark]"
+      />
     </div>
   );
 }
 
-// ─── Codes courts Woyofal (SENELEC) ──────────────────────────────────────────
-
-const WOYOFAL_CODE_GROUPS: { group: string; codes: { code: string; label: string }[] }[] = [
-  {
-    group: 'Général',
-    codes: [
-      { code: '802', label: 'Date actuelle du compteur' },
-      { code: '803', label: 'Heure actuelle du compteur' },
-    ],
-  },
-  {
-    group: 'Compteur (paramètres techniques)',
-    codes: [
-      { code: '804', label: 'Numéro du compteur' },
-      { code: '869', label: 'Puissance limite (kW) — puissance souscrite' },
-      { code: '808', label: 'Puissance instantanée consommée (W/kW)' },
-      { code: '812', label: "Annuler l'alarme" },
-      { code: '810', label: "Valeur du découvert (crédit d'urgence accordé)" },
-    ],
-  },
-  {
-    group: 'Consommation',
-    codes: [
-      { code: '800', label: 'Consommation totale cumulée (kWh)' },
-      { code: '801', label: 'Crédit restant (kWh disponibles)' },
-      { code: '813', label: 'Consommation des dernières 24h (kWh)' },
-      { code: '814', label: 'Consommation du mois en cours (kWh)' },
-      { code: '820', label: 'Consommation du mois précédent (kWh)' },
-      { code: '817', label: 'Montant de la dernière recharge (FCFA)' },
-      { code: '811', label: "Emprunt crédit / crédit d'urgence activé" },
-      { code: '815', label: 'Date de la dernière recharge' },
-      { code: '816', label: 'Heure de la dernière recharge' },
-      { code: '830', label: 'Code de la dernière recharge' },
-    ],
-  },
-];
-
-const WOYOFAL_CODE_LABELS: Record<string, string> = Object.fromEntries(
-  WOYOFAL_CODE_GROUPS.flatMap((g) => g.codes.map((c) => [c.code, c.label])),
-);
-
-// Codes whose "valeur relevée" is itself a date/time value
-const WOYOFAL_DATETIME_CODES = new Set(['802', '803', '815', '816']);
-
-// ─── WoyofalEditor ────────────────────────────────────────────────────────────
-
-function WoyofalEditor({ entries, onChange }: {
-  entries: WoyofalEntry[];
-  onChange: (entries: WoyofalEntry[]) => void;
-}) {
-  const add = () => onChange([...entries, { id: crypto.randomUUID(), code: '', valeur: '', dateTime: '' }]);
-  const remove = (id: string) => onChange(entries.filter((e) => e.id !== id));
-  const update = (id: string, field: 'code' | 'valeur' | 'dateTime', val: string) =>
-    onChange(entries.map((e) => e.id === id ? { ...e, [field]: val } : e));
-
+function ReadingDateOnlyPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const date = parseReadingDate(value);
   return (
-    <div className="space-y-2.5">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold text-amber-400/90 uppercase tracking-wide">Compteurs Woyofal</p>
+    <Popover>
+      <PopoverTrigger asChild>
         <button
           type="button"
-          onClick={add}
-          className="flex items-center gap-1 text-xs text-slate-500 hover:text-amber-400 transition-colors"
+          className={cn(
+            'flex items-center gap-1.5 rounded border border-amber-600/30 bg-slate-700/40 px-2 py-1 text-xs text-left focus:outline-none focus:ring-1 focus:ring-amber-500/60 w-full',
+            value ? 'text-slate-100' : 'text-slate-600',
+          )}
         >
-          <Plus className="h-3 w-3" />
-          Ajouter un compteur
+          <CalendarIcon className="h-3 w-3 shrink-0 text-slate-500" />
+          {value || 'jj/mm/aaaa'}
         </button>
-      </div>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <Calendar
+          mode="single"
+          locale={fr}
+          selected={date}
+          onSelect={(d) => onChange(d ? format(d, 'dd/MM/yyyy') : '')}
+          initialFocus
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
 
-      {entries.length > 0 ? (
-        <div className="rounded-lg border border-amber-500/25 overflow-hidden">
-          <div className="grid grid-cols-[1.5fr_160px_1fr_28px] border-b border-amber-500/20 bg-amber-500/5 px-3 py-2 gap-2">
-            <span className="text-xs font-medium text-amber-400/80">Code Woyofal</span>
-            <span className="text-xs font-medium text-amber-400/80">Date et heure</span>
-            <span className="text-xs font-medium text-amber-400/80">Valeur relevée</span>
+// ─── Woyofal readings table (inside a WOYOFAL session) ──────────────────────
+
+type WoyofalReading = Extract<MesureReading, { kind: 'woyofal' }>;
+type IndexReading   = Extract<MesureReading, { kind: 'index' }>;
+
+function WoyofalReadingsEditor({ readings, onChange }: {
+  readings: WoyofalReading[];
+  onChange: (readings: MesureReading[]) => void;
+}) {
+  const add    = () => onChange([...readings, { kind: 'woyofal', id: crypto.randomUUID(), code: '', valeur: '' }]);
+  const remove = (id: string) => onChange(readings.filter((r) => r.id !== id));
+  const update = (id: string, field: 'code' | 'valeur', val: string) =>
+    onChange(readings.map((r) => r.id === id ? { ...r, [field]: val } : r));
+
+  return (
+    <div className="space-y-2">
+      {readings.length > 0 && (
+        <div className="rounded-md border border-amber-500/20 overflow-hidden">
+          <div className="grid grid-cols-[1.8fr_1fr_24px] gap-2 border-b border-amber-500/15 bg-amber-500/5 px-3 py-1.5">
+            <span className="text-[10px] font-medium text-amber-400/70 uppercase tracking-wide">Code Woyofal</span>
+            <span className="text-[10px] font-medium text-amber-400/70 uppercase tracking-wide">Valeur relevée</span>
             <span />
           </div>
-          {entries.map((entry, i) => (
-            <div
-              key={entry.id}
-              className={cn('grid grid-cols-[1.5fr_160px_1fr_28px] gap-2 px-2 py-1 items-center border-b border-amber-500/10 last:border-0 group', i % 2 === 1 && 'bg-amber-500/5')}
-            >
-              <Select value={entry.code || undefined} onValueChange={(val) => update(entry.id, 'code', val)}>
+          {readings.map((r, i) => (
+            <div key={r.id} className={cn('grid grid-cols-[1.8fr_1fr_24px] gap-2 px-2 py-1 items-center border-b border-amber-500/10 last:border-0 group', i % 2 === 1 && 'bg-amber-500/5')}>
+              <Select value={r.code || undefined} onValueChange={(val) => update(r.id, 'code', val)}>
                 <SelectTrigger className="h-auto rounded border border-amber-600/30 bg-slate-700/40 px-2 py-1 text-xs text-slate-100 focus:ring-1 focus:ring-amber-500/60">
                   <SelectValue placeholder="Sélectionner un code…" />
                 </SelectTrigger>
                 <SelectContent className="max-h-72">
                   {WOYOFAL_CODE_GROUPS.map((g) => (
                     <SelectGroup key={g.group}>
-                      <SelectLabel className="text-[10px] uppercase tracking-wide text-amber-400/70">
-                        {g.group}
-                      </SelectLabel>
+                      <SelectLabel className="text-[10px] uppercase tracking-wide text-amber-400/70">{g.group}</SelectLabel>
                       {g.codes.map((c) => (
                         <SelectItem key={c.code} value={c.code} className="text-xs">
                           <span className="font-mono font-medium">{c.code}</span> — {c.label}
@@ -637,42 +282,452 @@ function WoyofalEditor({ entries, onChange }: {
                   ))}
                 </SelectContent>
               </Select>
-              <ReadingDateTimePicker
-                value={entry.dateTime ?? ''}
-                onChange={(v) => update(entry.id, 'dateTime', v)}
-              />
-              {WOYOFAL_DATETIME_CODES.has(entry.code) ? (
-                <ReadingDateTimePicker
-                  value={entry.valeur}
-                  onChange={(v) => update(entry.id, 'valeur', v)}
-                />
+              {WOYOFAL_TIME_CODES.has(r.code) ? (
+                <ReadingTimePicker value={r.valeur} onChange={(v) => update(r.id, 'valeur', v)} />
+              ) : WOYOFAL_DATE_CODES.has(r.code) ? (
+                <ReadingDateOnlyPicker value={r.valeur} onChange={(v) => update(r.id, 'valeur', v)} />
+              ) : WOYOFAL_NUMBER_CODES.has(r.code) ? (
+                <input type="number" value={r.valeur} onChange={(e) => update(r.id, 'valeur', e.target.value)} placeholder="0"
+                  className="w-full rounded border border-amber-600/30 bg-slate-700/40 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-amber-500/60 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none" />
+              ) : WOYOFAL_TOKEN_CODES.has(r.code) ? (
+                <input type="text" value={r.valeur} onChange={(e) => update(r.id, 'valeur', e.target.value)} placeholder="— token"
+                  className="w-full rounded border border-amber-600/30 bg-slate-700/40 px-2 py-1 text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-amber-500/60" />
               ) : (
-                <input
-                  type="text"
-                  value={entry.valeur}
-                  onChange={(e) => update(entry.id, 'valeur', e.target.value)}
-                  placeholder="—"
-                  className="rounded border border-amber-600/30 bg-slate-700/40 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-amber-500/60"
-                />
+                <input type="text" value={r.valeur} onChange={(e) => update(r.id, 'valeur', e.target.value)} placeholder="—"
+                  className="w-full rounded border border-amber-600/30 bg-slate-700/40 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-amber-500/60" />
               )}
-              <button
-                type="button"
-                onClick={() => remove(entry.id)}
-                className="flex items-center justify-center text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
-              >
+              <button type="button" onClick={() => remove(r.id)}
+                className="flex items-center justify-center text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100">
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
           ))}
         </div>
-      ) : (
-        <div
-          className="rounded-lg border border-dashed border-amber-500/20 bg-amber-500/5 px-4 py-3 text-center cursor-pointer hover:bg-amber-500/10 transition-colors"
-          onClick={add}
-        >
-          <p className="text-xs text-slate-500">Aucun compteur Woyofal saisi — cliquez pour ajouter</p>
+      )}
+      <button type="button" onClick={add}
+        className="flex items-center gap-1 text-xs text-slate-500 hover:text-amber-400 transition-colors">
+        <Plus className="h-3 w-3" />
+        Ajouter un relevé
+      </button>
+    </div>
+  );
+}
+
+// ─── Index readings table (inside an INDEX session) ───────────────────────────
+
+function IndexReadingsEditor({ readings, onChange }: {
+  readings: IndexReading[];
+  onChange: (readings: MesureReading[]) => void;
+}) {
+  const addCustom = () => onChange([...readings, { kind: 'index', id: crypto.randomUUID(), key: '', valeur: '', date: '' }]);
+  const remove    = (id: string) => onChange(readings.filter((r) => r.id !== id));
+
+  const updateField = (id: string, field: 'key' | 'valeur' | 'date', val: string) =>
+    onChange(readings.map((r) => r.id === id ? { ...r, [field]: val } : r));
+
+  const addSubValue = (id: string) =>
+    onChange(readings.map((r) => {
+      if (r.id !== id) return r;
+      const sv: IndexSubValue = { id: crypto.randomUUID(), code: '', valeur: '' };
+      return { ...r, subValues: [...(r.subValues ?? []), sv] };
+    }));
+
+  const updateSubValue = (id: string, svId: string, field: 'code' | 'valeur', val: string) =>
+    onChange(readings.map((r) => {
+      if (r.id !== id) return r;
+      return { ...r, subValues: r.subValues?.map((sv) => sv.id === svId ? { ...sv, [field]: val } : sv) };
+    }));
+
+  const removeSubValue = (id: string, svId: string) =>
+    onChange(readings.map((r) => {
+      if (r.id !== id) return r;
+      return { ...r, subValues: r.subValues?.filter((sv) => sv.id !== svId) };
+    }));
+
+  const fixedRows  = readings.filter((r) => r.fixed);
+  const customRows = readings.filter((r) => !r.fixed);
+
+  // Grille interne des sous-valeurs : Code OBIS | Libellé | Valeur | ✕
+  const subGridCls = 'grid grid-cols-[1.3fr_1.6fr_1fr_20px]';
+
+  return (
+    <div className="space-y-2">
+      {/* Champs standards (prépopulés) */}
+      {fixedRows.length > 0 && (
+        <div className="rounded-md border border-blue-500/20 overflow-hidden">
+          {/* En-tête : Paramètre | Date et heure | (Code OBIS | Libellé | Valeur) */}
+          <div className="grid grid-cols-[1.1fr_0.8fr_2.7fr] border-b border-blue-500/15 bg-blue-500/5 px-3 py-1.5 gap-3">
+            <span className="text-[10px] font-medium text-blue-400/70 uppercase tracking-wide">Paramètre</span>
+            <span className="text-[10px] font-medium text-blue-400/70 uppercase tracking-wide">Date et heure</span>
+            <div className={cn(subGridCls, 'gap-1.5')}>
+              <span className="text-[10px] font-medium text-blue-400/70 uppercase tracking-wide">Code OBIS</span>
+              <span className="text-[10px] font-medium text-blue-400/70 uppercase tracking-wide">Libellé</span>
+              <span className="text-[10px] font-medium text-blue-400/70 uppercase tracking-wide">Valeur</span>
+              <span />
+            </div>
+          </div>
+          {fixedRows.map((r, i) => (
+            <div key={r.id} className={cn(
+              'grid grid-cols-[1.1fr_0.8fr_2.7fr] gap-3 px-3 py-2 border-b border-blue-500/10 last:border-0 items-start',
+              i % 2 === 1 && 'bg-blue-500/5',
+            )}>
+              {/* Paramètre (catégorie) */}
+              <span className="text-xs text-slate-300 pt-1.5 leading-tight font-medium">{r.key}</span>
+
+              {/* Date et heure (horodatage de la catégorie) */}
+              <ReadingDateTimePicker
+                value={r.date ?? ''}
+                onChange={(v) => updateField(r.id, 'date', v)}
+              />
+
+              {/* Sous-valeurs : Code OBIS (dropdown) | Libellé (auto) | Valeur (num.) */}
+              <div className="space-y-1.5">
+                {(r.subValues ?? []).map((sv) => {
+                  const entry = OBIS_BY_KEY[sv.code];
+                  return (
+                    <div key={sv.id} className={cn(subGridCls, 'gap-1.5 items-center')}>
+                      {/* Code OBIS — menu déroulant */}
+                      <Select value={sv.code || undefined} onValueChange={(val) => updateSubValue(r.id, sv.id, 'code', val)}>
+                        <SelectTrigger className="h-auto rounded border border-blue-600/30 bg-slate-700/40 px-2 py-1 text-xs text-slate-100 focus:ring-1 focus:ring-blue-500/60">
+                          <SelectValue placeholder="Choisir un code…" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          {OBIS_TABLE.map((e) => (
+                            <SelectItem key={e.key} value={e.key} className="text-xs">
+                              {e.code
+                                ? <><span className="font-mono font-medium">{e.code}</span> → {e.signification}</>
+                                : e.signification}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {/* Libellé — affichage lecture seule dérivé du code */}
+                      <span className="text-xs text-slate-400 px-1 leading-tight">
+                        {entry?.libelle || <span className="text-slate-600">—</span>}
+                      </span>
+
+                      {/* Valeur numérique */}
+                      <input
+                        type="number"
+                        value={sv.valeur}
+                        onChange={(e) => updateSubValue(r.id, sv.id, 'valeur', e.target.value)}
+                        placeholder="0"
+                        className="w-full min-w-0 rounded border border-blue-600/30 bg-slate-700/40 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500/60 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+
+                      <button type="button" onClick={() => removeSubValue(r.id, sv.id)}
+                        className="shrink-0 text-slate-600 hover:text-red-400 transition-colors">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+                <button type="button" onClick={() => addSubValue(r.id)}
+                  className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-400 transition-colors">
+                  <Plus className="h-3 w-3" />
+                  Ajouter une ligne
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
+
+      {/* Lignes personnalisées */}
+      {customRows.length > 0 && (
+        <div className="rounded-md border border-slate-700/40 overflow-hidden">
+          <div className="grid grid-cols-[1fr_1fr_24px] gap-2 border-b border-slate-700/30 bg-slate-800/40 px-3 py-1.5">
+            <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Libellé personnalisé</span>
+            <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Valeur</span>
+            <span />
+          </div>
+          {customRows.map((r, i) => (
+            <div key={r.id} className={cn('grid grid-cols-[1fr_1fr_24px] gap-2 px-2 py-1 items-center border-b border-slate-700/30 last:border-0 group', i % 2 === 1 && 'bg-slate-800/20')}>
+              <input type="text" value={r.key} onChange={(e) => updateField(r.id, 'key', e.target.value)} placeholder="Libellé…"
+                className="w-full rounded border border-slate-600/40 bg-slate-700/40 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500/60" />
+              <input type="text" value={r.valeur} onChange={(e) => updateField(r.id, 'valeur', e.target.value)} placeholder="—"
+                className="w-full rounded border border-slate-600/40 bg-slate-700/40 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500/60" />
+              <button type="button" onClick={() => remove(r.id)}
+                className="flex items-center justify-center text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button type="button" onClick={addCustom}
+        className="flex items-center gap-1 text-xs text-slate-500 hover:text-blue-400 transition-colors">
+        <Plus className="h-3 w-3" />
+        Ajouter une ligne personnalisée
+      </button>
+    </div>
+  );
+}
+
+// ─── Session card (accordion) ────────────────────────────────────────────────
+
+function SessionCard({ session, open, onToggle, onUpdate, onRemove }: {
+  session: MesureSession;
+  open: boolean;
+  onToggle: () => void;
+  onUpdate: (updates: Partial<MesureSession>) => void;
+  onRemove: () => void;
+}) {
+  const [renaming, setRenaming] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(session.label);
+  const isWoyofal = session.type === 'WOYOFAL';
+  const count = session.readings.length;
+
+  const commitRename = () => {
+    onUpdate({ label: labelDraft.trim() || session.label });
+    setRenaming(false);
+  };
+
+  const woyofalReadings = session.readings.filter((r): r is WoyofalReading => r.kind === 'woyofal');
+  const indexReadings   = session.readings.filter((r): r is IndexReading   => r.kind === 'index');
+
+  return (
+    <div className="rounded-lg border border-slate-700/50 overflow-hidden">
+      {/* ── Header ── */}
+      <div className={cn(
+        'flex items-center gap-2 px-3 py-2.5 bg-slate-800/50 hover:bg-slate-800/70 transition-colors',
+        open && 'border-b border-slate-700/50',
+      )}>
+        <button type="button" onClick={onToggle} className="flex-1 flex items-center gap-2 min-w-0 text-left">
+          {open
+            ? <ChevronUp className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+            : <ChevronDown className="h-3.5 w-3.5 text-slate-500 shrink-0" />}
+
+          <span className={cn(
+            'shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide',
+            isWoyofal ? 'bg-amber-500/20 text-amber-300' : 'bg-blue-500/20 text-blue-300',
+          )}>
+            {isWoyofal ? 'WOYOFAL' : 'INDEX'}
+          </span>
+
+          {renaming ? (
+            <input
+              autoFocus
+              type="text"
+              value={labelDraft}
+              onChange={(e) => setLabelDraft(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitRename();
+                if (e.key === 'Escape') { setLabelDraft(session.label); setRenaming(false); }
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 min-w-0 bg-transparent border-b border-amber-500/40 text-xs text-slate-100 focus:outline-none"
+            />
+          ) : (
+            <span className="text-xs font-medium text-slate-200 truncate">{session.label}</span>
+          )}
+
+          {session.dateTime && (
+            <span className="shrink-0 text-[10px] text-slate-500">{session.dateTime}</span>
+          )}
+          {count > 0 && (
+            <span className="shrink-0 px-1.5 py-0.5 rounded-full bg-slate-700/60 text-[10px] text-slate-400">
+              {count} relevé{count > 1 ? 's' : ''}
+            </span>
+          )}
+        </button>
+
+        <button type="button" title="Renommer"
+          onClick={(e) => { e.stopPropagation(); setLabelDraft(session.label); setRenaming(true); }}
+          className="shrink-0 text-slate-600 hover:text-slate-300 transition-colors">
+          <Pencil className="h-3 w-3" />
+        </button>
+        <button type="button" title="Supprimer"
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          className="shrink-0 text-slate-600 hover:text-red-400 transition-colors">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* ── Body ── */}
+      {open && (
+        <div className="p-3 bg-slate-800/20">
+          {isWoyofal ? (
+            <WoyofalReadingsEditor
+              readings={woyofalReadings}
+              onChange={(readings) => onUpdate({ readings })}
+            />
+          ) : (
+            <IndexReadingsEditor
+              readings={indexReadings}
+              onChange={(readings) => onUpdate({ readings })}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── New session modal ────────────────────────────────────────────────────────
+
+function NewSessionModal({ open, onOpenChange, onCreate }: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onCreate: (s: Omit<MesureSession, 'id' | 'readings'>) => void;
+}) {
+  const [type, setType] = useState<'WOYOFAL' | 'INDEX'>('WOYOFAL');
+  const [label, setLabel] = useState('');
+  const [dateTime, setDateTime] = useState('');
+
+  useEffect(() => {
+    if (open) { setType('WOYOFAL'); setLabel(''); setDateTime(''); }
+  }, [open]);
+
+  const handleCreate = () => {
+    const fallback = type === 'WOYOFAL' ? 'Campagne Woyofal' : 'Relevé index';
+    onCreate({ type, label: label.trim() || fallback, dateTime });
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[420px] bg-slate-900 border-slate-700/60 text-slate-100">
+        <DialogHeader>
+          <DialogTitle className="text-sm font-semibold text-slate-100">Nouvelle mesure</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          {/* Type */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-400">Type de compteur</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {(['INDEX', 'WOYOFAL'] as const).map((t) => (
+                <button key={t} type="button" onClick={() => setType(t)}
+                  className={cn(
+                    'px-3 py-2.5 rounded-lg border text-xs font-medium transition-colors text-left',
+                    type === t
+                      ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
+                      : 'border-slate-700/60 bg-slate-800/40 text-slate-400 hover:border-slate-600/60 hover:text-slate-300',
+                  )}>
+                  {t === 'WOYOFAL' ? 'Woyofal (prépayé)' : 'Compteur classique'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Label */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-400">Nom de la campagne <span className="text-slate-600">(optionnel)</span></Label>
+            <input type="text" value={label} onChange={(e) => setLabel(e.target.value)}
+              placeholder={type === 'WOYOFAL' ? 'ex: Campagne lundi matin' : 'ex: Relevé index mardi'}
+              className="w-full rounded-lg border border-slate-600/60 bg-slate-800/40 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+            />
+          </div>
+
+          {/* Date/Heure */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-400">Date et heure de la mesure</Label>
+            <ReadingDateTimePicker value={dateTime} onChange={setDateTime} />
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2 pt-2">
+          <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}
+            className="text-slate-400 hover:text-slate-200">
+            Annuler
+          </Button>
+          <Button size="sm" onClick={handleCreate}
+            className="bg-amber-600 hover:bg-amber-500 text-white">
+            Créer la mesure
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Index fixed rows (prépopulés à la création d'une session INDEX) ──────────
+
+const INDEX_MULTI_VALUE_KEYS = new Set(['Index départ', 'Index fin']);
+
+// Sous-valeurs par défaut : les 21 codes OBIS préchargés (une ligne par code).
+const DEFAULT_SUB_VALUES: Omit<IndexSubValue, 'id'>[] = OBIS_TABLE.map((e) => ({ code: e.key, valeur: '' }));
+
+// 'Index départ' et 'Index fin' sont les 2 relevés de référence ; les autres
+// paramètres (puissance max demandée, facteur de puissance, etc.) sont saisis
+// comme sous-catégories propres à chacun (relevé complet à chaque instant).
+const INDEX_FIXED_ROWS = [
+  'Index départ',
+  'Index fin',
+];
+
+// ─── MesureSessionsEditor (main) ──────────────────────────────────────────────
+
+function MesureSessionsEditor({ sessions, onChange }: {
+  sessions: MesureSession[];
+  onChange: (sessions: MesureSession[]) => void;
+}) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set());
+
+  const toggle = (id: string) =>
+    setOpenIds((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+
+  const addSession = (partial: Omit<MesureSession, 'id' | 'readings'>) => {
+    const readings: MesureReading[] = partial.type === 'INDEX'
+      ? INDEX_FIXED_ROWS.map((label) => ({
+          kind: 'index' as const,
+          id: crypto.randomUUID(),
+          key: label,
+          valeur: '',
+          date: '',
+          fixed: true,
+          subValues: INDEX_MULTI_VALUE_KEYS.has(label)
+            ? DEFAULT_SUB_VALUES.map((sv) => ({ ...sv, id: crypto.randomUUID() }))
+            : [],
+        }))
+      : [];
+    const s: MesureSession = { id: crypto.randomUUID(), readings, ...partial };
+    onChange([...sessions, s]);
+    setOpenIds((prev) => new Set([...prev, s.id]));
+  };
+
+  const removeSession = (id: string) => onChange(sessions.filter((s) => s.id !== id));
+
+  const updateSession = (id: string, updates: Partial<MesureSession>) =>
+    onChange(sessions.map((s) => s.id === id ? { ...s, ...updates } : s));
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-amber-400/90 uppercase tracking-wide">Relevés de compteurs</p>
+        <button type="button" onClick={() => setModalOpen(true)}
+          className="flex items-center gap-1 text-xs text-slate-500 hover:text-amber-400 transition-colors">
+          <Plus className="h-3 w-3" />
+          Ajouter une mesure
+        </button>
+      </div>
+
+      {sessions.length > 0 ? (
+        <div className="space-y-2">
+          {sessions.map((session) => (
+            <SessionCard
+              key={session.id}
+              session={session}
+              open={openIds.has(session.id)}
+              onToggle={() => toggle(session.id)}
+              onUpdate={(updates) => updateSession(session.id, updates)}
+              onRemove={() => removeSession(session.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div onClick={() => setModalOpen(true)}
+          className="rounded-lg border border-dashed border-amber-500/20 bg-amber-500/5 px-4 py-4 text-center cursor-pointer hover:bg-amber-500/10 transition-colors">
+          <p className="text-xs text-slate-500">Aucune mesure saisie — cliquez pour ajouter</p>
+        </div>
+      )}
+
+      <NewSessionModal open={modalOpen} onOpenChange={setModalOpen} onCreate={addSession} />
     </div>
   );
 }
@@ -1101,29 +1156,19 @@ function SectionCard({ idx, schema, data, onChange }: {
             </div>
           )}
 
-          {/* Table (Section 2 — Senelec or Section 8 — System) */}
-          {schema.tableRows && data.tableRows && (
-            <>
-              {schema.tableMode === 'senelec' && (
-                <SenelecTableEditor
-                  rows={data.tableRows}
-                  onChange={(rows) => onChange({ ...data, tableRows: rows })}
-                />
-              )}
-              {schema.tableMode === 'system' && (
-                <SystemTableEditor
-                  rows={data.tableRows}
-                  onChange={(rows) => onChange({ ...data, tableRows: rows })}
-                />
-              )}
-            </>
+          {/* Table (Section 8 — System) */}
+          {schema.tableRows && data.tableRows && schema.tableMode === 'system' && (
+            <SystemTableEditor
+              rows={data.tableRows}
+              onChange={(rows) => onChange({ ...data, tableRows: rows })}
+            />
           )}
 
-          {/* Woyofal sub-section (Section 2 only) */}
+          {/* Mesure sessions (Section 2 — relevés compteurs) */}
           {schema.hasWoyofal && (
-            <WoyofalEditor
-              entries={data.woyofalEntries ?? []}
-              onChange={(entries) => onChange({ ...data, woyofalEntries: entries })}
+            <MesureSessionsEditor
+              sessions={data.mesureSessions ?? []}
+              onChange={(sessions) => onChange({ ...data, mesureSessions: sessions })}
             />
           )}
 
@@ -1199,9 +1244,9 @@ function buildRecapHTML(questionnaire: PVQuestionnaire): string {
     const checkedItems = sec.checkboxItems?.filter((c) => c.checked) ?? [];
     const checkedExtra = sec.extraCheckboxItems?.filter((c) => c.checked) ?? [];
     const sectionCf = (sec.customFields ?? []).filter((f) => f.key || f.value);
-    const filledWoyofal = (sec.woyofalEntries ?? []).filter((e) => e.code || e.valeur);
+    const filledSessions = (sec.mesureSessions ?? []).filter((s) => s.readings.length > 0);
 
-    if (!filledFields.length && !hasCoords && !filledRows.length && !checkedItems.length && !checkedExtra.length && !sec.freeText && !sectionCf.length && !filledWoyofal.length) return;
+    if (!filledFields.length && !hasCoords && !filledRows.length && !checkedItems.length && !checkedExtra.length && !sec.freeText && !sectionCf.length && !filledSessions.length) return;
 
     body += `<h2>${i + 1}. ${schema.title}</h2>`;
 
@@ -1228,15 +1273,35 @@ function buildRecapHTML(questionnaire: PVQuestionnaire): string {
       body += '</tbody></table>';
     }
 
-    if (filledWoyofal.length) {
-      body += '<p class="grp">Compteurs Woyofal</p>';
-      body += '<table><thead><tr><th>Code Woyofal</th><th>Date et heure</th><th>Valeur relevée</th></tr></thead><tbody>';
-      filledWoyofal.forEach((e) => {
-        const woyofalLabel = WOYOFAL_CODE_LABELS[e.code] ? `${e.code} — ${WOYOFAL_CODE_LABELS[e.code]}` : e.code;
-        body += `<tr><td>${woyofalLabel}</td><td>${e.dateTime || '—'}</td><td>${e.valeur}</td></tr>`;
-      });
+    filledSessions.forEach((session) => {
+      const typeLabel = session.type === 'WOYOFAL' ? 'Woyofal' : 'Index manuel';
+      body += `<p class="grp">${session.label} — ${typeLabel}${session.dateTime ? ` — ${session.dateTime}` : ''}</p>`;
+      if (session.type === 'WOYOFAL') {
+        body += '<table><thead><tr><th>Code Woyofal</th><th>Valeur relevée</th></tr></thead><tbody>';
+        session.readings.forEach((r) => {
+          if (r.kind !== 'woyofal') return;
+          const lbl = WOYOFAL_CODE_LABELS[r.code] ? `${r.code} — ${WOYOFAL_CODE_LABELS[r.code]}` : r.code;
+          body += `<tr><td>${lbl}</td><td>${r.valeur}</td></tr>`;
+        });
+      } else {
+        body += '<table><thead><tr><th>Paramètre</th><th>Date et heure</th><th>Valeur</th></tr></thead><tbody>';
+        session.readings.forEach((r) => {
+          if (r.kind !== 'index') return;
+          const date = r.date || '—';
+          if (r.subValues && r.subValues.length > 0) {
+            const valStr = r.subValues.map((sv) => {
+              const e = OBIS_BY_KEY[sv.code];
+              const name = e ? [obisOptionLabel(e), e.libelle].filter(Boolean).join(' · ') : sv.code;
+              return `${name} = ${sv.valeur || '—'}`;
+            }).join('<br>');
+            body += `<tr><td>${r.key}</td><td>${date}</td><td>${valStr}</td></tr>`;
+          } else {
+            body += `<tr><td>${r.key}</td><td>${date}</td><td>${r.valeur || '—'}</td></tr>`;
+          }
+        });
+      }
       body += '</tbody></table>';
-    }
+    });
 
     if (checkedItems.length) {
       body += `<p class="grp">${schema.checkboxLabel ?? 'Éléments cochés'}</p><ul>`;
@@ -1323,9 +1388,9 @@ function RecapContent({ questionnaire }: { questionnaire: PVQuestionnaire }) {
         const checkedItems = sec.checkboxItems?.filter((c) => c.checked) ?? [];
         const checkedExtra = sec.extraCheckboxItems?.filter((c) => c.checked) ?? [];
         const sectionCf = (sec.customFields ?? []).filter((f) => f.key || f.value);
-        const filledWoyofal = (sec.woyofalEntries ?? []).filter((e) => e.code || e.valeur);
+        const filledSessions = (sec.mesureSessions ?? []).filter((s) => s.readings.length > 0);
 
-        if (!filledFields.length && !hasCoords && !filledRows.length && !checkedItems.length && !checkedExtra.length && !sec.freeText && !sectionCf.length && !filledWoyofal.length) return null;
+        if (!filledFields.length && !hasCoords && !filledRows.length && !checkedItems.length && !checkedExtra.length && !sec.freeText && !sectionCf.length && !filledSessions.length) return null;
 
         const color = SECTION_COLORS[i % SECTION_COLORS.length];
 
@@ -1386,36 +1451,76 @@ function RecapContent({ questionnaire }: { questionnaire: PVQuestionnaire }) {
                 </div>
               )}
 
-              {filledWoyofal.length > 0 && (
-                <div className="overflow-x-auto rounded border border-amber-500/25">
-                  <div className="px-3 py-1.5 bg-amber-500/5 border-b border-amber-500/20">
-                    <span className="text-xs font-semibold text-amber-400/80 uppercase tracking-wide">Compteurs Woyofal</span>
+              {filledSessions.map((session) => {
+                const isW = session.type === 'WOYOFAL';
+                return (
+                  <div key={session.id} className={cn('overflow-x-auto rounded border', isW ? 'border-amber-500/25' : 'border-blue-500/25')}>
+                    <div className={cn('flex items-center gap-2 px-3 py-1.5 border-b', isW ? 'bg-amber-500/5 border-amber-500/20' : 'bg-blue-500/5 border-blue-500/20')}>
+                      <span className={cn('text-[10px] font-bold px-1.5 py-0.5 rounded', isW ? 'bg-amber-500/20 text-amber-300' : 'bg-blue-500/20 text-blue-300')}>
+                        {session.type}
+                      </span>
+                      <span className="text-xs font-medium text-slate-300">{session.label}</span>
+                      {session.dateTime && <span className="text-[10px] text-slate-500">{session.dateTime}</span>}
+                    </div>
+                    {isW ? (
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-amber-500/20 bg-amber-500/5">
+                            <th className="px-3 py-1.5 text-left font-medium text-amber-400/70">Code Woyofal</th>
+                            <th className="px-3 py-1.5 text-left font-medium text-amber-400/70">Valeur relevée</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {session.readings.map((r, ri) => r.kind === 'woyofal' && (
+                            <tr key={r.id} className={cn('border-b last:border-0', ri % 2 === 1 && 'bg-amber-500/5')}>
+                              <td className="px-3 py-1.5 text-slate-300">
+                                <span className="font-mono">{r.code}</span>
+                                {WOYOFAL_CODE_LABELS[r.code] && <span className="text-slate-400"> — {WOYOFAL_CODE_LABELS[r.code]}</span>}
+                              </td>
+                              <td className="px-3 py-1.5 text-slate-200">{r.valeur}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-blue-500/20 bg-blue-500/5">
+                            <th className="px-3 py-1.5 text-left font-medium text-blue-400/70">Paramètre</th>
+                            <th className="px-3 py-1.5 text-left font-medium text-blue-400/70">Date et heure</th>
+                            <th className="px-3 py-1.5 text-left font-medium text-blue-400/70">Valeur relevée</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {session.readings.map((r, ri) => r.kind === 'index' && (
+                            <tr key={r.id} className={cn('border-b last:border-0', ri % 2 === 1 && 'bg-blue-500/5')}>
+                              <td className="px-3 py-1.5 text-slate-300 align-top">{r.key}</td>
+                              <td className="px-3 py-1.5 text-slate-400 align-top whitespace-nowrap">{r.date || '—'}</td>
+                              <td className="px-3 py-1.5 text-slate-200 align-top">
+                                {r.subValues && r.subValues.length > 0 ? (
+                                  <div className="space-y-0.5">
+                                    {r.subValues.map((sv) => {
+                                      const e = OBIS_BY_KEY[sv.code];
+                                      return (
+                                        <div key={sv.id}>
+                                          <span className="font-mono text-blue-300/80">{e ? obisOptionLabel(e) : sv.code}</span>
+                                          {e?.libelle && <span className="text-slate-500"> · {e.libelle}</span>}
+                                          <span className="text-slate-500"> = </span>
+                                          <span>{sv.valeur || '—'}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : r.valeur || '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-amber-500/20 bg-amber-500/5">
-                        <th className="px-3 py-1.5 text-left text-amber-400/70 font-medium">Code Woyofal</th>
-                        <th className="px-3 py-1.5 text-left text-amber-400/70 font-medium">Date et heure</th>
-                        <th className="px-3 py-1.5 text-left text-amber-400/70 font-medium">Valeur relevée</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filledWoyofal.map((e, ei) => (
-                        <tr key={e.id} className={cn('border-b border-amber-500/10 last:border-0', ei % 2 === 1 && 'bg-amber-500/5')}>
-                          <td className="px-3 py-1.5 text-slate-300">
-                            <span className="font-mono">{e.code}</span>
-                            {WOYOFAL_CODE_LABELS[e.code] && (
-                              <span className="text-slate-400"> — {WOYOFAL_CODE_LABELS[e.code]}</span>
-                            )}
-                          </td>
-                          <td className="px-3 py-1.5 text-slate-400">{e.dateTime || '—'}</td>
-                          <td className="px-3 py-1.5 text-slate-200">{e.valeur}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                );
+              })}
 
               {checkedItems.length > 0 && (
                 <div className="space-y-1">

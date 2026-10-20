@@ -19,7 +19,7 @@ import { detectAnomalies, type BillingAnomaly } from '@/lib/billing-anomaly-dete
 import type { AuditBillingParamsDB } from '@/types/billing'
 import type { BillingParams } from '@/types/billing'
 import type { TariffCategory, TariffYear } from '@/constants/senelec-tariffs'
-import { AlertTriangle, CheckCircle2, AlertCircle, Info, TrendingDown, Zap, Receipt, Activity, Plus, X, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, MapPin, Layers } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, AlertCircle, Info, TrendingDown, Zap, Receipt, Activity, Plus, X, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, MapPin, Layers, Leaf, CalendarDays, Gauge } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -78,7 +78,15 @@ interface GroupKPIs {
   avgIpr:      number
   avgK2:       number | null
   anomalyCount: number
+  totalNj:        number | null   // Nb Jour Facturation — somme
+  emissionTco2:   number          // Cons T. (kWh) × 0,00067
+  pmaxMin:        number | null   // Puissance Max relevée — kW
+  pmaxMax:        number | null
+  pmaxAvg:        number | null
+  pmaxEcartType:  number | null
 }
+
+const EMISSION_FACTOR_TCO2_PER_KWH = 0.00067  // ≈0,67 kg CO2/kWh — mix électrique SENELEC
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -273,18 +281,32 @@ function KpiCard({
 
 // ─── Group KPI computation ────────────────────────────────────────────────────
 
-function computeGroupKPIs(group: SiteGroup): GroupKPIs {
-  const n        = group.rows.length
-  const totalKwh = group.rows.reduce((s, r) => s + r.kwh,  0)
-  const totalMttc= group.rows.reduce((s, r) => s + r.mttc, 0)
+function computeGroupKPIs(rows: ChartRow[]): GroupKPIs {
+  const n        = rows.length
+  const totalKwh = rows.reduce((s, r) => s + r.kwh,  0)
+  const totalMttc= rows.reduce((s, r) => s + r.mttc, 0)
   const avgIpr   = totalKwh > 0
-    ? group.rows.reduce((s, r) => s + r.ipr * r.kwh, 0) / totalKwh
+    ? rows.reduce((s, r) => s + r.ipr * r.kwh, 0) / totalKwh
     : 0
-  const k2Rows   = group.rows.filter(r => r.k2_pct !== null)
+  const k2Rows   = rows.filter(r => r.k2_pct !== null)
   const avgK2    = k2Rows.length > 0
     ? k2Rows.reduce((s, r) => s + (r.k2_pct ?? 0), 0) / k2Rows.length
     : null
-  const anomalyCount = group.rows.reduce((s, r) => s + r.anomalies.length, 0)
+  const anomalyCount = rows.reduce((s, r) => s + r.anomalies.length, 0)
+
+  const njRows  = rows.filter(r => r.nj !== null)
+  const totalNj = njRows.length > 0 ? njRows.reduce((s, r) => s + (r.nj ?? 0), 0) : null
+
+  const pmaxValues = rows
+    .map(r => r.pmax)
+    .filter((p): p is number => p !== null)
+  const pmaxAvg = pmaxValues.length > 0
+    ? pmaxValues.reduce((s, p) => s + p, 0) / pmaxValues.length
+    : null
+  const pmaxEcartType = pmaxValues.length > 0 && pmaxAvg !== null
+    ? Math.sqrt(pmaxValues.reduce((s, p) => s + (p - pmaxAvg) ** 2, 0) / pmaxValues.length)
+    : null
+
   return {
     nb: n,
     totalKwh,
@@ -294,13 +316,19 @@ function computeGroupKPIs(group: SiteGroup): GroupKPIs {
     avgIpr,
     avgK2,
     anomalyCount,
+    totalNj,
+    emissionTco2:  totalKwh * EMISSION_FACTOR_TCO2_PER_KWH,
+    pmaxMin:       pmaxValues.length > 0 ? Math.min(...pmaxValues) : null,
+    pmaxMax:       pmaxValues.length > 0 ? Math.max(...pmaxValues) : null,
+    pmaxAvg,
+    pmaxEcartType,
   }
 }
 
 // ─── Site group KPI card ──────────────────────────────────────────────────────
 
 function SiteGroupCard({ group }: { group: SiteGroup }) {
-  const kpis = computeGroupKPIs(group)
+  const kpis = computeGroupKPIs(group.rows)
   const isUnclassified = group.siteId === null
 
   return (
@@ -341,8 +369,26 @@ function SiteGroupCard({ group }: { group: SiteGroup }) {
         {kpis.avgK2 !== null && (
           <MetricLine label="K2 moyen"   value={`${fmtNum(kpis.avgK2, 1)} %`} color={kpis.avgK2 > 10 ? 'text-red-400' : 'text-slate-300'} />
         )}
+        <div className="h-px bg-white/[0.04]" />
+        <MetricLine label="Émission CO2" value={`${fmtNum(kpis.emissionTco2, 2)} tCO2`} color="text-teal-300" />
+        {kpis.totalNj !== null && (
+          <MetricLine label="Nb jours facturation" value={`${fmtNum(kpis.totalNj)} j`} color="text-slate-300" />
+        )}
+        {kpis.pmaxAvg !== null && (
+          <>
+            <div className="h-px bg-white/[0.04]" />
+            <MetricLine label="Puissance moy."  value={`${fmtNum(kpis.pmaxAvg, 1)} kW`} color="text-orange-300" />
+            <MetricLine label="Puissance min/max" value={`${fmtNum(kpis.pmaxMin ?? 0, 1)} / ${fmtNum(kpis.pmaxMax ?? 0, 1)} kW`} color="text-orange-200/60" />
+            {kpis.pmaxEcartType !== null && (
+              <MetricLine label="Puissance écart-type" value={`${fmtNum(kpis.pmaxEcartType, 1)} kW`} color="text-orange-200/60" />
+            )}
+          </>
+        )}
         {kpis.anomalyCount > 0 && (
-          <MetricLine label="Anomalies"  value={String(kpis.anomalyCount)} color="text-red-400" />
+          <>
+            <div className="h-px bg-white/[0.04]" />
+            <MetricLine label="Anomalies"  value={String(kpis.anomalyCount)} color="text-red-400" />
+          </>
         )}
       </div>
     </div>
@@ -523,8 +569,14 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
             ? (invData.conso_k2_kwh / kwh) * 100
             : null
 
+          // ⚠ Utiliser la vraie période de consommation (PERIODE_DU, extraite de la
+          // facture) plutôt que invoice_date (date d'émission — tombe normalement
+          // après la fin de période, ex: période mai → facture émise en juin, ce qui
+          // décalerait le mois d'analyse). Fallback sur invoice_date si absente.
+          const effectiveDate = invData.periode_debut_iso ?? inv.invoice_date ?? null
+
           built.push({
-            label:       monthLabel(inv.invoice_date ?? null),
+            label:       monthLabel(effectiveDate),
             kwh, mttc, ipr, k2_pct,
             pmax:        invData.puissance_max_kw  ?? null,
             cosphi:      invData.cosphi_mesure     ?? null,
@@ -541,7 +593,7 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
             verifStatus,
             anomalies:   anomalyMap.get(inv.id) ?? [],
             invoiceId:   inv.id,
-            invoiceDate: inv.invoice_date ?? null,
+            invoiceDate: effectiveDate,
             source:      'ocr',
           })
         }
@@ -626,6 +678,7 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
     () => rows.reduce((s, r) => s + r.anomalies.length + (manualAnomalies[r.invoiceId]?.length ?? 0), 0),
     [rows, manualAnomalies],
   )
+  const globalKpis = useMemo(() => computeGroupKPIs(rows), [rows])
 
   // ── Site groups (for group mode) ──
   const siteGroups = useMemo<SiteGroup[] | null>(() => {
@@ -753,6 +806,31 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
             value={String(kpiAnomalies)}
             sub={kpiAnomalies === 0 ? 'Aucune anomalie' : `Sur ${rows.length} facture${rows.length > 1 ? 's' : ''}`}
           />
+          <KpiCard
+            icon={Leaf}
+            color="bg-teal-500/10 text-teal-400"
+            label="Émission CO2"
+            value={`${fmtNum(globalKpis.emissionTco2, 2)} tCO2`}
+            sub={`${fmtNum(kpiKwh)} kWh × 0,00067`}
+          />
+          {globalKpis.totalNj !== null && (
+            <KpiCard
+              icon={CalendarDays}
+              color="bg-slate-500/10 text-slate-300"
+              label="Nb jours facturation"
+              value={`${fmtNum(globalKpis.totalNj)} j`}
+              sub={`${rows.length} facture${rows.length > 1 ? 's' : ''}`}
+            />
+          )}
+          {globalKpis.pmaxAvg !== null && (
+            <KpiCard
+              icon={Gauge}
+              color="bg-orange-500/10 text-orange-400"
+              label="Puissance moy."
+              value={`${fmtNum(globalKpis.pmaxAvg, 1)} kW`}
+              sub={`Min ${fmtNum(globalKpis.pmaxMin ?? 0, 1)} · Max ${fmtNum(globalKpis.pmaxMax ?? 0, 1)} · σ ${fmtNum(globalKpis.pmaxEcartType ?? 0, 1)} kW`}
+            />
+          )}
         </div>
       )}
 
@@ -850,8 +928,8 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
                       <td className="px-4 py-2.5 font-medium whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
                           {row.source === 'senelec'
-                            ? <FileSpreadsheet className="w-3 h-3 text-blue-400 shrink-0" title="Données SENELEC (Excel)" />
-                            : <FileText className="w-3 h-3 text-emerald-400 shrink-0" title="Facture OCR vérifiée" />
+                            ? <span title="Données SENELEC (Excel)" className="inline-flex shrink-0"><FileSpreadsheet className="w-3 h-3 text-blue-400" /></span>
+                            : <span title="Facture OCR vérifiée" className="inline-flex shrink-0"><FileText className="w-3 h-3 text-emerald-400" /></span>
                           }
                           <span className="text-slate-300 capitalize">
                             {row.invoiceDate

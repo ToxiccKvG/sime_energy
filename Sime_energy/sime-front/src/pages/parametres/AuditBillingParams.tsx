@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatNumber } from '@/lib/format'
 import { getAuditSites } from '@/lib/audit-service'
-import { getBillingParams, saveBillingParams, getVerifiedInvoicesForAudit } from '@/lib/billing-params-service'
+import { getBillingParams, saveBillingParams, saveBillingThresholds, getVerifiedInvoicesForAudit } from '@/lib/billing-params-service'
 import { mapOcrToInvoiceData, extractPuissanceSouscrite, mapSenelecToInvoiceData } from '@/lib/invoice-mapper'
 import { getFacturesSenelecForSelector } from '@/lib/factures-senelec-service'
 import type { FactureSenelecForSelector } from '@/lib/factures-senelec-service'
@@ -31,6 +31,7 @@ import type { TariffCategory, TariffYear, BTPowerBand } from '@/constants/senele
 import type { AuditBillingParamsDB, BillingParams, InvoiceData } from '@/types/billing'
 import { useOrganization } from '@/context/OrganizationContext'
 import { useAuth } from '@/context/AuthContext'
+import { refreshProjectContextInBackground } from '@/hooks/useProjectContext'
 import BillingScenarioComparator from '@/components/parametres/BillingScenarioComparator'
 import type { InvoiceForSelector } from '@/lib/billing-params-service'
 
@@ -83,7 +84,7 @@ const EMPTY_FORM: FormState = {
   cosphi_seuil:   0.80,
 }
 
-function dbToForm(db: AuditBillingParamsDB, savedThresholds?: Partial<FormState>): FormState {
+function dbToForm(db: AuditBillingParamsDB, legacyThresholds?: Partial<FormState>): FormState {
   return {
     numero_contrat:          db.numero_contrat ?? '',
     domaine_tension:         (db.domaine_tension as 'BT' | 'MT' | 'HT') ?? 'BT',
@@ -102,27 +103,26 @@ function dbToForm(db: AuditBillingParamsDB, savedThresholds?: Partial<FormState>
     source_mesure:           db.source_mesure ?? 'shelly',
     tco_applicable:          db.tco_applicable ?? true,
     tva_applicable:          db.tva_applicable ?? true,
-    k2_seuil_pct:  savedThresholds?.k2_seuil_pct  ?? 10,
-    ps_seuil_pct:  savedThresholds?.ps_seuil_pct  ?? 10,
-    cosphi_seuil:  savedThresholds?.cosphi_seuil  ?? 0.80,
+    k2_seuil_pct:  db.k2_seuil_pct  ?? legacyThresholds?.k2_seuil_pct  ?? 10,
+    ps_seuil_pct:  db.ps_seuil_pct  ?? legacyThresholds?.ps_seuil_pct  ?? 10,
+    cosphi_seuil:  db.cosphi_seuil  ?? legacyThresholds?.cosphi_seuil  ?? 0.80,
   }
 }
 
-function loadThresholds(auditId: string): Partial<FormState> {
+// Seuils autrefois gardés dans le navigateur : lus en repli tant qu'ils ne sont pas en base
+function legacyThresholdsKey(auditId: string) {
+  return `billing-thresholds-${auditId}`
+}
+
+function loadLegacyThresholds(auditId: string): Partial<FormState> {
   try {
-    const raw = localStorage.getItem(`billing-thresholds-${auditId}`)
+    const raw = localStorage.getItem(legacyThresholdsKey(auditId))
     return raw ? JSON.parse(raw) : {}
   } catch { return {} }
 }
 
-function saveThresholds(auditId: string, form: FormState) {
-  try {
-    localStorage.setItem(`billing-thresholds-${auditId}`, JSON.stringify({
-      k2_seuil_pct:  form.k2_seuil_pct,
-      ps_seuil_pct:  form.ps_seuil_pct,
-      cosphi_seuil:  form.cosphi_seuil,
-    }))
-  } catch { /* ignore */ }
+function clearLegacyThresholds(auditId: string) {
+  try { localStorage.removeItem(legacyThresholdsKey(auditId)) } catch { /* ignore */ }
 }
 
 // ─── Small presentational pieces ─────────────────────────────────────────────
@@ -208,6 +208,7 @@ export function AuditBillingParams({ auditId }: AuditBillingParamsProps) {
   const [loading, setLoading]                 = useState(true)
   const [saving, setSaving]     = useState(false)
   const [noSite, setNoSite]     = useState(false)
+  const [paramsSaved, setParamsSaved] = useState(false)  // une ligne audit_billing_params existe
 
   // ── OCR auto-détection puissance souscrite ──
   const [ocrPs, setOcrPs]             = useState<number | null>(null)
@@ -228,7 +229,7 @@ export function AuditBillingParams({ auditId }: AuditBillingParamsProps) {
     if (!auditId) return
     setLoading(true)
 
-    const thresholds = loadThresholds(auditId)
+    const thresholds = loadLegacyThresholds(auditId)
 
     Promise.all([
       getAuditSites(auditId),
@@ -244,6 +245,7 @@ export function AuditBillingParams({ auditId }: AuditBillingParamsProps) {
         setSiteId(first.id)
 
         const existing = await getBillingParams(auditId, first.id).catch(() => null)
+        setParamsSaved(!!existing)
         if (existing) setForm(dbToForm(existing, thresholds))
         else setForm(prev => ({ ...prev, ...thresholds }))
       })
@@ -251,11 +253,23 @@ export function AuditBillingParams({ auditId }: AuditBillingParamsProps) {
       .finally(() => setLoading(false))
   }, [auditId])
 
-  // ── Persistance seuils dans localStorage ──
+  // ── Persistance des seuils en base dès qu'ils changent (paramètres déjà enregistrés) ──
+  const thresholdsLoadedRef = useRef(false)
   useEffect(() => {
-    if (auditId) saveThresholds(auditId, form)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.k2_seuil_pct, form.ps_seuil_pct, form.cosphi_seuil, auditId])
+    if (!auditId || !siteId || !paramsSaved) return
+    // Premier passage = valeurs tout juste chargées, rien à réécrire
+    if (!thresholdsLoadedRef.current) { thresholdsLoadedRef.current = true; return }
+    const timer = setTimeout(() => {
+      saveBillingThresholds(auditId, siteId, {
+        k2_seuil_pct: form.k2_seuil_pct,
+        ps_seuil_pct: form.ps_seuil_pct,
+        cosphi_seuil: form.cosphi_seuil,
+      })
+        .then(() => clearLegacyThresholds(auditId))
+        .catch(() => toast.error('Seuils non enregistrés'))
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [form.k2_seuil_pct, form.ps_seuil_pct, form.cosphi_seuil, auditId, siteId, paramsSaved])
 
   // ── Debounce N° contrat → contractSearch ──
   useEffect(() => {
@@ -542,9 +556,15 @@ export function AuditBillingParams({ auditId }: AuditBillingParamsProps) {
         source_mesure:          form.source_mesure,
         tco_applicable:         form.tco_applicable,
         tva_applicable:         form.tva_applicable,
+        k2_seuil_pct:           form.k2_seuil_pct,
+        ps_seuil_pct:           form.ps_seuil_pct,
+        cosphi_seuil:           form.cosphi_seuil,
       }
       await saveBillingParams(payload)
+      setParamsSaved(true)
+      clearLegacyThresholds(auditId)
       toast.success('Paramètres sauvegardés')
+      refreshProjectContextInBackground(auditId, user?.id ?? null)
     } catch {
       toast.error('Erreur lors de la sauvegarde')
     } finally {

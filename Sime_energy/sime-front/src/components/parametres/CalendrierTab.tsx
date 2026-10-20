@@ -22,6 +22,7 @@ import {
   type OrgCalendarEvent,
 } from '@/lib/calendar-service';
 import { getSenegalHolidays, type HolidayEntry } from '@/constants/senegal-holidays';
+import { refreshProjectContextsInBackground } from '@/hooks/useOrganizationSettings';
 
 // ─── Google Calendar (API Key — no OAuth) ─────────────────────────────────────
 
@@ -167,6 +168,7 @@ export default function CalendrierTab() {
       });
       setCustomEvents(prev => [...prev, created]);
       toast.success('Événement ajouté');
+      refreshProjectContextsInBackground(organization.id, user.id);
       setShowAdd(false);
     } catch {
       toast.error("Impossible d'ajouter l'événement");
@@ -180,6 +182,7 @@ export default function CalendrierTab() {
       await deleteCalendarEvent(id);
       setCustomEvents(prev => prev.filter(e => e.id !== id));
       toast.success('Événement supprimé');
+      if (organization) refreshProjectContextsInBackground(organization.id, user?.id ?? null);
     } catch {
       toast.error('Impossible de supprimer');
     }

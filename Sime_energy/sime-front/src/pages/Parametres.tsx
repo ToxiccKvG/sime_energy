@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   User, Shield, Zap, Building2,
   Loader2, Mail, Calculator,
-  Plus, X, CalendarDays, CloudSun, Wind,
+  Plus, X, CalendarDays, CloudSun, Wind, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
@@ -21,6 +21,9 @@ import CalendrierTab from '@/components/parametres/CalendrierTab';
 import MeteoTab from '@/components/parametres/MeteoTab';
 import type { MeteoSettings } from '@/services/meteo-service';
 import { DEFAULT_METEO_SETTINGS } from '@/services/meteo-service';
+import {
+  useOrganizationSettings, useUpdateOrganizationSettings, refreshProjectContextsInBackground,
+} from '@/hooks/useOrganizationSettings';
 
 type Tab = 'compte' | 'securite' | 'energie' | 'meteo' | 'calendrier';
 
@@ -130,11 +133,22 @@ export default function Parametres() {
   // ── Calculs & Énergie ──
   const [savingEnergie, setSavingEnergie] = useState(false);
 
-  // ── Coefs BTU partagés (Énergie ↔ Météo) ──
-  const savedMeteo = (energyMetaRaw.meteo_settings ?? DEFAULT_METEO_SETTINGS) as MeteoSettings;
-  const [coefC, setCoefC] = useState<number>(savedMeteo.coef_c ?? 0.8);
-  const [coefG, setCoefG] = useState<number>(savedMeteo.coef_g ?? 1.2);
-  const [comfortT, setComfortT] = useState<number>(savedMeteo.comfort_threshold ?? 24);
+  // ── Coefs BTU partagés (Énergie ↔ Météo) — stockés dans organizations.settings.meteo ──
+  const { data: orgSettings } = useOrganizationSettings(organization?.id);
+  const updateOrgSettings = useUpdateOrganizationSettings(organization?.id, user?.id);
+  const [coefC, setCoefC] = useState<number>(DEFAULT_METEO_SETTINGS.coef_c);
+  const [coefG, setCoefG] = useState<number>(DEFAULT_METEO_SETTINGS.coef_g);
+  const [tRefClim, setTRefClim] = useState<number>(DEFAULT_METEO_SETTINGS.t_ref_climatisation);
+  const [tRefChauf, setTRefChauf] = useState<number>(DEFAULT_METEO_SETTINGS.t_ref_chauffage);
+
+  useEffect(() => {
+    const m = orgSettings?.meteo;
+    if (!m) return;
+    setCoefC(m.coef_c ?? DEFAULT_METEO_SETTINGS.coef_c);
+    setCoefG(m.coef_g ?? DEFAULT_METEO_SETTINGS.coef_g);
+    setTRefClim(m.t_ref_climatisation ?? DEFAULT_METEO_SETTINGS.t_ref_climatisation);
+    setTRefChauf(m.t_ref_chauffage ?? DEFAULT_METEO_SETTINGS.t_ref_chauffage);
+  }, [orgSettings?.meteo]);
 
   const getInitials = () => {
     if (firstName && lastName) return `${firstName[0]}${lastName[0]}`.toUpperCase();
@@ -181,23 +195,29 @@ export default function Parametres() {
   const handleSaveEnergie = async () => {
     setSavingEnergie(true);
     try {
+      // Grilles tarifaires : restent par utilisateur (lues par AuthContext)
       const { error } = await supabase.auth.updateUser({
         data: {
           energy_settings: {
             ...energyMetaRaw,
             custom_tariff_grids: grids,
-            // Persist coefs without overwriting the rest of meteo_settings
-            meteo_settings: {
-              ...(energyMetaRaw.meteo_settings ?? DEFAULT_METEO_SETTINGS),
-              coef_c: coefC,
-              coef_g: coefG,
-              comfort_threshold: comfortT,
-            },
           },
         },
       });
       if (error) throw error;
       setCustomTariffGrids(grids);
+      // Coefs BTU : réglages d'organisation, sans écraser le reste de la météo
+      if (organization?.id && user?.id) {
+        const meteo: MeteoSettings = {
+          ...DEFAULT_METEO_SETTINGS,
+          ...(orgSettings?.meteo ?? {}),
+          coef_c: coefC,
+          coef_g: coefG,
+          t_ref_climatisation: tRefClim,
+          t_ref_chauffage: tRefChauf,
+        };
+        await updateOrgSettings.mutateAsync({ meteo });
+      }
       toast.success('Paramètres de calcul sauvegardés');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erreur');
@@ -311,6 +331,23 @@ export default function Parametres() {
                     <InfoRow label="Nom" value={organization.name} />
                     {organization.slug && <InfoRow label="Identifiant" value={organization.slug} mono />}
                     {organization.description && <InfoRow label="Description" value={organization.description} />}
+                    <Separator className="bg-slate-700/50" />
+                    <div className="flex items-center justify-between gap-4">
+                      <p className="text-[11px] text-slate-500">
+                        Contexte JSON des projets (<span className="font-mono">audits.project_context</span>) partagé avec les autres modules.
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0 h-8 text-xs border-slate-700 bg-slate-800/50 text-slate-300 hover:bg-slate-800"
+                        onClick={() => {
+                          refreshProjectContextsInBackground(organization.id, user?.id ?? null, true);
+                        }}
+                      >
+                        <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                        Régénérer tous les projets
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="rounded-xl border border-amber-700/30 bg-amber-500/10 p-4">
@@ -451,20 +488,34 @@ export default function Parametres() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-slate-400 font-medium">Température de confort</Label>
+                    <Label className="text-xs text-slate-400 font-medium">T° réf. Climatisation</Label>
                     <div className="relative">
                       <input
                         type="number"
-                        value={comfortT}
+                        value={tRefClim}
                         step={1}
-                        onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) setComfortT(n); }}
-                        className="w-full h-9 px-3 pr-8 rounded-lg border text-sm font-mono font-semibold text-right bg-slate-800/50 border-slate-700 outline-none focus:ring-2 focus:ring-violet-500/40 text-cyan-400"
+                        onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) setTRefClim(n); }}
+                        className="w-full h-9 px-3 pr-8 rounded-lg border text-sm font-mono font-semibold text-right bg-slate-800/50 border-slate-700 outline-none focus:ring-2 focus:ring-violet-500/40 text-orange-400"
                       />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 pointer-events-none">°C</span>
                     </div>
-                    <p className="text-[10px] text-slate-600">Seuil intérieur cible</p>
+                    <p className="text-[10px] text-slate-600">Seuil déclenchement clim — base DJU clim</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-slate-400 font-medium">T° réf. Chauffage</Label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={tRefChauf}
+                        step={1}
+                        onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) setTRefChauf(n); }}
+                        className="w-full h-9 px-3 pr-8 rounded-lg border text-sm font-mono font-semibold text-right bg-slate-800/50 border-slate-700 outline-none focus:ring-2 focus:ring-violet-500/40 text-blue-400"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 pointer-events-none">°C</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600">Seuil déclenchement chauffage — base DJU chauf.</p>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs text-slate-400 font-medium">CoefC — Isolation</Label>
