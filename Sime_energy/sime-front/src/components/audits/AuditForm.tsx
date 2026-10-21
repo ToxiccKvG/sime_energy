@@ -38,6 +38,7 @@ import {
   CVC_OPTIONS, FORME_JURIDIQUE_OPTIONS, ORIENTATION_OPTIONS, SENEGAL_REGIONS, SENEGAL_VILLES,
   TYPE_TOIT_OPTIONS, TYPE_VITRAGE_OPTIONS,
 } from './audit-form/options';
+import type { LigneConsommationEnergie, LigneProblemeEfficacite, LigneProduction, LigneProcedeEquipement, LigneDechet } from '@/types/audit';
 
 interface AuditFormProps {
   audit?: Audit;
@@ -70,9 +71,34 @@ interface FormBuilding {
   surfaceToiture?: number;
   levels: string[]; // étages sélectionnés (ex: ['RDC', 'R+1', 'R+2'])
   // Sections Sites/Usines
-  structureBati?: Record<string, any>;
-  enveloppe?: Record<string, any>;
-  amenagement?: Record<string, any>;
+  structureBati?: StructureBatiForm;
+  enveloppe?: EnveloppeForm;
+  amenagement?: AmenagementForm;
+}
+
+interface StructureBatiForm {
+  etat?: string;
+  montantM1?: number;
+  montantM2?: number;
+}
+
+interface EnveloppeForm {
+  orientation?: string;
+  typeToit?: string;
+  typeVitrage?: string;
+  compositionMurs?: string;
+  couleurFenetres?: string;
+  couleurMursExt?: string;
+  couleurToit?: string;
+  revetementToit?: string;
+}
+
+interface AmenagementForm {
+  fonction?: string;
+  secteur?: string;
+  usage?: string;
+  tauxFrequence?: number;
+  systemeCVC?: string[];
 }
 
 export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
@@ -87,39 +113,39 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
   const originalSiteIds = useRef<Set<string>>(new Set());
 
   // Dynamic table rows — stored in general_info JSONB on save
-  const [consommationsEnergie, setConsommationsEnergie] = useState<any[]>(
-    (audit as any)?.generalInfo?.consommationsEnergie ?? [
+  const [consommationsEnergie, setConsommationsEnergie] = useState<LigneConsommationEnergie[]>(
+    audit?.generalInfo?.consommationsEnergie ?? [
       { type: 'Électricité achetée', unite: 'kWh', a1Qte: '', a1Cout: '', a2Qte: '', a2Cout: '', a3Qte: '', a3Cout: '' },
       { type: 'Gasoil', unite: 'L', a1Qte: '', a1Cout: '', a2Qte: '', a2Cout: '', a3Qte: '', a3Cout: '' },
       { type: 'Eau', unite: 'm³', a1Qte: '', a1Cout: '', a2Qte: '', a2Cout: '', a3Qte: '', a3Cout: '' },
     ]
   );
-  const [problemesEff, setProblemesEff] = useState<any[]>(
-    (audit as any)?.generalInfo?.problemesEff ?? [
+  const [problemesEff, setProblemesEff] = useState<LigneProblemeEfficacite[]>(
+    audit?.generalInfo?.problemesEff ?? [
       { designation: "Coupures d'électricité", frequence: '', duree: '' },
       { designation: "Coupures d'eau", frequence: '', duree: '' },
       { designation: 'Ruptures de carburant', frequence: '', duree: '' },
       { designation: 'Tension électrique anormale', frequence: '', duree: '' },
     ]
   );
-  const [productions, setProductions] = useState<any[]>(
-    (audit as any)?.generalInfo?.specifique?.productions ?? []
+  const [productions, setProductions] = useState<LigneProduction[]>(
+    audit?.generalInfo?.specifique?.productions ?? []
   );
-  const [procedesEqs, setProcedesEqs] = useState<any[]>(
-    (audit as any)?.generalInfo?.specifique?.procedesEqs ?? []
+  const [procedesEqs, setProcedesEqs] = useState<LigneProcedeEquipement[]>(
+    audit?.generalInfo?.specifique?.procedesEqs ?? []
   );
-  const [dechets, setDechets] = useState<any[]>(
-    (audit as any)?.generalInfo?.specifique?.dechets ?? []
+  const [dechets, setDechets] = useState<LigneDechet[]>(
+    audit?.generalInfo?.specifique?.dechets ?? []
   );
-  const [responsablesEnergie, setResponsablesEnergie] = useState<any[]>(
-    (audit as any)?.personnel?.responsableEnergie ?? []
+  const [responsablesEnergie, setResponsablesEnergie] = useState<Audit['personnel']['responsableEnergie']>(
+    audit?.personnel?.responsableEnergie ?? []
   );
-  const [pointsFocaux, setPointsFocaux] = useState<any[]>(
-    (audit as any)?.personnel?.pointFocal ?? []
+  const [pointsFocaux, setPointsFocaux] = useState<Audit['personnel']['pointFocal']>(
+    audit?.personnel?.pointFocal ?? []
   );
-  const [effectifs, setEffectifs] = useState<any[]>(
-    (audit as any)?.personnel?.employes?.length > 0
-      ? (audit as any).personnel.employes
+  const [effectifs, setEffectifs] = useState<Audit['personnel']['employes']>(
+    audit?.personnel?.employes?.length > 0
+      ? audit.personnel.employes
       : [
           { categorie: 'Permanent', hommes: '', femmes: '', cadres: '' },
           { categorie: 'Saisonnier', hommes: '', femmes: '', cadres: '' },
@@ -220,13 +246,13 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
 
   // ---- HANDLERS ----
 
-  const handleGeneralChange = (field: string, value: any) =>
+  const handleGeneralChange = (field: string, value: unknown) =>
     setFormData(prev => ({ ...prev, generalInfo: { ...prev.generalInfo!, [field]: value } }));
 
-  const handlePersonnelChange = (field: string, value: any) =>
+  const handlePersonnelChange = (field: string, value: unknown) =>
     setFormData(prev => ({ ...prev, personnel: { ...prev.personnel!, [field]: value } }));
 
-  const handleProgrammeChange = (field: string, value: any) =>
+  const handleProgrammeChange = (field: string, value: unknown) =>
     setFormData(prev => ({
       ...prev,
       personnel: {
@@ -235,12 +261,12 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
       },
     }));
 
-  const handleSpecifiqueChange = (field: string, value: any) =>
+  const handleSpecifiqueChange = (field: string, value: unknown) =>
     setFormData(prev => ({
       ...prev,
       generalInfo: {
         ...prev.generalInfo!,
-        specifique: { ...(prev.generalInfo as any)?.specifique, [field]: value },
+        specifique: { ...prev.generalInfo?.specifique, [field]: value },
       },
     }));
 
@@ -276,10 +302,10 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
     }
   };
 
-  const handleNewBuildingSection = (section: 'structureBati' | 'enveloppe' | 'amenagement', field: string, value: any) => {
+  const handleNewBuildingSection = (section: 'structureBati' | 'enveloppe' | 'amenagement', field: string, value: unknown) => {
     setNewBuilding(prev => ({
       ...prev,
-      [section]: { ...(prev[section] as Record<string, any> || {}), [field]: value },
+      [section]: { ...(prev[section] || {}), [field]: value },
     }));
   };
 
@@ -368,18 +394,18 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
           consommationsEnergie,
           problemesEff,
           specifique: {
-            ...(formData.generalInfo as any)?.specifique,
+            ...formData.generalInfo?.specifique,
             productions,
             procedesEqs,
             dechets,
           },
-        } as any,
+        },
         personnel: {
           ...formData.personnel,
           responsableEnergie: responsablesEnergie,
           pointFocal: pointsFocaux,
           employes: effectifs,
-        } as any,
+        },
       };
       let auditId: string;
       if (audit?.id) {
@@ -496,10 +522,10 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
       refreshProjectContext(auditId, user.id).catch(() =>
         toast({ title: 'Contexte JSON non régénéré', description: 'Le projet est enregistré, mais son JSON n\'a pas pu être mis à jour.', variant: 'destructive' }));
       onSave(formData);
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: 'Erreur',
-        description: error?.message || 'Erreur lors de l\'enregistrement',
+        description: (error as { message?: string } | null)?.message || 'Erreur lors de l\'enregistrement',
         variant: 'destructive',
       });
     } finally {
@@ -508,7 +534,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
   };
 
   const clientType = formData.clientType;
-  const specifique = (formData.generalInfo as any)?.specifique || {};
+  const specifique: NonNullable<Audit['generalInfo']['specifique']> = formData.generalInfo?.specifique || {};
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -621,7 +647,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                   <Label className="text-slate-400 text-xs">Préciser le type d'établissement</Label>
                   <Input
                     placeholder="ex: Commerce, Artisanat, Agro-industrie, Mixte…"
-                    value={(formData.generalInfo as any)?.clientTypeAutre || ''}
+                    value={formData.generalInfo?.clientTypeAutre || ''}
                     onChange={e => handleGeneralChange('clientTypeAutre', e.target.value)}
                     className="bg-slate-700/50 border-slate-600 text-slate-100"
                   />
@@ -640,7 +666,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                 label="Nom du projet"
                 field="name"
                 value={formData.name}
-                onChange={(_, v) => setFormData(prev => ({ ...prev, name: v }))}
+                onChange={(_, v) => setFormData(prev => ({ ...prev, name: v as string }))}
               />
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 <div className="space-y-2">
@@ -657,13 +683,13 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                   field="startDate"
                   type="date"
                   value={formData.startDate?.split('T')[0]}
-                  onChange={(_, v) => setFormData(prev => ({ ...prev, startDate: v }))}
+                  onChange={(_, v) => setFormData(prev => ({ ...prev, startDate: v as string }))}
                 />
                 <InputField
                   label="Responsable"
                   field="responsable"
                   value={formData.responsable}
-                  onChange={(_, v) => setFormData(prev => ({ ...prev, responsable: v }))}
+                  onChange={(_, v) => setFormData(prev => ({ ...prev, responsable: v as string }))}
                 />
               </div>
             </CardContent>
@@ -684,7 +710,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <InputField label="Ref Za" field="refZa" value={(formData.generalInfo as any)?.refZa} onChange={handleGeneralChange} />
+                <InputField label="Ref Za" field="refZa" value={formData.generalInfo?.refZa} onChange={handleGeneralChange} />
                 <InputField label="Nom établissement" field="nomEtablissement" value={formData.generalInfo?.nomEtablissement} onChange={handleGeneralChange} />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -704,7 +730,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                   {formData.generalInfo?.siege === '__autre__' && (
                     <Input
                       placeholder="Saisir la ville…"
-                      value={(formData.generalInfo as any)?.siegeLibre || ''}
+                      value={formData.generalInfo?.siegeLibre || ''}
                       onChange={e => handleGeneralChange('siegeLibre', e.target.value)}
                       className="mt-1.5 bg-slate-700/50 border-slate-600 text-slate-100 text-sm"
                     />
@@ -712,7 +738,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-slate-300 text-sm">Province / Région des sites</Label>
-                  <Select value={(formData.generalInfo as any)?.province || ''} onValueChange={v => handleGeneralChange('province', v)}>
+                  <Select value={formData.generalInfo?.province || ''} onValueChange={v => handleGeneralChange('province', v)}>
                     <SelectTrigger className="bg-slate-700/50 border-slate-600 text-slate-100">
                       <SelectValue placeholder="Sélectionner une région…" />
                     </SelectTrigger>
@@ -723,10 +749,10 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                       <SelectItem value="__autre__" className="text-slate-400 focus:bg-slate-700/50 italic">Autre (hors Sénégal)…</SelectItem>
                     </SelectContent>
                   </Select>
-                  {(formData.generalInfo as any)?.province === '__autre__' && (
+                  {formData.generalInfo?.province === '__autre__' && (
                     <Input
                       placeholder="Saisir la région / province…"
-                      value={(formData.generalInfo as any)?.provinceLibre || ''}
+                      value={formData.generalInfo?.provinceLibre || ''}
                       onChange={e => handleGeneralChange('provinceLibre', e.target.value)}
                       className="mt-1.5 bg-slate-700/50 border-slate-600 text-slate-100 text-sm"
                     />
@@ -734,9 +760,9 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                 </div>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                <InputField label="Date de création" field="dateCreation" type="date" value={(formData.generalInfo as any)?.dateCreation} onChange={handleGeneralChange} />
-                <InputField label="Effectifs" field="effectifs" type="number" value={(formData.generalInfo as any)?.effectifs} onChange={handleGeneralChange} />
-                <InputField label="MACS" field="macs" value={(formData.generalInfo as any)?.macs} onChange={handleGeneralChange} />
+                <InputField label="Date de création" field="dateCreation" type="date" value={formData.generalInfo?.dateCreation} onChange={handleGeneralChange} />
+                <InputField label="Effectifs" field="effectifs" type="number" value={formData.generalInfo?.effectifs} onChange={handleGeneralChange} />
+                <InputField label="MACS" field="macs" value={formData.generalInfo?.macs} onChange={handleGeneralChange} />
               </div>
 
               <div className="space-y-1">
@@ -758,27 +784,27 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <InputField label="Directeur Général" field="dg" value={formData.personnel?.dg} onChange={handlePersonnelChange} />
                   <InputField label="Resp. Technique" field="dt" value={formData.personnel?.dt} onChange={handlePersonnelChange} />
-                  <InputField label="Resp. Énergie" field="respEnergie" value={(formData.generalInfo as any)?.respEnergie} onChange={handleGeneralChange} />
-                  <InputField label="Responsable Achat" field="respAchat" value={(formData.generalInfo as any)?.respAchat} onChange={handleGeneralChange} />
+                  <InputField label="Resp. Énergie" field="respEnergie" value={formData.generalInfo?.respEnergie} onChange={handleGeneralChange} />
+                  <InputField label="Responsable Achat" field="respAchat" value={formData.generalInfo?.respAchat} onChange={handleGeneralChange} />
                 </div>
               </div>
 
               <div className="border-t border-slate-700 pt-4">
                 <p className="text-xs font-semibold uppercase text-slate-500 mb-3">Financier & Énergie</p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  <InputField label="Montant M1 (FCFA)" field="montantM1" type="number" value={(formData.generalInfo as any)?.montantM1} onChange={handleGeneralChange} />
-                  <InputField label="Montant M2 (FCFA)" field="montantM2" type="number" value={(formData.generalInfo as any)?.montantM2} onChange={handleGeneralChange} />
-                  <InputField label="Montant M3 (FCFA)" field="montantM3" type="number" value={(formData.generalInfo as any)?.montantM3} onChange={handleGeneralChange} />
+                  <InputField label="Montant M1 (FCFA)" field="montantM1" type="number" value={formData.generalInfo?.montantM1} onChange={handleGeneralChange} />
+                  <InputField label="Montant M2 (FCFA)" field="montantM2" type="number" value={formData.generalInfo?.montantM2} onChange={handleGeneralChange} />
+                  <InputField label="Montant M3 (FCFA)" field="montantM3" type="number" value={formData.generalInfo?.montantM3} onChange={handleGeneralChange} />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
                   <InputField label="Chiffres d'affaires (FCFA)" field="ca" type="number" value={formData.generalInfo?.ca} onChange={handleGeneralChange} />
-                  <InputField label="Programmes d'épargne" field="programmesEpargne" value={(formData.generalInfo as any)?.programmesEpargne} onChange={handleGeneralChange} />
+                  <InputField label="Programmes d'épargne" field="programmesEpargne" value={formData.generalInfo?.programmesEpargne} onChange={handleGeneralChange} />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
-                  <InputField label="Contrats / Fournisseurs énergie" field="contratsEnergie" value={(formData.generalInfo as any)?.contratsEnergie} onChange={handleGeneralChange} />
+                  <InputField label="Contrats / Fournisseurs énergie" field="contratsEnergie" value={formData.generalInfo?.contratsEnergie} onChange={handleGeneralChange} />
                   <div className="space-y-1">
                     <Label className="text-slate-300 text-sm">Fréquence maintenance</Label>
-                    <Select value={(formData.personnel as any)?.programmeOperations?.frequenceMaintenance || ''} onValueChange={v => handleProgrammeChange('frequenceMaintenance', v)}>
+                    <Select value={formData.personnel?.programmeOperations?.frequenceMaintenance || ''} onValueChange={v => handleProgrammeChange('frequenceMaintenance', v)}>
                       <SelectTrigger className="bg-slate-700/50 border-slate-600 text-slate-100">
                         <SelectValue placeholder="Sélectionner…" />
                       </SelectTrigger>
@@ -927,25 +953,25 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                 </Button>
               </div>
               <div className="border-t border-slate-700 pt-3 space-y-3">
-                <TextareaField label="Contraintes influant sur l'efficacité énergétique" field="contraintesEfficacite" value={(formData.generalInfo as any)?.contraintesEfficacite} onChange={handleGeneralChange} />
+                <TextareaField label="Contraintes influant sur l'efficacité énergétique" field="contraintesEfficacite" value={formData.generalInfo?.contraintesEfficacite} onChange={handleGeneralChange} />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label className="text-slate-300 text-sm">Diagnostic énergétique précédent ?</Label>
                     <div className="flex gap-4">
                       {['Oui', 'Non'].map(opt => (
                         <div key={opt} className="flex items-center gap-2">
-                          <Checkbox checked={(formData.generalInfo as any)?.diagnosticPrecedent === opt.toLowerCase()} onCheckedChange={() => handleGeneralChange('diagnosticPrecedent', opt.toLowerCase())} />
+                          <Checkbox checked={formData.generalInfo?.diagnosticPrecedent === opt.toLowerCase()} onCheckedChange={() => handleGeneralChange('diagnosticPrecedent', opt.toLowerCase())} />
                           <span className="text-sm text-slate-300">{opt}</span>
                         </div>
                       ))}
                     </div>
                   </div>
-                  {(formData.generalInfo as any)?.diagnosticPrecedent === 'oui' && (
-                    <InputField label="Taux de réalisation des recommandations (%)" field="tauxRealisationReco" type="number" value={(formData.generalInfo as any)?.tauxRealisationReco} onChange={handleGeneralChange} />
+                  {formData.generalInfo?.diagnosticPrecedent === 'oui' && (
+                    <InputField label="Taux de réalisation des recommandations (%)" field="tauxRealisationReco" type="number" value={formData.generalInfo?.tauxRealisationReco} onChange={handleGeneralChange} />
                   )}
                 </div>
-                {(formData.generalInfo as any)?.diagnosticPrecedent === 'oui' && (
-                  <TextareaField label="Résultats du diagnostic précédent" field="resultatsDiagnostic" value={(formData.generalInfo as any)?.resultatsDiagnostic} onChange={handleGeneralChange} />
+                {formData.generalInfo?.diagnosticPrecedent === 'oui' && (
+                  <TextareaField label="Résultats du diagnostic précédent" field="resultatsDiagnostic" value={formData.generalInfo?.resultatsDiagnostic} onChange={handleGeneralChange} />
                 )}
               </div>
             </CardContent>
@@ -965,20 +991,20 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                 <div className="flex gap-4">
                   {['Oui', 'Non'].map(opt => (
                     <div key={opt} className="flex items-center gap-2">
-                      <Checkbox checked={(formData.generalInfo as any)?.programmeExtension?.existe === (opt === 'Oui')} onCheckedChange={() => handleGeneralChange('programmeExtension', { ...(formData.generalInfo as any)?.programmeExtension, existe: opt === 'Oui' })} />
+                      <Checkbox checked={formData.generalInfo?.programmeExtension?.existe === (opt === 'Oui')} onCheckedChange={() => handleGeneralChange('programmeExtension', { ...formData.generalInfo?.programmeExtension, existe: opt === 'Oui' })} />
                       <span className="text-sm text-slate-300">{opt}</span>
                     </div>
                   ))}
                 </div>
               </div>
-              {(formData.generalInfo as any)?.programmeExtension?.existe && (
+              {formData.generalInfo?.programmeExtension?.existe && (
                 <>
                   <div className="space-y-2">
                     <Label className="text-slate-300 text-sm">Échéance</Label>
                     <div className="flex gap-4">
                       {["D'ici 1 à 2 ans", 'Entre 3 et 5 ans', 'Entre 6 et 10 ans'].map(opt => (
                         <div key={opt} className="flex items-center gap-2">
-                          <Checkbox checked={(formData.generalInfo as any)?.programmeExtension?.echeance === opt} onCheckedChange={() => handleGeneralChange('programmeExtension', { ...(formData.generalInfo as any)?.programmeExtension, echeance: opt })} />
+                          <Checkbox checked={formData.generalInfo?.programmeExtension?.echeance === opt} onCheckedChange={() => handleGeneralChange('programmeExtension', { ...formData.generalInfo?.programmeExtension, echeance: opt })} />
                           <span className="text-sm text-slate-300">{opt}</span>
                         </div>
                       ))}
@@ -986,11 +1012,11 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                   </div>
                   <div className="space-y-2">
                     <Label className="text-slate-300 text-sm">Description du programme</Label>
-                    <textarea rows={3} value={(formData.generalInfo as any)?.programmeExtension?.description || ''} onChange={e => handleGeneralChange('programmeExtension', { ...(formData.generalInfo as any)?.programmeExtension, description: e.target.value })} className="w-full rounded-md border border-slate-600 bg-slate-700/50 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    <textarea rows={3} value={formData.generalInfo?.programmeExtension?.description || ''} onChange={e => handleGeneralChange('programmeExtension', { ...formData.generalInfo?.programmeExtension, description: e.target.value })} className="w-full rounded-md border border-slate-600 bg-slate-700/50 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
                   </div>
                   <div className="space-y-2">
                     <Label className="text-slate-300 text-sm">Impact en besoins énergétiques</Label>
-                    <textarea rows={2} value={(formData.generalInfo as any)?.programmeExtension?.impactEnergetique || ''} onChange={e => handleGeneralChange('programmeExtension', { ...(formData.generalInfo as any)?.programmeExtension, impactEnergetique: e.target.value })} className="w-full rounded-md border border-slate-600 bg-slate-700/50 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    <textarea rows={2} value={formData.generalInfo?.programmeExtension?.impactEnergetique || ''} onChange={e => handleGeneralChange('programmeExtension', { ...formData.generalInfo?.programmeExtension, impactEnergetique: e.target.value })} className="w-full rounded-md border border-slate-600 bg-slate-700/50 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
                   </div>
                 </>
               )}
@@ -999,7 +1025,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
 
           {/* ---- QUESTIONNAIRE PV ---- */}
           <AuditQuestionnaire
-            value={(formData.generalInfo as any)?.pvQuestionnaires ?? []}
+            value={formData.generalInfo?.pvQuestionnaires ?? []}
             onChange={(qs) => handleGeneralChange('pvQuestionnaires', qs)}
           />
 
@@ -1532,25 +1558,25 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
                   {['Oui', 'Non'].map(opt => (
                     <div key={opt} className="flex items-center gap-2">
                       <Checkbox
-                        checked={(formData.personnel as any)?.sme?.existe === (opt === 'Oui')}
-                        onCheckedChange={() => handlePersonnelChange('sme', { ...(formData.personnel as any)?.sme, existe: opt === 'Oui' })}
+                        checked={formData.personnel?.sme?.existe === (opt === 'Oui')}
+                        onCheckedChange={() => handlePersonnelChange('sme', { ...formData.personnel?.sme, existe: opt === 'Oui' })}
                       />
                       <span className="text-sm text-slate-300">{opt}</span>
                     </div>
                   ))}
                 </div>
               </div>
-              {(formData.personnel as any)?.sme?.existe && (
+              {formData.personnel?.sme?.existe && (
                 <>
-                  <InputField label="Norme / Référentiel (ex: ISO 50001)" field="smeNorme" value={(formData.personnel as any)?.sme?.norme} onChange={(_, v) => handlePersonnelChange('sme', { ...(formData.personnel as any)?.sme, norme: v })} />
-                  <InputField label="Indicateurs de performance énergétique (IPE)" field="smeIpe" value={(formData.personnel as any)?.sme?.ipe} onChange={(_, v) => handlePersonnelChange('sme', { ...(formData.personnel as any)?.sme, ipe: v })} />
+                  <InputField label="Norme / Référentiel (ex: ISO 50001)" field="smeNorme" value={formData.personnel?.sme?.norme} onChange={(_, v) => handlePersonnelChange('sme', { ...formData.personnel?.sme, norme: v })} />
+                  <InputField label="Indicateurs de performance énergétique (IPE)" field="smeIpe" value={formData.personnel?.sme?.ipe} onChange={(_, v) => handlePersonnelChange('sme', { ...formData.personnel?.sme, ipe: v })} />
                   <div className="space-y-1">
                     <Label className="text-slate-300 text-sm">Observations SME</Label>
                     <textarea
                       rows={2}
                       placeholder="Observations sur le SME..."
-                      value={(formData.personnel as any)?.sme?.observations || ''}
-                      onChange={e => handlePersonnelChange('sme', { ...(formData.personnel as any)?.sme, observations: e.target.value })}
+                      value={formData.personnel?.sme?.observations || ''}
+                      onChange={e => handlePersonnelChange('sme', { ...formData.personnel?.sme, observations: e.target.value })}
                       className="w-full rounded-md border border-slate-600 bg-slate-700/50 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
                   </div>

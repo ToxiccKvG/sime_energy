@@ -91,19 +91,87 @@ interface AuditSite {
   surfaceToiture?: number;
 }
 
+// Valeur saisie dans un formulaire : texte, ou nombre pour les champs numériques (InputField type="number").
+type Saisie = string | number;
+
+// Responsable énergie ou point focal (onglet Personnel du formulaire de projet).
 interface Responsable {
   nom: string;
   position: string;
-  telephone: string;
+  tel: string;
   email: string;
+  /** Ancienne forme, encore présente dans des projets enregistrés avant le renommage en `tel` */
+  telephone?: string;
 }
 
+// Ligne du tableau des effectifs. Les champs en commentaire « ancienne forme » viennent de projets plus anciens.
 interface Employes {
-  type: string;
-  hommesNombre: number;
-  femmesNombre: number;
-  cadresHommes: number;
-  cadresFemmes: number;
+  categorie: string;
+  hommes: Saisie;
+  femmes: Saisie;
+  cadres: Saisie;
+  /** Ancienne forme */ type?: string;
+  /** Ancienne forme */ hommesNombre?: number;
+  /** Ancienne forme */ femmesNombre?: number;
+  /** Ancienne forme */ cadresHommes?: number;
+  /** Ancienne forme */ cadresFemmes?: number;
+}
+
+// Tableaux dynamiques des informations générales (toutes les cellules sont saisies en texte).
+export interface LigneConsommationEnergie {
+  type: string; unite: string;
+  a1Qte: string; a1Cout: string; a2Qte: string; a2Cout: string; a3Qte: string; a3Cout: string;
+}
+
+export interface LigneProblemeEfficacite {
+  designation: string; frequence: string; duree: string;
+}
+
+export interface LigneProduction {
+  produit: string; capaciteNominale: string; unite: string; annee1: string; annee2: string; annee3: string;
+}
+
+export interface LigneProcedeEquipement {
+  procede: string; equipement: string; anneeFab: string; anneeService: string; typeEnergie: string;
+  puissanceElec: string; puissanceTherm: string; capaciteNominale: string; autresInfos: string;
+}
+
+export interface LigneDechet {
+  type: string; quantiteMensuelle: string; destination: string;
+}
+
+// Onglet « Spécifique » (selon le type de client) : champs libres + trois tableaux.
+interface InfosSpecifiques {
+  productions?: LigneProduction[];
+  procedesEqs?: LigneProcedeEquipement[];
+  dechets?: LigneDechet[];
+  /** Lu par le contexte projet */
+  sousType?: string;
+  // Abonnement et tarif (listes déroulantes), textes longs
+  typeContrat?: string;
+  typeTarif?: string;
+  optimisationDechets?: string;
+  problemesEfficacite?: string;
+  // Champs de saisie libres selon le type de client
+  assemblages?: Saisie; capaciteMaxChauffe?: Saisie; capaciteMaxFroid?: Saisie; capaciteMaxVentil?: Saisie;
+  capacitesUtilis?: Saisie; capacitesVerandas?: Saisie; contratsCarburant?: Saisie; contratsElec?: Saisie;
+  contratsEnv?: Saisie; forges?: Saisie; montage?: Saisie; puissanceElectrique?: Saisie; puissanceSouscrite?: Saisie;
+  puissanceThermique?: Saisie; surface?: Saisie; surfaceBrute?: Saisie; surfaceNette?: Saisie; surfaceTotal?: Saisie;
+  systemeMgmtEnergie?: Saisie; usinage?: Saisie; volume?: Saisie;
+}
+
+interface ProgrammeExtension {
+  existe?: boolean;
+  echeance?: string;
+  description?: string;
+  impactEnergetique?: string;
+}
+
+interface SystemeManagementEnergie {
+  existe?: boolean;
+  norme?: string;
+  ipe?: string;
+  observations?: string;
 }
 
 interface CapaciteHotel {
@@ -157,6 +225,31 @@ interface AuditGeneralInfo {
   marches?: string;
   /** Synthèse rédigée dans la page Rapport, stockée dans general_info */
   synthesis?: Record<string, string>;
+  // Champs du formulaire de projet (onglets Général, Facturation, Diagnostic)
+  clientTypeAutre?: string;
+  refZa?: string;
+  siegeLibre?: string;
+  province?: string;
+  provinceLibre?: string;
+  dateCreation?: string;
+  effectifs?: Saisie;
+  macs?: string;
+  respEnergie?: string;
+  respAchat?: string;
+  montantM1?: Saisie;
+  montantM2?: Saisie;
+  montantM3?: Saisie;
+  programmesEpargne?: string;
+  contratsEnergie?: string;
+  contraintesEfficacite?: string;
+  diagnosticPrecedent?: string;
+  tauxRealisationReco?: Saisie;
+  resultatsDiagnostic?: string;
+  programmeExtension?: ProgrammeExtension;
+  pvQuestionnaires?: PVQuestionnaire[];
+  consommationsEnergie?: LigneConsommationEnergie[];
+  problemesEff?: LigneProblemeEfficacite[];
+  specifique?: InfosSpecifiques;
 }
 
 interface AuditPersonnel {
@@ -166,6 +259,7 @@ interface AuditPersonnel {
   pointFocal: Responsable[];
   employes: Employes[];
   programmeOperations: ProgrammeOperations;
+  sme?: SystemeManagementEnergie;
 }
 
 interface AuditCapacites {
