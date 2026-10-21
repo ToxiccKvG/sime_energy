@@ -7,7 +7,7 @@ import { useOrganization } from '@/context/OrganizationContext';
 import { useAuth } from '@/context/AuthContext';
 import { refreshProjectContextInBackground } from '@/hooks/useProjectContext';
 import { logActivity } from '@/lib/activity-service';
-import { getAudits } from '@/lib/audit-service';
+import { getAudits, type AuditDB } from '@/lib/audit-service';
 import { getAuditInvoices, deleteInvoice, subscribeToOrganizationInvoices } from '@/lib/invoice-service';
 import { autoVerifyProcessingInvoices } from '@/lib/invoice-auto-verify';
 import {
@@ -325,7 +325,7 @@ const Facturation = () => {
   const { organization } = useOrganization();
   const { user } = useAuth();
   const [invoices, setInvoices] = useState<AuditInvoice[]>([]);
-  const [audits, setAudits] = useState<any[]>([]);
+  const [audits, setAudits] = useState<Pick<AuditDB, 'id' | 'name' | 'color'>[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAuditId, setSelectedAuditId] = useState<string | null>(searchParams.get('auditId') || null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -474,14 +474,15 @@ const Facturation = () => {
     const s = [...filteredInvoices];
     if (!sortConfig) return s;
     return s.sort((a, b) => {
-      let av: any, bv: any;
+      let av: number | string, bv: number | string;
       if (sortConfig.key === 'amount') { av = a.amount ?? 0; bv = b.amount ?? 0; }
       else if (sortConfig.key === 'date') { av = a.invoice_date ? new Date(a.invoice_date).getTime() : 0; bv = b.invoice_date ? new Date(b.invoice_date).getTime() : 0; }
       else if (sortConfig.key === 'supplier') { av = (a.supplier ?? '').toLowerCase(); bv = (b.supplier ?? '').toLowerCase(); }
       else if (sortConfig.key === 'filename') { av = a.file_name.toLowerCase(); bv = b.file_name.toLowerCase(); }
       else if (sortConfig.key === 'status') { av = a.status; bv = b.status; }
       else return 0;
-      return av < bv ? (sortConfig.direction === 'asc' ? -1 : 1) : av > bv ? (sortConfig.direction === 'asc' ? 1 : -1) : 0;
+      // av et bv viennent de la même colonne (deux nombres ou deux textes) : comparaison native de JS.
+      return (av as number) < (bv as number) ? (sortConfig.direction === 'asc' ? -1 : 1) : (av as number) > (bv as number) ? (sortConfig.direction === 'asc' ? 1 : -1) : 0;
     });
   })();
 

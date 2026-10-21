@@ -463,15 +463,15 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
 
       const assignments: SiteAssignmentMap = {}
       for (const inv of ocrRes.data ?? []) {
-        assignments[(inv as any).id] = (inv as any).classeur_site_id ?? null
+        assignments[inv.id] = inv.classeur_site_id ?? null
       }
       for (const inv of senRes.data ?? []) {
-        assignments[(inv as any).id] = (inv as any).classeur_site_id ?? null
+        assignments[inv.id] = inv.classeur_site_id ?? null
       }
 
       const names: SiteNameMap = {}
       for (const site of sitesRes.data ?? []) {
-        names[(site as any).id] = (site as any).name
+        names[site.id] = site.name
       }
 
       setSiteAssignments(assignments)

@@ -65,6 +65,8 @@ function buildSyntheticInvoice(
   const conso = orig.conso_kwh_total
   const row   = getRow(year, categorie)
   if (!row) return null
+  // Ligne de grille BT (tranches t1-t3) ou MT/HT (k1, k2) : chaque prix est optionnel selon le domaine.
+  const tarifs = row as { t1?: number; t2?: number; t3?: number; k1?: number; k2?: number; pf?: number }
 
   let energie = 0
   if (BT_PP.has(categorie)) {
@@ -75,12 +77,12 @@ function buildSyntheticInvoice(
     if (conso <= s1)        { t1 = conso }
     else if (conso <= s2)   { t1 = s1; t2 = conso - s1 }
     else                    { t1 = s1; t2 = s2 - s1; t3 = conso - s2 }
-    energie = t1 * safe((row as any).t1) + t2 * safe((row as any).t2) + t3 * safe((row as any).t3)
+    energie = t1 * safe(tarifs.t1) + t2 * safe(tarifs.t2) + t3 * safe(tarifs.t3)
   } else {
     const k1 = safe(orig.conso_k1_kwh)
     const k2 = safe(orig.conso_k2_kwh)
-    const prixK1 = safe((row as any).k1)
-    const prixK2 = safe((row as any).k2 ?? (row as any).k1)
+    const prixK1 = safe(tarifs.k1)
+    const prixK2 = safe(tarifs.k2 ?? tarifs.k1)
     if (k1 + k2 > 0) {
       energie = k1 * prixK1 + k2 * prixK2
     } else {
@@ -90,7 +92,7 @@ function buildSyntheticInvoice(
   }
   if (!energie) return null
 
-  const pf_unitaire = safe((row as any).pf)
+  const pf_unitaire = safe(tarifs.pf)
   const pf = pf_unitaire > 0 ? pf_unitaire * PS * (NJ / 30) : 0
 
   const cosphi    = safe(orig.montant_cosphi)

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/db'
 import { mapOcrToInvoiceData, mapSenelecToInvoiceData } from '@/lib/invoice-mapper'
+import type { FactureSenelecForSelector } from '@/lib/factures-senelec-service'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -123,6 +124,19 @@ export async function getAuditSpatialHierarchy(auditId: string): Promise<Spatial
   }
 }
 
+// Ligne audit_invoices lue par le classeur ; les colonnes classeur_* manquent si la migration n'est pas appliquée.
+interface LigneOcrClasseur {
+  id: string
+  file_name: string
+  invoice_date: string | null
+  amount: number | null
+  status: string
+  ocr_data: unknown
+  classeur_site_id?: string | null
+  classeur_zone_id?: string | null
+  classeur_building_id?: string | null
+}
+
 interface ClasseurInvoicesResult {
   invoices: ClasseurInvoice[]
   migrationNeeded: boolean
@@ -148,7 +162,7 @@ export async function getClasseurInvoices(auditId: string): Promise<ClasseurInvo
 
   if (ocrError) throw ocrError
 
-  const ocrInvoices: ClasseurInvoice[] = (ocrData ?? []).map((inv: any) => {
+  const ocrInvoices: ClasseurInvoice[] = (ocrData ?? []).map((inv: LigneOcrClasseur) => {
     const mapped = mapOcrToInvoiceData(inv.ocr_data)
     return {
       id:                   inv.id,
@@ -173,8 +187,9 @@ export async function getClasseurInvoices(auditId: string): Promise<ClasseurInvo
       .eq('audit_id', auditId)
       .order('date_debut_periode', { ascending: false })
 
-    senelecInvoices = (senData ?? []).map((row: any) => {
-      const mapped = mapSenelecToInvoiceData(row)
+    senelecInvoices = (senData ?? []).map((row) => {
+      // Sélection partielle : le mapper n'utilise ici que les champs de consommation sélectionnés.
+      const mapped = mapSenelecToInvoiceData(row as unknown as FactureSenelecForSelector)
       return {
         id:                    row.id,
         file_name:             row.partenaire || row.appartenance || row.numero_compte_contrat,

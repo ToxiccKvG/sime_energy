@@ -11,8 +11,8 @@ export interface StructuredExtractedData {
   pageNumber?: number;
   sections: Record<string, Record<string, FieldMetadata>>;
   customFields: Record<string, FieldMetadata>;
-  measurements?: any;
-  kpis?: any;
+  measurements?: unknown;
+  kpis?: unknown;
   pageImage?: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -63,7 +63,7 @@ interface ProcessingInfo {
   };
 }
 
-interface BackendInvoiceResponse {
+export interface BackendInvoiceResponse {
   dictionary?: {
     id: string;
     name: string;
@@ -76,13 +76,13 @@ interface BackendInvoiceResponse {
     templateName?: string;
     headers?: string[];
     rowHeaders?: string[];
-    rows: Array<Record<string, any>>;
+    rows: Array<Record<string, unknown>>;
     missingHeaders?: string[];
     excelMappingsUsed?: boolean;
     rowCount: number;
     columnCount: number;
   }>;
-  unifiedData: Record<string, any>;
+  unifiedData: Record<string, unknown>;
   processingInfo: ProcessingInfo;
 }
 
@@ -252,7 +252,7 @@ function isRetryableError(error: unknown): boolean {
   }
 
   if (error instanceof Error && 'status' in error) {
-    const status = (error as any).status;
+    const status = (error as Error & { status?: number }).status;
     // Retry sur erreurs serveur (5xx) mais pas sur erreurs client (4xx)
     return status >= 500;
   }

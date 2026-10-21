@@ -919,11 +919,11 @@ export function QuarantinePanel({ onCountChange }: Props) {
                         </p>
                       </div>
                     )}
-                    {item.source === 'manual' && (item as any).delta_fcfa != null && (
+                    {item.source === 'manual' && item.delta_fcfa != null && (
                       <div>
                         <p className="text-[10px] text-slate-600 uppercase tracking-wider">Écart</p>
                         <p className={`text-sm font-semibold tabular-nums font-mono ${deltaColor}`}>
-                          {(item as any).delta_fcfa >= 0 ? '+' : ''}{fmtXOF((item as any).delta_fcfa)} FCFA
+                          {item.delta_fcfa >= 0 ? '+' : ''}{fmtXOF(item.delta_fcfa)} FCFA
                         </p>
                       </div>
                     )}

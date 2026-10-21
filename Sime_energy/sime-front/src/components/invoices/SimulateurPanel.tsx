@@ -189,8 +189,8 @@ function prefillFromOcr(invoice: AuditInvoice): Partial<SimulateurInput> {
   const domaine: 'BT' | 'MT' | 'HT' =
     d.domaine_tension_raw?.toUpperCase().includes('MT') ? 'MT'
     : d.domaine_tension_raw?.toUpperCase().includes('HT') ? 'HT'
-    : CATEGORIES_BY_TENSION['BT'].includes(categorie as any) ? 'BT'
-    : CATEGORIES_BY_TENSION['MT'].includes(categorie as any) ? 'MT' : 'HT'
+    : (CATEGORIES_BY_TENSION['BT'] as readonly string[]).includes(categorie) ? 'BT'
+    : (CATEGORIES_BY_TENSION['MT'] as readonly string[]).includes(categorie) ? 'MT' : 'HT'
 
   const grille_annee = deriveGrilleAnnee(invoice.invoice_date)
 
@@ -242,8 +242,8 @@ function prefillFromSenelec(row: FactureSenelecForSelector): Partial<SimulateurI
   const nbre_jours_cons = calcNJ(row.date_debut_periode, row.date_fin_periode) ?? row.nb_jour_facturation ?? 30
 
   const categorie = mapSenelecCategorie(row.categorie_tarifaire, row.type_tarif_numero)
-  const domaine: 'BT' | 'MT' | 'HT' = CATEGORIES_BY_TENSION['BT'].includes(categorie as any) ? 'BT'
-    : CATEGORIES_BY_TENSION['MT'].includes(categorie as any) ? 'MT' : 'HT'
+  const domaine: 'BT' | 'MT' | 'HT' = (CATEGORIES_BY_TENSION['BT'] as readonly string[]).includes(categorie) ? 'BT'
+    : (CATEGORIES_BY_TENSION['MT'] as readonly string[]).includes(categorie) ? 'MT' : 'HT'
 
   // Use base TTC (HT+TVA) excluding rappels for comparison — montant_facture_ttc includes rappels
   const baseTTC = (row.montant_hors_tva != null && row.montant_tva != null)
@@ -919,8 +919,8 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
                 value={form.categorie}
                 onValueChange={v => {
                   const cat = v as TariffCategory
-                  const dom = CATEGORIES_BY_TENSION['BT'].includes(cat as any) ? 'BT'
-                    : CATEGORIES_BY_TENSION['MT'].includes(cat as any) ? 'MT' : 'HT'
+                  const dom = (CATEGORIES_BY_TENSION['BT'] as readonly string[]).includes(cat) ? 'BT'
+                    : (CATEGORIES_BY_TENSION['MT'] as readonly string[]).includes(cat) ? 'MT' : 'HT'
                   set('categorie', cat)
                   set('domaine', dom)
                   setResult(null)

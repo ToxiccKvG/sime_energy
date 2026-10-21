@@ -41,12 +41,15 @@ import {
 import { toast } from 'sonner';
 import { updateInvoice, getAuditInvoices, getAllInvoices } from '@/lib/invoice-service';
 import type { AuditInvoice } from '@/lib/invoice-service';
-import type { StructuredExtractedData } from '@/services/invoice-processing-service';
+import type { StructuredExtractedData, BackendInvoiceResponse } from '@/services/invoice-processing-service';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAnnotationDictionary } from '@/hooks/useAnnotationDictionary';
 import type { ValidationResult } from '@/types/annotation-dictionary';
 import { transformInvoiceTablesToJsonWithRetry } from '@/services/invoice-processing-service';
 import { refreshProjectContextInBackground } from '@/hooks/useProjectContext';
+
+// Tableau OCR tel que stocké dans ocr_data : lignes de cellules (texte + boîte optionnelle).
+type TableOcr = { box?: number[]; rows: { text: string; box?: number[] }[][] };
 
 interface FormField {
   Key: string;
@@ -470,9 +473,9 @@ export function AnnotationPage() {
     const updatedOcrData = { ...(invoice.ocr_data as Record<string, unknown>) };
 
     const ocrWithTables = updatedOcrData as {
-      page?: Array<{ tables?: any[] }>;
-      pages?: Array<{ tables?: any[] }>;
-      tables?: any[];
+      page?: Array<{ tables?: TableOcr[] }>;
+      pages?: Array<{ tables?: TableOcr[] }>;
+      tables?: TableOcr[];
     };
 
     if (ocrWithTables.pages?.[0]) {
@@ -482,9 +485,9 @@ export function AnnotationPage() {
     } else if (ocrWithTables.tables) {
       ocrWithTables.tables = [...ocrWithTables.tables, newTable];
     } else if (Array.isArray(updatedOcrData)) {
-      (updatedOcrData as any[]).push({ tables: [newTable] });
+      (updatedOcrData as unknown as { tables: TableOcr[] }[]).push({ tables: [newTable] });
     } else {
-      updatedOcrData.tables = [newTable] as any;
+      updatedOcrData.tables = [newTable];
     }
 
     const newInvoices = [...invoices];
@@ -492,7 +495,7 @@ export function AnnotationPage() {
     setInvoices(newInvoices);
 
     const newExtractedData = [...extractedData];
-    const tables = (newExtractedData[pageIndex]?.tables as any[] | undefined) || [];
+    const tables = (newExtractedData[pageIndex]?.tables as unknown[] | undefined) || [];
     newExtractedData[pageIndex] = {
       ...(newExtractedData[pageIndex] || {}),
       tables: [...tables, newTable],
@@ -511,12 +514,12 @@ export function AnnotationPage() {
 
     const updatedOcrData = { ...(invoice.ocr_data as Record<string, unknown>) };
     const ocrWithTables = updatedOcrData as {
-      page?: Array<{ tables?: any[] }>;
-      pages?: Array<{ tables?: any[] }>;
-      tables?: any[];
+      page?: Array<{ tables?: TableOcr[] }>;
+      pages?: Array<{ tables?: TableOcr[] }>;
+      tables?: TableOcr[];
     };
 
-    const removeAt = (tables?: any[]) => tables?.filter((_, idx) => idx !== tableIndex) || [];
+    const removeAt = <T,>(tables?: T[]) => tables?.filter((_, idx) => idx !== tableIndex) || [];
 
     if (ocrWithTables.pages?.[0]?.tables) {
       ocrWithTables.pages[0].tables = removeAt(ocrWithTables.pages[0].tables);
@@ -531,7 +534,7 @@ export function AnnotationPage() {
     setInvoices(newInvoices);
 
     const newExtractedData = [...extractedData];
-    const tables = (newExtractedData[pageIndex]?.tables as any[] | undefined) || [];
+    const tables = (newExtractedData[pageIndex]?.tables as unknown[] | undefined) || [];
     newExtractedData[pageIndex] = {
       ...(newExtractedData[pageIndex] || {}),
       tables: removeAt(tables),
@@ -706,9 +709,9 @@ export function AnnotationPage() {
 
       // Toujours créer verifiedData, même sans transformation backend réussie
       // Car on veut au minimum sauvegarder les forms
-      const createVerifiedData = (backendResult?: any) => {
+      const createVerifiedData = (backendResult?: BackendInvoiceResponse) => {
         // Fusionner les forms (paires clé-valeur OCR) avec unifiedData (tableaux transformés)
-        const mergedUnifiedData: Record<string, any> = {
+        const mergedUnifiedData: Record<string, unknown> = {
           ...(backendResult?.unifiedData || {})
         };
 

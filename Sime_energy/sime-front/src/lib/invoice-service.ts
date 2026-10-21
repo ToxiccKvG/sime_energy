@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/db';
+import { supabase, toJson } from '@/lib/db';
 import { logActivity } from '@/lib/activity-service';
 
 export interface AuditInvoice {
@@ -13,8 +13,8 @@ export interface AuditInvoice {
   supplier?: string;
   status: 'pending' | 'processing' | 'verified' | 'rejected';
   confidence_score: number;
-  ocr_data?: Record<string, any>;
-  ocr_data_verified?: Record<string, any>;
+  ocr_data?: Record<string, unknown>;
+  ocr_data_verified?: Record<string, unknown>;
   notes?: string;
   created_at: string;
   updated_at: string;
@@ -50,7 +50,7 @@ export async function createInvoice(auditId: string, organizationId: string, inv
         supplier: invoice.supplier,
         status: invoice.status || 'pending',
         confidence_score: invoice.confidence_score || 0,
-        ocr_data: invoice.ocr_data || {},
+        ocr_data: toJson(invoice.ocr_data || {}),
         notes: invoice.notes,
         building_id: invoice.building_id,
       },
@@ -87,8 +87,11 @@ export async function updateInvoice(invoiceId: string, updates: Partial<AuditInv
       supplier: updates.supplier,
       invoice_date: updates.invoice_date,
       notes: updates.notes,
+      // TODO(bug) : ocr_data est ignoré ici (ligne commentée depuis le premier commit), alors que
+      // AnnotationPage enregistre ses corrections par updateInvoice(id, { ocr_data }) : ces sauvegardes
+      // ne changent que updated_at. Signalé par le typage du 2026-10-21, correction à décider.
       // ocr_data: updates.ocr_data,
-      ocr_data_verified: updates.ocr_data_verified,
+      ocr_data_verified: toJson(updates.ocr_data_verified),
       updated_at: new Date().toISOString(),
     })
     .eq('id', invoiceId)

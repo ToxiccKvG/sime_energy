@@ -153,12 +153,15 @@ function NodeRow({
 
 // ─── Tooltip recharts ─────────────────────────────────────────────────────────
 
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) {
+// Champs que Recharts transmet pour chaque série et que l'infobulle affiche.
+type SerieInfobulle = { name: string; value: number; fill?: string };
+
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: SerieInfobulle[]; label?: string }) {
   if (!active || !payload?.length) return null
   return (
     <div className="bg-[#0d0f1a] border border-white/10 rounded-xl px-3 py-2 shadow-xl text-xs">
       <p className="text-slate-400 font-medium mb-1.5 truncate max-w-[160px]">{label}</p>
-      {payload.map((p: any) => (
+      {payload.map((p) => (
         <div key={p.name} className="flex items-center gap-2 text-slate-200">
           <span className="w-2 h-2 rounded-full shrink-0" style={{ background: p.fill }} />
           <span className="text-slate-400">{p.name}</span>
@@ -292,8 +295,8 @@ export function InvoiceClasseur({ auditId }: { auditId: string }) {
             }
           : i
       ))
-    } catch (err: any) {
-      const msg: string = err?.message ?? ''
+    } catch (err) {
+      const msg: string = (err as { message?: string } | null)?.message ?? ''
       if (msg.includes('column') || msg.includes('does not exist') || msg.includes('42703')) {
         setMigrationNeeded(true)
         setAssignError('migration')

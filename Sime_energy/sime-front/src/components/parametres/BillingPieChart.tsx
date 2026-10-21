@@ -16,7 +16,7 @@ interface BillingPieChartProps {
   segments: PieSegment[]
 }
 
-function CustomTooltip({ active, payload }: any) {
+function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payload: PieSegment }[] }) {
   if (!active || !payload?.length) return null
   const seg: PieSegment = payload[0].payload
   return (
