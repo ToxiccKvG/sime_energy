@@ -5,6 +5,19 @@ import {
 
 // ─── Recap PDF ────────────────────────────────────────────────────────────────
 
+// Toute valeur venant du questionnaire est échappée avant d'entrer dans le HTML :
+// la page est écrite dans une fenêtre de même origine que l'application (XSS stockée sinon).
+function esc(value: unknown): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const escLines = (value: unknown): string => esc(value).replace(/\n/g, '<br>');
+
 export function buildRecapHTML(questionnaire: PVQuestionnaire): string {
   let body = '';
 
@@ -25,12 +38,12 @@ export function buildRecapHTML(questionnaire: PVQuestionnaire): string {
 
     if (!filledFields.length && !hasCoords && !filledRows.length && !checkedItems.length && !checkedExtra.length && !sec.freeText && !sectionCf.length && !filledSessions.length) return;
 
-    body += `<h2>${i + 1}. ${schema.title}</h2>`;
+    body += `<h2>${i + 1}. ${esc(schema.title)}</h2>`;
 
     if (filledFields.length || hasCoords) {
       body += '<table><tbody>';
       filledFields.forEach((f) => {
-        body += `<tr><td class="lbl">${f.label}</td><td>${(sec.fields[f.id] ?? '').replace(/\n/g, '<br>')}</td></tr>`;
+        body += `<tr><td class="lbl">${esc(f.label)}</td><td>${escLines(sec.fields[f.id] ?? '')}</td></tr>`;
       });
       if (hasCoords) {
         body += `<tr><td class="lbl">Coordonnées GPS</td><td>${parseFloat(sec.fields['localisation_lat']).toFixed(6)}, ${parseFloat(sec.fields['localisation_lng']).toFixed(6)}</td></tr>`;
@@ -44,7 +57,7 @@ export function buildRecapHTML(questionnaire: PVQuestionnaire): string {
         const readings = r.readings?.filter((rd) => rd.value)
           ?? (r.value ? [{ id: '', dateTime: r.dateTime, value: r.value }] : []);
         readings.forEach((rd, rdIdx) => {
-          body += `<tr><td>${rdIdx === 0 ? r.label : ''}</td><td>${rd.dateTime || '—'}</td><td>${rd.value}</td></tr>`;
+          body += `<tr><td>${esc(rdIdx === 0 ? r.label : '')}</td><td>${esc(rd.dateTime || '—')}</td><td>${esc(rd.value)}</td></tr>`;
         });
       });
       body += '</tbody></table>';
@@ -52,13 +65,13 @@ export function buildRecapHTML(questionnaire: PVQuestionnaire): string {
 
     filledSessions.forEach((session) => {
       const typeLabel = session.type === 'WOYOFAL' ? 'Woyofal' : 'Index manuel';
-      body += `<p class="grp">${session.label} — ${typeLabel}${session.dateTime ? ` — ${session.dateTime}` : ''}</p>`;
+      body += `<p class="grp">${esc(session.label)} — ${typeLabel}${session.dateTime ? ` — ${esc(session.dateTime)}` : ''}</p>`;
       if (session.type === 'WOYOFAL') {
         body += '<table><thead><tr><th>Code Woyofal</th><th>Valeur relevée</th></tr></thead><tbody>';
         session.readings.forEach((r) => {
           if (r.kind !== 'woyofal') return;
           const lbl = WOYOFAL_CODE_LABELS[r.code] ? `${r.code} — ${WOYOFAL_CODE_LABELS[r.code]}` : r.code;
-          body += `<tr><td>${lbl}</td><td>${r.valeur}</td></tr>`;
+          body += `<tr><td>${esc(lbl)}</td><td>${esc(r.valeur)}</td></tr>`;
         });
       } else {
         body += '<table><thead><tr><th>Paramètre</th><th>Date et heure</th><th>Valeur</th></tr></thead><tbody>';
@@ -69,11 +82,11 @@ export function buildRecapHTML(questionnaire: PVQuestionnaire): string {
             const valStr = r.subValues.map((sv) => {
               const e = OBIS_BY_KEY[sv.code];
               const name = e ? [obisOptionLabel(e), e.libelle].filter(Boolean).join(' · ') : sv.code;
-              return `${name} = ${sv.valeur || '—'}`;
+              return `${esc(name)} = ${esc(sv.valeur || '—')}`;
             }).join('<br>');
-            body += `<tr><td>${r.key}</td><td>${date}</td><td>${valStr}</td></tr>`;
+            body += `<tr><td>${esc(r.key)}</td><td>${esc(date)}</td><td>${valStr}</td></tr>`;
           } else {
-            body += `<tr><td>${r.key}</td><td>${date}</td><td>${r.valeur || '—'}</td></tr>`;
+            body += `<tr><td>${esc(r.key)}</td><td>${esc(date)}</td><td>${esc(r.valeur || '—')}</td></tr>`;
           }
         });
       }
@@ -81,26 +94,26 @@ export function buildRecapHTML(questionnaire: PVQuestionnaire): string {
     });
 
     if (checkedItems.length) {
-      body += `<p class="grp">${schema.checkboxLabel ?? 'Éléments cochés'}</p><ul>`;
+      body += `<p class="grp">${esc(schema.checkboxLabel ?? 'Éléments cochés')}</p><ul>`;
       checkedItems.forEach((c) => {
-        body += `<li>${c.label}${c.comment ? ` — <em>${c.comment}</em>` : ''}</li>`;
+        body += `<li>${esc(c.label)}${c.comment ? ` — <em>${esc(c.comment)}</em>` : ''}</li>`;
       });
       body += '</ul>';
     }
 
     if (checkedExtra.length) {
-      body += `<p class="grp">${schema.extraCheckboxLabel ?? 'Usages'}</p><ul>`;
-      checkedExtra.forEach((c) => { body += `<li>${c.label}</li>`; });
+      body += `<p class="grp">${esc(schema.extraCheckboxLabel ?? 'Usages')}</p><ul>`;
+      checkedExtra.forEach((c) => { body += `<li>${esc(c.label)}</li>`; });
       body += '</ul>';
     }
 
     if (sec.freeText) {
-      body += `<p class="grp">${schema.freeTextLabel ?? 'Remarques'}</p><p>${sec.freeText.replace(/\n/g, '<br>')}</p>`;
+      body += `<p class="grp">${esc(schema.freeTextLabel ?? 'Remarques')}</p><p>${escLines(sec.freeText)}</p>`;
     }
 
     if (sectionCf.length) {
       body += '<table><tbody>';
-      sectionCf.forEach((f) => { body += `<tr><td class="lbl">${f.key}</td><td>${f.value}</td></tr>`; });
+      sectionCf.forEach((f) => { body += `<tr><td class="lbl">${esc(f.key)}</td><td>${esc(f.value)}</td></tr>`; });
       body += '</tbody></table>';
     }
   });
@@ -108,7 +121,7 @@ export function buildRecapHTML(questionnaire: PVQuestionnaire): string {
   const globalCf = questionnaire.customFields.filter((f) => f.key || f.value);
   if (globalCf.length) {
     body += '<h2>Champs personnalisés</h2><table><tbody>';
-    globalCf.forEach((f) => { body += `<tr><td class="lbl">${f.key}</td><td>${f.value}</td></tr>`; });
+    globalCf.forEach((f) => { body += `<tr><td class="lbl">${esc(f.key)}</td><td>${esc(f.value)}</td></tr>`; });
     body += '</tbody></table>';
   }
 
@@ -118,7 +131,8 @@ export function buildRecapHTML(questionnaire: PVQuestionnaire): string {
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<title>Questionnaire — ${questionnaire.name}</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<title>Questionnaire — ${esc(questionnaire.name)}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;padding:18mm 15mm;font-size:11px}
@@ -141,7 +155,7 @@ export function buildRecapHTML(questionnaire: PVQuestionnaire): string {
 </head>
 <body>
 <div class="hdr">
-  <h1>Questionnaire d'inspection — ${questionnaire.name}</h1>
+  <h1>Questionnaire d'inspection — ${esc(questionnaire.name)}</h1>
   <p>Généré le ${date}</p>
 </div>
 ${body}
