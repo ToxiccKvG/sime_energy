@@ -2,23 +2,32 @@ import { supabase, toJson, fromJson } from '@/lib/db';
 import type { OrgCalendarEvent } from '@/lib/calendar-service';
 import type { OrganizationSettings } from '@/lib/organization-settings-service';
 import type { ProjectContextV1 } from '@/types/project-context';
+import type { Tables } from '@/types/database';
 
 // Lignes brutes (snake_case DB) nécessaires pour assembler le contexte d'un projet.
 // Une requête par table, groupée par audit_id — pas de N+1.
 export interface ProjectContextRawData {
-  audit: Record<string, any>;
+  audit: AuditBrut;
   organization: { id: string; name: string; settings: OrganizationSettings } | null;
-  sites: Record<string, any>[];
-  zones: Record<string, any>[];
-  buildings: Record<string, any>[];
-  levels: Record<string, any>[];
-  rooms: Record<string, any>[];
-  buildingParams: Record<string, any>[];
-  billingParams: Record<string, any>[];
+  sites: Tables<'audit_sites'>[];
+  zones: Tables<'audit_zones'>[];
+  buildings: Tables<'audit_buildings'>[];
+  levels: Tables<'audit_levels'>[];
+  rooms: Tables<'audit_rooms'>[];
+  buildingParams: Tables<'building_type_params'>[];
+  billingParams: Tables<'audit_billing_params'>[];
   calendarEvents: OrgCalendarEvent[];
-  facturesSenelec: Record<string, any>[];
-  ocrInvoices: Record<string, any>[];
+  facturesSenelec: Record<string, unknown>[];
+  ocrInvoices: FactureOcrBrute[];
 }
+
+type AuditBrut = Pick<Tables<'audits'>,
+  'id' | 'organization_id' | 'created_by' | 'name' | 'color' | 'status' | 'start_date' | 'end_date' |
+  'completion_percentage' | 'responsable' | 'client_type' | 'general_info' | 'personnel' | 'created_at' | 'updated_at'>;
+
+type FactureOcrBrute = Pick<Tables<'audit_invoices'>,
+  'id' | 'file_name' | 'invoice_date' | 'amount' | 'supplier' | 'status' | 'is_quarantined' |
+  'quarantine_reason' | 'classeur_site_id' | 'classeur_building_id' | 'ocr_data'>;
 
 // Colonnes de factures_senelec utiles à l'analyse (sans le résultat de simulation de quarantaine)
 const FACTURES_SENELEC_COLUMNS =
@@ -30,7 +39,7 @@ const FACTURES_SENELEC_COLUMNS =
 const PAGE_SIZE = 1000;
 
 async function getFacturesSenelecByAudit(auditId: string) {
-  const rows: Record<string, any>[] = [];
+  const rows: Record<string, unknown>[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from('factures_senelec')
@@ -39,7 +48,8 @@ async function getFacturesSenelecByAudit(auditId: string) {
       .order('date_debut_periode', { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
-    rows.push(...((data ?? []) as Record<string, any>[]));
+    // Sélection construite par concaténation : supabase-js ne peut pas en déduire le type des lignes.
+    rows.push(...((data ?? []) as unknown as Record<string, unknown>[]));
     if (!data || data.length < PAGE_SIZE) return rows;
   }
 }
@@ -51,7 +61,7 @@ async function getOcrInvoicesByAudit(auditId: string) {
     .eq('audit_id', auditId)
     .order('invoice_date', { ascending: true });
   if (error) throw error;
-  return (data ?? []) as Record<string, any>[];
+  return data ?? [];
 }
 
 // Tables du projet rattachées par audit_id, lues en entier pour assembler le contexte.
@@ -59,12 +69,13 @@ type TableDuProjet =
   | 'audit_sites' | 'audit_zones' | 'audit_buildings' | 'audit_levels' | 'audit_rooms'
   | 'building_type_params' | 'audit_billing_params';
 
-async function selectByAudit(table: TableDuProjet, auditId: string, orderBy?: string) {
-  let query = supabase.from(table).select('*').eq('audit_id', auditId);
+async function selectByAudit<T extends TableDuProjet>(table: T, auditId: string, orderBy?: string): Promise<Tables<T>[]> {
+  let query = supabase.from(table as TableDuProjet).select('*').eq('audit_id', auditId);
   if (orderBy) query = query.order(orderBy, { ascending: true });
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []) as Record<string, any>[];
+  // Requête commune aux 7 tables : le type de ligne est celui de la table demandée.
+  return (data ?? []) as unknown as Tables<T>[];
 }
 
 export async function getProjectContextRawData(auditId: string): Promise<ProjectContextRawData> {

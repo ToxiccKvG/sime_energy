@@ -40,7 +40,7 @@ export interface BatimentContext {
   type: string | null;
   zone_id: string | null;
   surfaces_m2: { terrain: number | null; batie: number | null; toiture: number | null };
-  parametres_usage: Record<string, any>[];   // building_type_params (calendrier + heures par usage)
+  parametres_usage: Record<string, unknown>[];   // building_type_params (calendrier + heures par usage)
   niveaux: {
     id: string;
     nom: string;
@@ -55,10 +55,10 @@ export interface SiteContext {
   adresse: string | null;
   coordonnees: { lat: number | null; lng: number | null };
   statut: string | null;
-  structure_bati: Record<string, any> | null;
-  enveloppe: Record<string, any> | null;
-  amenagement: Record<string, any> | null;
-  facturation: (Record<string, any> & { grille_tarifaire_resolue: Record<string, any> | null }) | null;
+  structure_bati: Record<string, unknown> | null;
+  enveloppe: Record<string, unknown> | null;
+  amenagement: Record<string, unknown> | null;
+  facturation: (Record<string, unknown> & { grille_tarifaire_resolue: Record<string, unknown> | null }) | null;
   zones: { id: string; nom: string; description: string | null; ordre: number | null; batiments: BatimentContext[] }[];
   batiments_sans_zone: BatimentContext[];
 }
@@ -150,17 +150,17 @@ export interface ProjectContextV1 {
   };
 
   informations_generales: {
-    identification: Record<string, any>;
-    finances: Record<string, any>;
+    identification: Record<string, unknown>;
+    finances: Record<string, unknown>;
     energie: {
       contrats_fournisseurs: string | null;
       consommations: { type: string; unite: string | null; annees: { annee: number; quantite: number | null; cout_fcfa: number | null }[] }[];
       problemes_efficacite: { designation: string; frequence: string | null; duree: string | null }[];
-      diagnostic_precedent: any;
-      programme_extension: any;
+      diagnostic_precedent: unknown;
+      programme_extension: unknown;
     };
-    specifique: Record<string, any>;
-    synthese_ia: Record<string, any> | null;
+    specifique: Record<string, unknown>;
+    synthese_ia: Record<string, unknown> | null;
   };
 
   personnel: {
@@ -173,7 +173,7 @@ export interface ProjectContextV1 {
     employes: { categorie: string; hommes: number; femmes: number; cadres: number; total: number }[];
     effectif_total_declare: number | null;
     effectif_total_calcule: number;
-    systeme_management_energie: any;
+    systeme_management_energie: unknown;
   };
 
   calendrier: {
@@ -242,9 +242,9 @@ export interface ProjectContextV1 {
       motif_quarantaine: string | null;
       site_id: string | null;
       montant_ttc_fcfa: number | null;
-      donnees: Record<string, any>;   // champs extraits (conso K1/K2, Pmax, cos φ, montants, période…)
+      donnees: Record<string, unknown>;   // champs extraits (conso K1/K2, Pmax, cos φ, montants, période…)
     }[];
   };
 
-  brut: { general_info: Record<string, any>; personnel: Record<string, any> };
+  brut: { general_info: Record<string, unknown>; personnel: Record<string, unknown> };
 }

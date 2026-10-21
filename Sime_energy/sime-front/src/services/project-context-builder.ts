@@ -20,6 +20,8 @@ import {
   QUESTIONNAIRE_SCHEMA, WOYOFAL_CODE_GROUPS, WOYOFAL_NUMBER_CODES, OBIS_BY_KEY,
 } from '@/constants/pv-questionnaire-schema';
 import { mapOcrToInvoiceData } from '@/lib/invoice-mapper';
+import { fromJson } from '@/lib/db';
+import type { Tables } from '@/types/database';
 import { DEFAULT_METEO_SETTINGS, type MeteoSettings } from '@/services/meteo-service';
 import {
   PROJECT_CONTEXT_SCHEMA_VERSION,
@@ -79,15 +81,15 @@ function isoDate(d: Date): string {
 }
 
 /** Une ligne de tableau dynamique est vide si toutes ses valeurs (hors clés techniques) sont vides */
-function isEmptyRow(row: Record<string, any>, ignore: string[] = []): boolean {
+function isEmptyRow(row: Record<string, unknown>, ignore: string[] = []): boolean {
   return Object.entries(row).every(([k, v]) => ignore.includes(k) || toStr(v) === null);
 }
 
-function cleanRows<T extends Record<string, any>>(rows: unknown, ignore: string[] = []): T[] {
+function cleanRows<T extends Record<string, unknown>>(rows: unknown, ignore: string[] = []): T[] {
   return Array.isArray(rows) ? (rows as T[]).filter(r => r && typeof r === 'object' && !isEmptyRow(r, ignore)) : [];
 }
 
-function toPersonne(p: Record<string, any>): Personne {
+function toPersonne(p: Record<string, unknown>): Personne {
   return {
     nom: toStr(p.nom),
     position: toStr(p.position),
@@ -166,7 +168,7 @@ function buildBilanAnnuel(
 }
 
 function buildCalendrier(raw: ProjectContextRawData): ProjectContextV1['calendrier'] {
-  const po = (raw.audit.personnel?.programmeOperations ?? {}) as Record<string, any>;
+  const po = (fromJson<Record<string, unknown> | null>(raw.audit.personnel)?.programmeOperations ?? {}) as Record<string, unknown>;
   const { source, texteLibre, hebdo } = buildHoraires(po.horaires);
   const years = projectYears(raw.audit.start_date, raw.audit.end_date);
   const joursFeries = years.flatMap(y => getSenegalHolidays(y))
@@ -232,8 +234,8 @@ function buildReglages(raw: ProjectContextRawData): ProjectContextV1['reglages']
 
 // ─── Informations générales & personnel ──────────────────────────────────────
 
-function buildInformationsGenerales(gi: Record<string, any>): ProjectContextV1['informations_generales'] {
-  const consommations = cleanRows<Record<string, any>>(gi.consommationsEnergie)
+function buildInformationsGenerales(gi: Record<string, unknown>): ProjectContextV1['informations_generales'] {
+  const consommations = cleanRows<Record<string, unknown>>(gi.consommationsEnergie)
     .filter(c => toStr(c.type))
     .map(c => ({
       type: String(c.type).trim(),
@@ -245,12 +247,12 @@ function buildInformationsGenerales(gi: Record<string, any>): ProjectContextV1['
       })),
     }));
 
-  const problemes = cleanRows<Record<string, any>>(gi.problemesEff)
+  const problemes = cleanRows<Record<string, unknown>>(gi.problemesEff)
     .filter(p => toStr(p.designation))
     .map(p => ({ designation: String(p.designation).trim(), frequence: toStr(p.frequence), duree: toStr(p.duree) }));
 
-  const spec = (gi.specifique ?? {}) as Record<string, any>;
-  const specifique: Record<string, any> = {
+  const spec = (gi.specifique ?? {}) as Record<string, unknown>;
+  const specifique: Record<string, unknown> = {
     ...spec,
     productions: cleanRows(spec.productions),
     procedesEqs: cleanRows(spec.procedesEqs),
@@ -292,12 +294,12 @@ function buildInformationsGenerales(gi: Record<string, any>): ProjectContextV1['
       programme_extension: gi.programmeExtension ?? null,
     },
     specifique,
-    synthese_ia: gi.synthesis ?? null,
+    synthese_ia: (gi.synthesis ?? null) as Record<string, unknown> | null,
   };
 }
 
-function buildPersonnel(gi: Record<string, any>, p: Record<string, any>): ProjectContextV1['personnel'] {
-  const employes = cleanRows<Record<string, any>>(p.employes, ['categorie', 'type']).map(e => {
+function buildPersonnel(gi: Record<string, unknown>, p: Record<string, unknown>): ProjectContextV1['personnel'] {
+  const employes = cleanRows<Record<string, unknown>>(p.employes, ['categorie', 'type']).map(e => {
     const hommes = toNum(e.hommes ?? e.hommesNombre) ?? 0;
     const femmes = toNum(e.femmes ?? e.femmesNombre) ?? 0;
     return {
@@ -314,8 +316,8 @@ function buildPersonnel(gi: Record<string, any>, p: Record<string, any>): Projec
     responsable_technique: toStr(p.dt),
     responsable_energie: toStr(gi.respEnergie),
     responsable_achat: toStr(gi.respAchat),
-    responsables_energie: cleanRows<Record<string, any>>(p.responsableEnergie).map(toPersonne),
-    points_focaux: cleanRows<Record<string, any>>(p.pointFocal).map(toPersonne),
+    responsables_energie: cleanRows<Record<string, unknown>>(p.responsableEnergie).map(toPersonne),
+    points_focaux: cleanRows<Record<string, unknown>>(p.pointFocal).map(toPersonne),
     employes,
     effectif_total_declare: toNum(gi.effectifs),
     effectif_total_calcule: employes.reduce((s, e) => s + e.total, 0),
@@ -325,10 +327,10 @@ function buildPersonnel(gi: Record<string, any>, p: Record<string, any>): Projec
 
 // ─── Sites & bâti ─────────────────────────────────────────────────────────────
 
-function groupBy<T extends Record<string, any>>(rows: T[], key: string): Map<string, T[]> {
+function groupBy<T>(rows: T[], key: keyof T): Map<string, T[]> {
   const map = new Map<string, T[]>();
   for (const r of rows) {
-    const k = r[key];
+    const k = r[key] as unknown as string | null;
     if (!k) continue;
     if (!map.has(k)) map.set(k, []);
     map.get(k)!.push(r);
@@ -336,16 +338,16 @@ function groupBy<T extends Record<string, any>>(rows: T[], key: string): Map<str
   return map;
 }
 
-function stripKeys(row: Record<string, any>, keys: string[]) {
+function stripKeys(row: Record<string, unknown>, keys: string[]) {
   const out = { ...row };
   for (const k of keys) delete out[k];
   return out;
 }
 
-function resolveTariff(params: Record<string, any>): Record<string, any> | null {
+function resolveTariff(params: Tables<'audit_billing_params'>): Record<string, unknown> | null {
   const year = toNum(params.grille_annee);
   if (year === null) return null;
-  const grid = getTariffGrid(year) as Record<string, any> | undefined;
+  const grid = getTariffGrid(year) as Record<string, Record<string, unknown>> | undefined;
   const values = grid?.[params.domaine_tension]?.[params.categorie_tarifaire];
   return values ? { annee: year, domaine_tension: params.domaine_tension, categorie: params.categorie_tarifaire, valeurs: values } : null;
 }
@@ -358,7 +360,7 @@ function buildSites(raw: ProjectContextRawData): SiteContext[] {
   const paramsByBuilding = groupBy(raw.buildingParams, 'building_id');
   const billingBySite = new Map(raw.billingParams.map(b => [b.site_id as string, b]));
 
-  const toBatiment = (b: Record<string, any>): BatimentContext => ({
+  const toBatiment = (b: Tables<'audit_buildings'>): BatimentContext => ({
     id: b.id,
     nom: b.building_name,
     type: toStr(b.building_type),
@@ -402,9 +404,9 @@ function buildSites(raw: ProjectContextRawData): SiteContext[] {
       adresse: toStr(site.address),
       coordonnees: { lat: toNum(site.latitude), lng: toNum(site.longitude) },
       statut: toStr(site.status),
-      structure_bati: site.structure_bati ?? null,
-      enveloppe: site.enveloppe ?? null,
-      amenagement: site.amenagement ?? null,
+      structure_bati: fromJson<Record<string, unknown> | null>(site.structure_bati ?? null),
+      enveloppe: fromJson<Record<string, unknown> | null>(site.enveloppe ?? null),
+      amenagement: fromJson<Record<string, unknown> | null>(site.amenagement ?? null),
       facturation: billing
         ? { ...stripKeys(billing, ['audit_id', 'site_id', 'organization_id']), grille_tarifaire_resolue: resolveTariff(billing) }
         : null,
@@ -435,11 +437,11 @@ function toValeurReleve(raw: unknown, numeric = true): ValeurReleve {
 }
 
 function toCustomFields(rows: unknown): { cle: string; valeur: string }[] {
-  return cleanRows<Record<string, any>>(rows, ['id'])
+  return cleanRows<Record<string, unknown>>(rows, ['id'])
     .map(f => ({ cle: toStr(f.key) ?? '', valeur: toStr(f.value) ?? '' }));
 }
 
-function buildSessions(sec: Record<string, any>, questionnaire: { id: string; nom: string }): SessionReleveCompteur[] {
+function buildSessions(sec: Record<string, unknown>, questionnaire: { id: string; nom: string }): SessionReleveCompteur[] {
   const sessions: SessionReleveCompteur[] = [];
 
   for (const session of Array.isArray(sec.mesureSessions) ? sec.mesureSessions : []) {
@@ -459,9 +461,9 @@ function buildSessions(sec: Record<string, any>, questionnaire: { id: string; no
         });
       } else if (r?.kind === 'index') {
         const sousValeurs = (Array.isArray(r.subValues) ? r.subValues : [])
-          .filter((sv: Record<string, any>) => toStr(sv?.valeur))
-          .map((sv: Record<string, any>) => {
-            const obis = OBIS_BY_KEY[sv.code];
+          .filter((sv: Record<string, unknown>) => toStr(sv?.valeur))
+          .map((sv: Record<string, unknown>) => {
+            const obis = OBIS_BY_KEY[sv.code as string];
             return {
               code_obis: obis?.code || String(sv.code ?? ''),
               signification: obis?.signification ?? null,
@@ -492,7 +494,7 @@ function buildSessions(sec: Record<string, any>, questionnaire: { id: string; no
   }
 
   // Ancien format : relevés Woyofal à plat (avant les sessions datées)
-  const legacy = cleanRows<Record<string, any>>(sec.woyofalEntries, ['id']);
+  const legacy = cleanRows<Record<string, unknown>>(sec.woyofalEntries, ['id']);
   if (legacy.length > 0) {
     sessions.push({
       questionnaire_id: questionnaire.id,
@@ -517,8 +519,8 @@ function buildSessions(sec: Record<string, any>, questionnaire: { id: string; no
   return sessions;
 }
 
-function buildSection(sec: Record<string, any>, questionnaire: { id: string; nom: string }): SectionInspection | null {
-  const schema = SCHEMA_BY_ID.get(sec.id);
+function buildSection(sec: Record<string, unknown>, questionnaire: { id: string; nom: string }): SectionInspection | null {
+  const schema = SCHEMA_BY_ID.get(sec.id as string);
   const fields = (sec.fields ?? {}) as Record<string, unknown>;
 
   // Champs : ordre du schéma d'abord, puis les clés inconnues
@@ -536,10 +538,10 @@ function buildSection(sec: Record<string, any>, questionnaire: { id: string; nom
   const lng = toNum(fields.localisation_lng);
 
   const tableau = (Array.isArray(sec.tableRows) ? sec.tableRows : [])
-    .map((r: Record<string, any>) => {
+    .map((r: Record<string, unknown>) => {
       const readings = Array.isArray(r.readings) && r.readings.length > 0
-        ? r.readings.filter((rd: Record<string, any>) => toStr(rd.value))
-            .map((rd: Record<string, any>) => ({ date: toStr(rd.dateTime), valeur: String(rd.value).trim() }))
+        ? r.readings.filter((rd: Record<string, unknown>) => toStr(rd.value))
+            .map((rd: Record<string, unknown>) => ({ date: toStr(rd.dateTime), valeur: String(rd.value).trim() }))
         : toStr(r.value) ? [{ date: toStr(r.dateTime), valeur: String(r.value).trim() }] : [];
       return { cle: String(r.id ?? ''), libelle: toStr(r.label) ?? String(r.id ?? ''), sous_groupe: toStr(r.subGroup), releves: readings };
     })
@@ -547,8 +549,8 @@ function buildSection(sec: Record<string, any>, questionnaire: { id: string; nom
 
   const checked = (items: unknown, groupe: string) =>
     (Array.isArray(items) ? items : [])
-      .filter((c: Record<string, any>) => c?.checked)
-      .map((c: Record<string, any>) => ({ groupe, cle: String(c.id ?? ''), libelle: toStr(c.label) ?? String(c.id ?? ''), commentaire: toStr(c.comment) }));
+      .filter((c: Record<string, unknown>) => c?.checked)
+      .map((c: Record<string, unknown>) => ({ groupe, cle: String(c.id ?? ''), libelle: toStr(c.label) ?? String(c.id ?? ''), commentaire: toStr(c.comment) }));
   const cases_cochees = [
     ...checked(sec.checkboxItems, schema?.checkboxLabel ?? 'Éléments cochés'),
     ...checked(sec.extraCheckboxItems, schema?.extraCheckboxLabel ?? 'Usages'),
@@ -572,10 +574,10 @@ function buildSection(sec: Record<string, any>, questionnaire: { id: string; nom
   return isEmpty ? null : section;
 }
 
-function buildInspection(gi: Record<string, any>): ProjectContextV1['inspection'] {
+function buildInspection(gi: Record<string, unknown>): ProjectContextV1['inspection'] {
   const raw = Array.isArray(gi.pvQuestionnaires) ? gi.pvQuestionnaires : [];
 
-  const questionnaires: QuestionnaireInspection[] = raw.map((q: Record<string, any>) => {
+  const questionnaires: QuestionnaireInspection[] = raw.map((q: Record<string, unknown>) => {
     const ref = { id: String(q.id ?? ''), nom: toStr(q.name) ?? 'Questionnaire' };
     return {
       id: ref.id,
@@ -583,7 +585,7 @@ function buildInspection(gi: Record<string, any>): ProjectContextV1['inspection'
       cree_le: toStr(q.createdAt),
       champs_personnalises: toCustomFields(q.customFields),
       sections: (Array.isArray(q.sections) ? q.sections : [])
-        .map((sec: Record<string, any>) => buildSection(sec, ref))
+        .map((sec: Record<string, unknown>) => buildSection(sec, ref))
         .filter((sec: SectionInspection | null): sec is SectionInspection => sec !== null),
     };
   });
@@ -604,7 +606,7 @@ const MOIS_FR: Record<string, string> = {
   juil: '07', 'août': '08', aout: '08', sept: '09', oct: '10', nov: '11', 'déc': '12', dec: '12',
 };
 
-function factureMonth(f: Record<string, any>): string | null {
+function factureMonth(f: Record<string, unknown>): string | null {
   if (f.date_debut_periode) return String(f.date_debut_periode).slice(0, 7);
   // « févr », « février », « déc. »… : on teste les préfixes de 5, 4 puis 3 lettres
   const texte = String(f.mois_facturation ?? '').toLowerCase().replace('.', '').trim();
@@ -612,7 +614,7 @@ function factureMonth(f: Record<string, any>): string | null {
   return f.annee_facturation && mois ? `${f.annee_facturation}-${mois}` : null;
 }
 
-function aggregateFactures(rows: Record<string, any>[]): AgregatFactures {
+function aggregateFactures(rows: Record<string, unknown>[]): AgregatFactures {
   let conso = 0, k1 = 0, k2 = 0, ttc = 0, pmax: number | null = null, cosSum = 0, cosN = 0, quarantaine = 0;
   for (const f of rows) {
     conso += toNum(f.consommation_facturee) ?? toNum(f.cons_t) ?? 0;
@@ -637,7 +639,7 @@ function aggregateFactures(rows: Record<string, any>[]): AgregatFactures {
   };
 }
 
-function periodOf(rows: Record<string, any>[]) {
+function periodOf(rows: Record<string, unknown>[]) {
   const debuts = rows.map(f => toStr(f.date_debut_periode)).filter((d): d is string => !!d).sort();
   const fins = rows.map(f => toStr(f.date_fin_periode)).filter((d): d is string => !!d).sort();
   return { debut: debuts[0] ?? null, fin: fins[fins.length - 1] ?? null };
@@ -647,8 +649,8 @@ function buildFacturation(raw: ProjectContextRawData): ProjectContextV1['factura
   const factures = raw.facturesSenelec;
   const siteNames = new Map(raw.sites.map(s => [s.id as string, s.name as string]));
 
-  const byContract = new Map<string, Record<string, any>[]>();
-  const byMonth = new Map<string, Record<string, any>[]>();
+  const byContract = new Map<string, Record<string, unknown>[]>();
+  const byMonth = new Map<string, Record<string, unknown>[]>();
   for (const f of factures) {
     const contrat = toStr(f.numero_compte_contrat) ?? 'inconnu';
     if (!byContract.has(contrat)) byContract.set(contrat, []);
@@ -660,12 +662,12 @@ function buildFacturation(raw: ProjectContextRawData): ProjectContextV1['factura
     }
   }
 
-  const firstOf = (rows: Record<string, any>[], key: string) => rows.map(f => f[key]).find(v => toStr(v) !== null) ?? null;
+  const firstOf = (rows: Record<string, unknown>[], key: string) => rows.map(f => f[key]).find(v => toStr(v) !== null) ?? null;
 
   const factures_ocr = raw.ocrInvoices.map(inv => {
-    let donnees: Record<string, any> = {};
+    let donnees: Record<string, unknown> = {};
     try {
-      donnees = mapOcrToInvoiceData(inv.ocr_data, toNum(inv.amount) ?? undefined) as Record<string, any>;
+      donnees = mapOcrToInvoiceData(inv.ocr_data, toNum(inv.amount) ?? undefined) as Record<string, unknown>;
     } catch {
       donnees = { erreur_extraction: true };
     }
@@ -689,7 +691,7 @@ function buildFacturation(raw: ProjectContextRawData): ProjectContextV1['factura
       periode: periodOf(factures),
       total: aggregateFactures(factures),
       par_contrat: [...byContract.entries()].map(([contrat, rows]) => {
-        const siteId = firstOf(rows, 'classeur_site_id');
+        const siteId = firstOf(rows, 'classeur_site_id') as string | null;
         return {
           numero_compte_contrat: contrat,
           numero_compteur: toStr(firstOf(rows, 'numero_compteur')),
@@ -714,8 +716,8 @@ function buildFacturation(raw: ProjectContextRawData): ProjectContextV1['factura
 
 function assembleProjectContext(raw: ProjectContextRawData, generatedBy: string | null): ProjectContextV1 {
   const a = raw.audit;
-  const gi = (a.general_info ?? {}) as Record<string, any>;
-  const personnel = (a.personnel ?? {}) as Record<string, any>;
+  const gi = (a.general_info ?? {}) as Record<string, unknown>;
+  const personnel = (a.personnel ?? {}) as Record<string, unknown>;
 
   return {
     schema_version: PROJECT_CONTEXT_SCHEMA_VERSION,
@@ -730,9 +732,9 @@ function assembleProjectContext(raw: ProjectContextRawData, generatedBy: string 
       date_fin: toStr(a.end_date),
       avancement_pct: toNum(a.completion_percentage),
       responsable: toStr(a.responsable),
-      type_client: a.client_type ?? null,
+      type_client: (a.client_type ?? null) as ProjectContextV1['projet']['type_client'],
       type_client_autre: toStr(gi.clientTypeAutre),
-      sous_type: toStr(gi.specifique?.sousType),
+      sous_type: toStr((gi.specifique as Record<string, unknown> | undefined)?.sousType),
       organisation: { id: a.organization_id, nom: raw.organization?.name ?? null },
       cree_par: a.created_by ?? null,
       cree_le: toStr(a.created_at),
