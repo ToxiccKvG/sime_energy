@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { getAudit, updateAudit } from '@/lib/audit-service';
 import type { Audit } from '@/types/audit';
+import { fromJson } from '@/lib/db';
 import { analyzeAuditWithAI } from '@/services/deepseek-service';
 import { toast } from 'sonner';
 import {
@@ -205,8 +206,8 @@ const Rapport = () => {
       const result = await analyzeAuditWithAI(auditId, (msg) => setAnalysisProgress(msg));
       setSynthesis(result);
       toast.success('Analyse IA terminée — vérifiez et ajustez le rapport');
-    } catch (err: any) {
-      toast.error(err?.message ?? 'Erreur lors de l\'analyse IA');
+    } catch (err) {
+      toast.error((err as Error | null)?.message ?? 'Erreur lors de l\'analyse IA');
     } finally {
       setAnalyzing(false);
       setAnalysisProgress('');
@@ -219,7 +220,7 @@ const Rapport = () => {
     try {
       const current = await getAudit(auditId);
       await updateAudit(auditId, {
-        generalInfo: { ...((current?.general_info || {}) as Audit['generalInfo']), synthesis },
+        generalInfo: { ...fromJson<Audit['generalInfo']>(current?.general_info || {}), synthesis },
       });
       toast.success('Rapport sauvegardé');
     } catch {

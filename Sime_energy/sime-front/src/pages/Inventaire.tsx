@@ -22,6 +22,7 @@ import { InventaireViz } from '@/components/inventaire/InventaireViz';
 import { InventaireNotes } from '@/components/inventaire/InventaireNotes';
 import { useAudits } from '@/hooks/useAudits';
 import { useEquipmentCategories } from '@/hooks/useEquipmentCategories';
+import type { Tables } from '@/types/database';
 
 export type SelectionNode =
   | { type: 'site'; id: string }
@@ -33,7 +34,7 @@ export type SelectionNode =
 export interface TreeData {
   sites: AuditSiteDB[];
   zones: Record<string, InventoryZone[]>;
-  buildings: Record<string, any[]>;
+  buildings: Record<string, Tables<'audit_buildings'>[]>;
   levels: Record<string, InventoryLevel[]>;
   rooms: Record<string, InventoryRoom[]>;
 }

@@ -13,8 +13,8 @@ export interface AuditDB {
   end_date?: string;
   completion_percentage: number;
   responsable?: string;
-  general_info: Record<string, any>;
-  personnel: Record<string, any>;
+  general_info: Record<string, unknown>;
+  personnel: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   /** Renseigné par getAudits — sert au calcul de progression dans la liste */
@@ -350,13 +350,27 @@ export async function saveInventoryNotes(auditId: string, notes: string): Promis
 }
 
 // Calculer le taux de complétion d'un audit (pondéré, 100 % au total)
+// Champs lus pour le calcul de progression (ligne audits ou AuditDB).
+interface AuditPourCompletion {
+  name?: string;
+  responsable?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  status?: string | null;
+  general_info?: unknown;
+  personnel?: unknown;
+}
+
 export function computeAuditCompletion(
-  audit: any,
+  audit: AuditPourCompletion,
   opts?: Partial<AuditInventoryCounts>
 ): number {
-  const gi = audit.general_info || {};
-  const pers = audit.personnel || {};
-  const hasPersonnel = Object.values(pers).some((v: any) => v && typeof v === 'object' && (v as any).nom?.trim());
+  const gi = (audit.general_info || {}) as {
+    nomEtablissement?: string; secteur?: string; typeClient?: string; ville?: string; adresseSiege?: string;
+    effectifs?: unknown; macs?: unknown;
+  };
+  const pers = (audit.personnel || {}) as Record<string, unknown>;
+  const hasPersonnel = Object.values(pers).some(v => v && typeof v === 'object' && (v as { nom?: string }).nom?.trim());
   const sites = opts?.totalSites ?? 0;
   const buildings = opts?.totalBuildings ?? 0;
   const equipment = opts?.totalEquipment ?? 0;

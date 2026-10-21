@@ -12,6 +12,6 @@ export function toJson<T>(value: T): Json {
   return value as unknown as Json;
 }
 
-export function fromJson<T>(value: Json | null | undefined): T {
+export function fromJson<T>(value: unknown): T {
   return value as unknown as T;
 }

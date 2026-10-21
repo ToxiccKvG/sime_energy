@@ -1,4 +1,5 @@
-import { supabase } from '@/lib/db';
+import { supabase, toJson } from '@/lib/db';
+import type { Tables } from '@/types/database';
 import {
   InventoryZone,
   InventoryLevel,
@@ -65,7 +66,7 @@ export async function deleteZone(zoneId: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function getZoneBuildings(zoneId: string): Promise<any[]> {
+export async function getZoneBuildings(zoneId: string): Promise<Tables<'audit_buildings'>[]> {
   const { data, error } = await supabase
     .from('audit_buildings')
     .select('*')
@@ -258,7 +259,7 @@ export async function createEquipment(
     powerW?: number;
     quantity?: number;
     utilizationFactor?: number;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
   }
 ): Promise<InventoryEquipment> {
   const { data, error } = await supabase
@@ -273,7 +274,7 @@ export async function createEquipment(
       power_w: eq.powerW,
       quantity: eq.quantity ?? 1,
       utilization_factor: eq.utilizationFactor ?? 1.0,
-      metadata: eq.metadata ?? {},
+      metadata: toJson(eq.metadata ?? {}),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }])
@@ -293,7 +294,7 @@ export async function updateEquipment(
     powerW?: number;
     quantity?: number;
     utilizationFactor?: number;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
   }
 ): Promise<InventoryEquipment> {
   const { data, error } = await supabase
@@ -306,7 +307,7 @@ export async function updateEquipment(
       power_w: updates.powerW,
       quantity: updates.quantity,
       utilization_factor: updates.utilizationFactor,
-      metadata: updates.metadata,
+      metadata: toJson(updates.metadata),
       updated_at: new Date().toISOString(),
     })
     .eq('id', equipmentId)
@@ -478,7 +479,7 @@ export interface EquipmentSnapshot {
   utilizationFactor: number;
   totalPowerW?: number;
   kwhPerYear?: number;
-  metadata: Record<string, any>;
+  metadata: InventoryEquipment['metadata'];
   categoryId: string;
   categoryName: string;
   categoryColor: string;
@@ -569,7 +570,7 @@ export async function getInventorySnapshot(auditId: string): Promise<EquipmentSn
 // TRANSFORMERS (DB snake_case → TS camelCase)
 // ============================================================
 
-function toZone(db: any): InventoryZone {
+function toZone(db: Tables<'audit_zones'>): InventoryZone {
   return {
     id: db.id,
     auditId: db.audit_id,
@@ -582,7 +583,7 @@ function toZone(db: any): InventoryZone {
   };
 }
 
-function toLevel(db: any): InventoryLevel {
+function toLevel(db: Tables<'audit_levels'>): InventoryLevel {
   return {
     id: db.id,
     auditId: db.audit_id,
@@ -594,7 +595,7 @@ function toLevel(db: any): InventoryLevel {
   };
 }
 
-function toRoom(db: any): InventoryRoom {
+function toRoom(db: Tables<'audit_rooms'>): InventoryRoom {
   return {
     id: db.id,
     auditId: db.audit_id,
@@ -608,7 +609,7 @@ function toRoom(db: any): InventoryRoom {
   };
 }
 
-function toBuildingTypeParams(db: any): BuildingTypeParams {
+function toBuildingTypeParams(db: Tables<'building_type_params'>): BuildingTypeParams {
   return {
     id: db.id,
     buildingId: db.building_id,
@@ -631,18 +632,22 @@ function toBuildingTypeParams(db: any): BuildingTypeParams {
   };
 }
 
-function toEquipment(db: any): InventoryEquipment {
+// Ligne audit_equipment lue avec sa catégorie jointe (select '*, equipment_categories(name, color)').
+type LigneEquipement = Tables<'audit_equipment'> & { equipment_categories?: { name: string; color: string | null } | null };
+
+function toEquipment(db: LigneEquipement): InventoryEquipment {
+  const meta = db.metadata as Record<string, unknown> | null;
   const powerW = db.power_w;
   const quantity = db.quantity ?? 1;
   const utilizationFactor = db.utilization_factor ?? 1.0;
-  const heuresAn = db.metadata?.heuresAn;
+  const heuresAn = meta?.heuresAn as number | undefined;
   const installedPowerW = powerW != null ? powerW * quantity * utilizationFactor : undefined;
   // Hors Service → zero power and zero consumption (equipment is inventoried but not running)
   const totalPowerW = db.status === 'Hors Service' ? 0 : installedPowerW;
   const kwhPerYear = db.status === 'Hors Service'
     ? 0
-    : db.metadata?.kwhPreCalculated != null
-      ? db.metadata.kwhPreCalculated
+    : meta?.kwhPreCalculated != null
+      ? meta.kwhPreCalculated as number
       : (totalPowerW != null && heuresAn ? (totalPowerW / 1000) * heuresAn : undefined);
 
   return {
@@ -653,11 +658,11 @@ function toEquipment(db: any): InventoryEquipment {
     categoryName: db.equipment_categories?.name,
     name: db.name,
     brand: db.brand,
-    status: db.status,
+    status: db.status as InventoryEquipment['status'],
     powerW,
     quantity,
     utilizationFactor,
-    metadata: db.metadata ?? {},
+    metadata: meta ?? {},
     createdAt: db.created_at,
     updatedAt: db.updated_at,
     totalPowerW,
@@ -665,7 +670,7 @@ function toEquipment(db: any): InventoryEquipment {
   };
 }
 
-function toCategory(db: any): EquipmentCategory {
+function toCategory(db: Tables<'equipment_categories'>): EquipmentCategory {
   return {
     id: db.id,
     organizationId: db.organization_id,

@@ -31,6 +31,13 @@ import { KpiCard } from './KpiCard';
 import { EqFormState, emptyEqForm } from './equipment-form';
 import { Field, NumInput, TextInput } from './fields';
 
+// Métadonnées d'un équipement relues par le formulaire d'édition (toutes familles confondues).
+type MetadonneesEquipement = Partial<
+  Record<'model' | 'numSerie' | 'service' | 'nomOccupant' | 'typeLuminaire' | 'typeReflecteur' | 'technologie' | 'categorie' | 'caracteristiquesTechniques' | 'modePose' | 'reglageConsigne' | 'typeMoteur' | 'typeVentil' | 'typeSource' | 'tableauElectrique', string> &
+  Record<'anneeFab' | 'nbLuminaires' | 'heuresAn' | 'heuresJour' | 'joursEffectifs' | 'tauxCharge' | 'lampesParLuminaire' | 'hauteurFixation' | 'eclairement' | 'surfaceLocale' | 'surfaceM2' | 'volumeM3' | 'btu' | 'surfaceClim' | 'rendementMoteur' | 'facteurPuissance' | 'debitAir' | 'pressionPa', number | string> &
+  Record<'weekend' | 'feries', boolean>
+>;
+
 // ─── ROOM VIEW ───────────────────────────────────────────────────────────────
 
 export function RoomView({
@@ -168,7 +175,7 @@ export function RoomView({
     const catName = (cat?.name ?? '').toUpperCase();
     const isEclairage = catName.includes('CLAIRAGE');
     const isClim = catName.includes('CLIM');
-    const m = (eq.metadata ?? {}) as any;
+    const m = (eq.metadata ?? {}) as MetadonneesEquipement;
     setEqForm({
       categoryId: eq.categoryId ?? '',
       groupeNom: cat?.name ?? '',
@@ -231,7 +238,7 @@ export function RoomView({
 
     const powerW = parseFloat(eqForm.powerW) || 0;
     let quantity = parseInt(eqForm.quantity) || 1;
-    let metadata: Record<string, any> = {};
+    let metadata: Record<string, unknown> = {};
 
     // Effective heuresAn
     const effHours = (eqForm.heuresJour && eqForm.joursEffectifs)
@@ -384,8 +391,8 @@ export function RoomView({
         toast.success('Équipement créé');
       }
       setEqDialogOpen(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur sauvegarde équipement');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur sauvegarde équipement');
     } finally {
       setSaving(false);
     }
@@ -396,8 +403,8 @@ export function RoomView({
       await deleteEquipment(eqId);
       setEquipment(prev => prev.filter(e => e.id !== eqId));
       toast.success('Équipement supprimé');
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur suppression');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur suppression');
     }
     setDeleteEqId(null);
   };
@@ -413,8 +420,8 @@ export function RoomView({
       await onRefreshRooms(levelId);
       toast.success('Pièce mise à jour');
       setEditRoom(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur mise à jour pièce');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur mise à jour pièce');
     }
   };
 
@@ -423,8 +430,8 @@ export function RoomView({
       await deleteRoom(roomId);
       await onRefreshRooms(levelId);
       toast.success('Pièce supprimée');
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur suppression pièce');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur suppression pièce');
     }
     setDeleteRoomOpen(false);
   };

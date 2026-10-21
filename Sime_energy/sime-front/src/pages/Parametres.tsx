@@ -46,6 +46,9 @@ const TARIFF_SECTIONS: { label: string; domain: 'BT' | 'MT' | 'HT'; cats: string
 
 const STANDARD_YEARS: TariffYear[] = [2017, 2019, 2023, 2026];
 
+// Grille éditable : domaine (BT, MT, HT) → catégorie → champ (t1, k1, pf...) → prix.
+type GrilleTarifaire = Record<string, Record<string, Record<string, number | null>>>;
+
 function deepClone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
 }
@@ -56,20 +59,20 @@ export default function Parametres() {
   const [activeTab, setActiveTab] = useState<Tab>('compte');
 
   const meta          = user?.user_metadata || {};
-  const energyMetaRaw = (meta.energy_settings || {}) as Record<string, any>;
+  const energyMetaRaw = (meta.energy_settings || {}) as Record<string, unknown>;
 
   // ── Tariff grids ──
   const [activeYear, setActiveYear] = useState<number>(2023);
   const [addingYear, setAddingYear] = useState(false);
   const [newYearInput, setNewYearInput] = useState('');
 
-  const [grids, setGrids] = useState<Record<number, any>>(() => {
-    const saved = (energyMetaRaw.custom_tariff_grids || {}) as Record<number, any>;
-    const result: Record<number, any> = {};
+  const [grids, setGrids] = useState<Record<number, GrilleTarifaire>>(() => {
+    const saved = (energyMetaRaw.custom_tariff_grids || {}) as Record<number, GrilleTarifaire>;
+    const result: Record<number, GrilleTarifaire> = {};
     // Standard years always start from canonical constants — saved data only
     // applies to custom (non-standard) years so that updated defaults are always visible.
     for (const y of STANDARD_YEARS) {
-      result[y] = deepClone(SENELEC_TARIFFS[y]);
+      result[y] = deepClone(SENELEC_TARIFFS[y]) as unknown as GrilleTarifaire;
     }
     // restore any extra custom years from saved data
     for (const y of Object.keys(saved).map(Number)) {
@@ -198,7 +201,8 @@ export default function Parametres() {
         },
       });
       if (error) throw error;
-      setCustomTariffGrids(grids);
+      // Vue éditable → structure des grilles SENELEC attendue par le simulateur
+      setCustomTariffGrids(grids as unknown as Parameters<typeof setCustomTariffGrids>[0]);
       // Coefs BTU : réglages d'organisation, sans écraser le reste de la météo
       if (organization?.id && user?.id) {
         const meteo: MeteoSettings = {
@@ -601,7 +605,7 @@ const COL_HEADERS = [
 const HAS_TRANCHES = new Set(['DPP', 'DMP', 'PPP', 'PMP']);
 
 function TariffTable({ grid, onUpdate }: {
-  grid: any;
+  grid: GrilleTarifaire;
   onUpdate: (domain: string, cat: string, field: string, val: string) => void;
 }) {
   return (

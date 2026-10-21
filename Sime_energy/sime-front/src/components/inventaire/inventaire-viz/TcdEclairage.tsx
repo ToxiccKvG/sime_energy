@@ -3,6 +3,7 @@ import { Pencil } from 'lucide-react';
 import type { SelectionNode } from '@/pages/Inventaire';
 import type { EquipmentSnapshot } from '@/lib/inventory-service';
 import { EmptyTcd, TdNum } from './tcd-shared';
+import type { EclairageMetadata } from '@/types/inventory';
 
 // ── TCD ÉCLAIRAGE ─────────────────────────────────────────────────────────────
 
@@ -13,7 +14,7 @@ export function TcdEclairage({ items, onNavigateTo }: { items: EquipmentSnapshot
       nbLuminaires: number; nbLampes: number; powerW: number; surface: number; kwhAn: number;
     }>();
     for (const e of items) {
-      const m = e.metadata;
+      const m = e.metadata as EclairageMetadata;
       const key = e.levelId || e.levelName;
       if (!map.has(key)) {
         map.set(key, { level: e.levelName, building: e.buildingName, levelId: e.levelId, buildingId: e.buildingId, nbLuminaires: 0, nbLampes: 0, powerW: 0, surface: 0, kwhAn: 0 });

@@ -39,17 +39,17 @@ export function NodeDetail({
 
   // Build breadcrumb parts from selection
   const getBreadcrumb = () => {
-    const site = (['site', 'zone', 'building'] as const).includes(selection.type as any)
+    const site = (['site', 'zone', 'building'] as readonly string[]).includes(selection.type)
       ? treeData.sites.find(s => s.id === (
           selection.type === 'site' ? selection.id :
-          (selection as any).siteId
+          (selection as { siteId?: string }).siteId
         ))
       : undefined;
 
     const zone = selection.type === 'zone'
-      ? (treeData.zones[(selection as any).siteId] ?? []).find(z => z.id === selection.id)
+      ? (treeData.zones[selection.siteId] ?? []).find(z => z.id === selection.id)
       : selection.type === 'building'
-        ? Object.values(treeData.zones).flat().find(z => z.id === (selection as any).zoneId)
+        ? Object.values(treeData.zones).flat().find(z => z.id === (selection as { zoneId?: string }).zoneId)
         : undefined;
 
     const buildingId = selection.type === 'building' ? selection.id

@@ -78,8 +78,8 @@ export function LevelView({
       toast.success('Pièce créée');
       setRoomForm({ code: '', service: '', surfaceM2: '', typeFonctionnel: '' });
       setShowAdd(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur création pièce');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur création pièce');
     } finally {
       setSaving(false);
     }
@@ -95,8 +95,8 @@ export function LevelView({
       await onRefreshLevels(buildingId);
       toast.success('Étage mis à jour');
       setEditOpen(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur mise à jour');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur mise à jour');
     } finally {
       setSaving(false);
     }
@@ -107,8 +107,8 @@ export function LevelView({
       await deleteLevel(levelId);
       await onRefreshLevels(buildingId);
       toast.success('Étage supprimé');
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur suppression');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur suppression');
     }
   };
 

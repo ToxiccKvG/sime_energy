@@ -101,8 +101,8 @@ export function BuildingView({
       await onRefreshBuildings(zoneId);
       toast.success('Bâtiment mis à jour');
       setEditOpen(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur mise à jour');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur mise à jour');
     } finally {
       setSaving(false);
     }
@@ -113,8 +113,8 @@ export function BuildingView({
       await deleteAuditBuilding(buildingId);
       await onRefreshBuildings(zoneId);
       toast.success('Bâtiment supprimé');
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur suppression');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur suppression');
     }
   };
 
@@ -143,8 +143,8 @@ export function BuildingView({
       toast.success('Étage créé');
       setLevelForm({ name: '', order_index: '0' });
       setShowAdd(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur création étage');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur création étage');
     } finally {
       setSaving(false);
     }

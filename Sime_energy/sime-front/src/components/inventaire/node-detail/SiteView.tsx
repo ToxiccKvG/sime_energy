@@ -50,8 +50,8 @@ export function SiteView({
       toast.success('Zone créée');
       setForm({ name: '', description: '' });
       setShowAdd(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur création zone');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur création zone');
     } finally {
       setSaving(false);
     }

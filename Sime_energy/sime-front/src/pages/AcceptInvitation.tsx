@@ -9,6 +9,7 @@ import { acceptInvitation, getInvitationByCode } from '@/lib/organization-invita
 import type { OrganizationInvitation } from '@/lib/organization-invitation-service';
 import { getOrganization } from '@/lib/organization-service';
 import { AuthLayout } from '@/components/auth/AuthLayout';
+import type { Tables } from '@/types/database';
 
 export default function AcceptInvitation() {
   const [searchParams] = useSearchParams();
@@ -19,7 +20,7 @@ export default function AcceptInvitation() {
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const [invitation, setInvitation] = useState<OrganizationInvitation | null>(null);
-  const [organization, setOrganization] = useState<any>(null);
+  const [organization, setOrganization] = useState<Tables<'organizations'> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const code = searchParams.get('code');

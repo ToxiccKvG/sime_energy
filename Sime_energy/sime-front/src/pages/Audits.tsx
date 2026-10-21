@@ -22,6 +22,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { fromJson } from '@/lib/db';
 
 function transformAudit(audit: AuditDB): Audit {
   return {
@@ -33,8 +34,8 @@ function transformAudit(audit: AuditDB): Audit {
     endDate: audit.end_date,
     completionPercentage: computeAuditCompletion(audit, audit.inventory_counts),
     responsable: audit.responsable,
-    generalInfo: audit.general_info as Audit['generalInfo'],
-    personnel: audit.personnel as Audit['personnel'],
+    generalInfo: fromJson<Audit['generalInfo']>(audit.general_info),
+    personnel: fromJson<Audit['personnel']>(audit.personnel),
     capacites: { usines: [] },
     createdAt: audit.created_at,
     updatedAt: audit.updated_at,

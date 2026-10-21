@@ -26,7 +26,7 @@ interface SchemaComponent {
 interface SchemaDesignerStepProps {
   measureFiles: File[];
   onHierarchyGenerated: (hierarchy: HierarchyData) => void;
-  onProcessingComplete?: (result: any) => void;
+  onProcessingComplete?: (result: unknown) => void;
   isLoading?: boolean;
 }
 

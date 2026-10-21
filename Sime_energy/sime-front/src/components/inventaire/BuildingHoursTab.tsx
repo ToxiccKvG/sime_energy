@@ -294,8 +294,8 @@ export function BuildingHoursTab({ buildingId, auditId }: Props) {
     try {
       const data = await getBuildingTypeParams(buildingId);
       setParams(data);
-    } catch (err: any) {
-      toast.error('Erreur chargement: ' + err.message);
+    } catch (err) {
+      toast.error('Erreur chargement: ' + (err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -327,8 +327,8 @@ export function BuildingHoursTab({ buildingId, auditId }: Props) {
       toast.success('Paramètres enregistrés');
       refreshProjectContextInBackground(auditId, null);
       setDialogOpen(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur enregistrement');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur enregistrement');
     } finally {
       setSaving(false);
     }
@@ -341,8 +341,8 @@ export function BuildingHoursTab({ buildingId, auditId }: Props) {
       setParams(prev => prev.filter(p => p.id !== deleteTarget.id));
       toast.success('Type supprimé');
       refreshProjectContextInBackground(auditId, null);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur suppression');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur suppression');
     } finally {
       setDeleteTarget(null);
     }

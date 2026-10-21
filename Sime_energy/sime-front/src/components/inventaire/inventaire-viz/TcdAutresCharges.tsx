@@ -3,6 +3,7 @@ import { Pencil } from 'lucide-react';
 import type { SelectionNode } from '@/pages/Inventaire';
 import type { EquipmentSnapshot } from '@/lib/inventory-service';
 import { EmptyTcd, TdNum } from './tcd-shared';
+import type { AppareillsDiversMetadata } from '@/types/inventory';
 
 // ── TCD AUTRES CHARGES ────────────────────────────────────────────────────────
 
@@ -25,7 +26,7 @@ export function TcdAutresCharges({ items, onNavigateTo }: { items: EquipmentSnap
   const byCategorie = useMemo(() => {
     const map = new Map<string, { cat: string; nb: number; powerW: number; kwhAn: number; }>();
     for (const e of items) {
-      const cat = (e.metadata.categorie as string) || 'Non renseigné';
+      const cat = (e.metadata as AppareillsDiversMetadata).categorie || 'Non renseigné';
       if (!map.has(cat)) map.set(cat, { cat, nb: 0, powerW: 0, kwhAn: 0 });
       const r = map.get(cat)!;
       r.nb     += e.quantity;

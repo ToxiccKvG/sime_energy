@@ -4,7 +4,7 @@ interface HierarchyNode {
   file?: string | null;
   sensorType?: string | null;
   averageConsumption?: number | null;
-  energyLabel?: Record<string, any> | null;
+  energyLabel?: Record<string, unknown> | null;
   level: number;
   children?: HierarchyNode[];
 }
@@ -25,7 +25,7 @@ const API_URL = import.meta.env.VITE_API_URL;
  */
 export async function processHierarchy(
   hierarchyData: HierarchyData
-): Promise<{ hierarchy: HierarchyData; [key: string]: any }> {
+): Promise<{ hierarchy: HierarchyData; [key: string]: unknown }> {
   const response = await fetch(`${API_URL}/processing/process-file/process-hierarchy`, {
     method: "POST",
     headers: await backendHeaders({ "Content-Type": "application/json" }),
@@ -44,8 +44,18 @@ export async function processHierarchy(
 /**
  * Crée une hiérarchie à partir de nœuds et arêtes
  */
+// Données d'un nœud du schéma électrique (éditeur de schéma de mesure).
+interface NoeudSchemaData {
+  label: string;
+  associatedFile?: string | null;
+  sensorType?: string | null;
+  averageConsumption?: number | null;
+  energyLabel?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
 export function generateHierarchyJSON(
-  nodes: Array<{ id: string; data: { label: string; [key: string]: any } }>,
+  nodes: Array<{ id: string; data: NoeudSchemaData }>,
   edges: Array<{ source: string; target: string }>
 ): HierarchyData {
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));

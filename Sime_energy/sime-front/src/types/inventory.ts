@@ -66,7 +66,7 @@ export interface InventoryEquipment {
   powerW?: number;
   quantity: number;
   utilizationFactor: number; // 0–1, default 1.0 — corrects nameplate power to real usage pattern
-  metadata: EclairageMetadata | AppareillsDiversMetadata | ClimMetadata | Record<string, any>;
+  metadata: EclairageMetadata | AppareillsDiversMetadata | ClimMetadata | Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
   // Computed (client-side)
@@ -76,7 +76,7 @@ export interface InventoryEquipment {
 
 // ---- EQUIPMENT METADATA SCHEMAS (stored in metadata JSONB) ----
 
-interface EclairageMetadata {
+export interface EclairageMetadata {
   typeLuminaire?: string;  // description libre du type de luminaire
   typeReflecteur?: string; // type de réflecteur
   technologie?: 'LED' | 'Fluo' | 'Économique' | 'Halogène';
@@ -89,7 +89,7 @@ interface EclairageMetadata {
   heuresAn?: number;
 }
 
-interface AppareillsDiversMetadata {
+export interface AppareillsDiversMetadata {
   categorie?: 'Bureautique' | 'Informatique' | 'Réseau' | 'Multimédia' | 'Téléphonie' | 'Autres';
   surfaceM2?: number;
   volumeM3?: number;
@@ -99,7 +99,7 @@ interface AppareillsDiversMetadata {
   feries?: boolean;
 }
 
-interface ClimMetadata {
+export interface ClimMetadata {
   technologie?: 'Inverter' | 'Classique';
   btu?: number;
   puissanceElecW?: number;

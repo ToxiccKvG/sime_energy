@@ -55,7 +55,7 @@ async function buildAuditContext(auditId: string): Promise<string> {
   );
 
   // Données bâtiments
-  const buildingData: Array<{ site: string; buildings: any[] }> = [];
+  const buildingData: Array<{ site: string; buildings: unknown[] }> = [];
   for (const site of sites ?? []) {
     const buildings = await getAuditBuildings(site.id);
     buildingData.push({ site: site.name, buildings: buildings ?? [] });

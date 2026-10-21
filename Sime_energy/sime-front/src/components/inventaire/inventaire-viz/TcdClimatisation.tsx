@@ -3,6 +3,7 @@ import { Pencil } from 'lucide-react';
 import type { SelectionNode } from '@/pages/Inventaire';
 import type { EquipmentSnapshot } from '@/lib/inventory-service';
 import { EmptyTcd, TdNum } from './tcd-shared';
+import type { ClimMetadata } from '@/types/inventory';
 
 // ── TCD CLIMATISATION ─────────────────────────────────────────────────────────
 
@@ -14,7 +15,7 @@ export function TcdClimatisation({ items, onNavigateTo }: { items: EquipmentSnap
       surface: number; volumeM3: number; kwhAn: number;
     }>();
     for (const e of items) {
-      const m = e.metadata;
+      const m = e.metadata as ClimMetadata;
       const key = e.levelId || e.levelName;
       if (!map.has(key)) {
         map.set(key, { level: e.levelName, building: e.buildingName, levelId: e.levelId, buildingId: e.buildingId, nb: 0, elecW: 0, frigoW: 0, copSum: 0, copCount: 0, surface: 0, volumeM3: 0, kwhAn: 0 });

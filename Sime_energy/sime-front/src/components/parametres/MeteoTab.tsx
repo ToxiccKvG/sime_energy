@@ -850,14 +850,14 @@ function ExploreResults({
               <Tooltip
                 contentStyle={{ background: '#1e2235', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
                 labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
-                formatter={(value: any, name: string) => {
+                formatter={(value: number | string | null, name: string) => {
                   const meta = variables.find(v => v.key === name);
                   return [`${value ?? '—'} ${meta?.unit ?? ''}`, meta?.label ?? name];
                 }}
               />
               <Legend
                 wrapperStyle={{ fontSize: 11, color: '#94a3b8', cursor: 'pointer' }}
-                onClick={(data: any) => toggleChartVar(data.dataKey)}
+                onClick={(data: { dataKey?: unknown }) => toggleChartVar(data.dataKey as string)}
                 formatter={(value) => {
                   const meta = variables.find(v => v.key === value);
                   const hidden = hiddenVars.has(value);
@@ -969,7 +969,7 @@ function ExploreResults({
                       }
                     </td>
                     {variables.map(v => {
-                      const val = (r as any)[v.key] as number | null;
+                      const val = (r as unknown as Record<string, number | null>)[v.key];
                       return (
                         <td key={v.key} className="px-3 py-2 text-right font-mono">
                           {val != null

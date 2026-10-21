@@ -13,6 +13,9 @@
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+// Résultat brut de l'API de géocodage Open-Meteo (country et timezone peuvent manquer).
+type ResultatGeocodage = Omit<GeoLocation, 'country' | 'timezone'> & { country?: string; timezone?: string };
+
 export interface GeoLocation {
   id: number;
   name: string;
@@ -256,7 +259,7 @@ export async function searchLocations(query: string): Promise<GeoLocation[]> {
   if (!res.ok) throw new Error(`Geocoding: HTTP ${res.status}`);
 
   const data = await res.json();
-  return (data.results ?? []).map((r: any): GeoLocation => ({
+  return (data.results ?? []).map((r: ResultatGeocodage): GeoLocation => ({
     id:         r.id,
     name:       r.name,
     country:    r.country   ?? '',
@@ -318,7 +321,7 @@ export async function fetchWeatherRange(
   const records: WeatherRecord[] = times.map((t, i) => {
     const rec: WeatherRecord = { time: t };
     for (const key of variableKeys) {
-      (rec as any)[key] = raw[key]?.[i] ?? null;
+      (rec as unknown as Record<string, unknown>)[key] = raw[key]?.[i] ?? null;
     }
     return rec;
   });
@@ -394,7 +397,7 @@ export function computeDJU(records: WeatherRecord[], baseChauffage = 18, baseCli
 
 export function computeStats(records: WeatherRecord[], key: string) {
   const values = records
-    .map(r => (r as any)[key] as number | null)
+    .map(r => (r as unknown as Record<string, number | null>)[key])
     .filter((v): v is number => v != null && !isNaN(v));
 
   if (values.length === 0) return null;

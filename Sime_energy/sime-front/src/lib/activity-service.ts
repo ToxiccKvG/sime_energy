@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/db';
+import { supabase, toJson } from '@/lib/db';
 
 export interface AuditActivityLog {
   id: string;
@@ -8,7 +8,7 @@ export interface AuditActivityLog {
   action_type: 'invoice_imported' | 'invoice_verified' | 'measurement_recorded' | 'task_created' | 'task_completed' | 'site_visited' | 'custom';
   title: string;
   description: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 
@@ -19,7 +19,7 @@ export async function logActivity(
   actionType: AuditActivityLog['action_type'],
   title: string,
   description: string,
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 ) {
   try {
     const { data, error } = await supabase
@@ -32,7 +32,7 @@ export async function logActivity(
           action_type: actionType,
           title,
           description,
-          metadata: metadata || {},
+          metadata: toJson(metadata || {}),
         },
       ])
       .select()

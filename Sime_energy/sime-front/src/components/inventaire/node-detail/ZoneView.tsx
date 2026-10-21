@@ -80,8 +80,8 @@ export function ZoneView({
       toast.success('Bâtiment créé');
       setBuildingForm({ building_name: '', building_type: '', surface_terrain: '', surface_batie: '', surface_toiture: '' });
       setShowAdd(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur création bâtiment');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur création bâtiment');
     } finally {
       setSaving(false);
     }
@@ -94,8 +94,8 @@ export function ZoneView({
       await onRefreshZones(siteId);
       toast.success('Zone mise à jour');
       setEditOpen(false);
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur mise à jour');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur mise à jour');
     } finally {
       setSaving(false);
     }
@@ -106,8 +106,8 @@ export function ZoneView({
       await deleteZone(zoneId);
       await onRefreshZones(siteId);
       toast.success('Zone supprimée');
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur suppression');
+    } catch (err) {
+      toast.error((err as Error).message || 'Erreur suppression');
     }
   };
 
