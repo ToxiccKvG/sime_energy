@@ -9,8 +9,6 @@
 
 import type { GraphiquesRapport } from './iotRapport';
 
-const BLEU = '#1e3a8a';
-const COULEURS_COURBES = ['#16a34a', '#d97706', '#7c3aed', '#dc2626', '#0891b2'];
 const GRILLE = '#e2e8f0';
 const TEXTE = '#334155';
 const POLICE = 'Helvetica, Arial, sans-serif';
@@ -94,7 +92,7 @@ export function graphiqueJournalier(g: GraphiquesRapport['journalier']): string 
     const lb = Math.max(2, (lz / n) * 0.7);
     g.barres.valeurs.forEach((v, i) => {
       if (v == null) return;
-      ctx.fillStyle = BLEU;
+      ctx.fillStyle = g.barres!.couleur;
       ctx.globalAlpha = g.exclus[i] ? 0.35 : 1;
       ctx.fillRect(xCentre(i) - lb / 2, yDe(Math.max(0, v)), lb, yDe(0) - yDe(Math.max(0, v)));
       ctx.globalAlpha = 1;
@@ -102,8 +100,8 @@ export function graphiqueJournalier(g: GraphiquesRapport['journalier']): string 
   }
 
   // Courbes : une par flux, interrompue les jours sans valeur
-  g.courbes.forEach((s, k) => {
-    ctx.strokeStyle = COULEURS_COURBES[k % COULEURS_COURBES.length];
+  g.courbes.forEach(s => {
+    ctx.strokeStyle = s.couleur;
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = 4;
     ctx.beginPath();
@@ -139,16 +137,16 @@ export function graphiqueJournalier(g: GraphiquesRapport['journalier']): string 
   ctx.fillStyle = '#0f172a';
   ctx.fillText('Énergie par jour', m.g, 38);
   legende(ctx, [
-    ...(g.barres ? [{ libelle: g.barres.libelle, couleur: BLEU, forme: 'barre' as const }] : []),
-    ...(g.barres && g.exclus.some(Boolean) ? [{ libelle: 'jour exclu des statistiques', couleur: BLEU, forme: 'hachure' as const }] : []),
-    ...g.courbes.map((s, k) => ({ libelle: s.libelle, couleur: COULEURS_COURBES[k % COULEURS_COURBES.length], forme: 'ligne' as const })),
+    ...(g.barres ? [{ libelle: g.barres.libelle, couleur: g.barres.couleur, forme: 'barre' as const }] : []),
+    ...(g.barres && g.exclus.some(Boolean) ? [{ libelle: 'jour exclu des statistiques', couleur: g.barres.couleur, forme: 'hachure' as const }] : []),
+    ...g.courbes.map(s => ({ libelle: s.libelle, couleur: s.couleur, forme: 'ligne' as const })),
   ], m.g, 68);
 
   return c.toDataURL('image/png');
 }
 
 /** Moyenne par type de jour : barres avec valeur et nombre de jours. */
-export function graphiqueTypesJour(t: GraphiquesRapport['typesJour']): string | null {
+export function graphiqueTypesJour(t: GraphiquesRapport['typesJour'], couleur: string): string | null {
   const presents = t.filter(x => x.valeur != null);
   if (presents.length === 0) return null;
   const L = 1200, H = 520;
@@ -179,7 +177,7 @@ export function graphiqueTypesJour(t: GraphiquesRapport['typesJour']): string | 
       ctx.fillText('aucun jour', cx, yDe(0) - 8);
       return;
     }
-    ctx.fillStyle = BLEU;
+    ctx.fillStyle = couleur;
     ctx.fillRect(cx - lc * 0.25, yDe(x.valeur), lc * 0.5, yDe(0) - yDe(x.valeur));
     ctx.fillStyle = '#0f172a';
     ctx.textBaseline = 'bottom';

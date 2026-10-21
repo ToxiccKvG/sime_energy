@@ -9,7 +9,7 @@
 import ExcelJS from 'exceljs';
 import { triggerDownload } from '@/lib/excel-utils';
 import type { RapportCourbe, Tableau } from './iotRapport';
-import { graphiqueJournalier, graphiqueTypesJour } from './iotRapportGraphiques';
+import { ajouterGraphiquesNatifs, type GraphiqueExcel } from './iotRapportGraphiquesExcel';
 
 const BLEU = 'FF1E3A8A';
 const GRIS = 'FFF1F5F9';
@@ -149,19 +149,37 @@ export async function exporterRapportExcel(r: RapportCourbe, nomFichier: string)
     ws.getCell(l, 1).font = { italic: true, color: { argb: 'FF64748B' } };
   }
 
-  // ── Graphiques (images, mêmes séries que les feuilles) ──────
-  const imgJour = graphiqueJournalier(r.graphiques.journalier);
-  const imgTypes = graphiqueTypesJour(r.graphiques.typesJour);
-  if (imgJour || imgTypes) {
+  // ── Graphiques : vrais graphiques Excel, liés aux feuilles (modifiables) ──
+  const lettre = (i: number) => { let n = i + 1, l = ''; while (n > 0) { const m = (n - 1) % 26; l = String.fromCharCode(65 + m) + l; n = Math.floor((n - 1) / 26); } return l; };
+  const colonneDe = (t: Tableau, titre: string) => { const i = t.colonnes.findIndex(c => c.titre === titre); return i < 0 ? null : lettre(i); };
+  const g = r.graphiques;
+  const graphiques: GraphiqueExcel[] = [];
+  const barreCol = g.journalier.barres ? colonneDe(r.journalier, g.journalier.barres.libelle) : null;
+  const courbesCol = g.journalier.courbes
+    .map(c => ({ colonne: colonneDe(r.journalier, c.libelle), couleur: c.couleur }))
+    .filter((c): c is { colonne: string; couleur: string } => c.colonne != null);
+  if (r.journalier.lignes.length && (barreCol || courbesCol.length)) {
+    graphiques.push({
+      titre: 'Énergie par jour', feuille: 'Journalier', ligneEntete: r.journalier.note ? 2 : 1, nbLignes: r.journalier.lignes.length,
+      colonneCategories: 'A', formatCategories: 'dd/mm',
+      barres: barreCol ? { colonne: barreCol, couleur: g.journalier.barres!.couleur } : null,
+      courbes: courbesCol,
+      pointsClairs: g.journalier.exclus.flatMap((x, i) => (x ? [i] : [])),
+      deLigne: 2, aLigne: 24,
+    });
+  }
+  if (r.typesJour.lignes.length) {
+    graphiques.push({
+      titre: 'Moyenne par type de jour (kWh/j, jours retenus)', feuille: 'Types de jour', ligneEntete: r.typesJour.note ? 2 : 1,
+      nbLignes: r.typesJour.lignes.length, colonneCategories: 'A',
+      barres: { colonne: 'B', couleur: g.couleurTypes }, courbes: [], etiquettes: true,
+      deLigne: 26, aLigne: 44,
+    });
+  }
+  if (graphiques.length) {
     const wg = wb.addWorksheet('Graphiques');
-    let ligne = 0;
-    if (imgJour) {
-      wg.addImage(wb.addImage({ base64: imgJour, extension: 'png' }), { tl: { col: 0, row: ligne }, ext: { width: 1080, height: 456 } });
-      ligne += 25;
-    }
-    if (imgTypes) {
-      wg.addImage(wb.addImage({ base64: imgTypes, extension: 'png' }), { tl: { col: 0, row: ligne }, ext: { width: 720, height: 312 } });
-    }
+    wg.getCell(1, 1).value = 'Graphiques liés aux feuilles « Journalier » et « Types de jour » : clic droit sur un graphique pour en modifier les couleurs, le type ou les séries.';
+    wg.getCell(1, 1).font = { italic: true, color: { argb: 'FF64748B' } };
   }
 
   // ── Feuilles de données ─────────────────────────────────────
@@ -192,6 +210,6 @@ export async function exporterRapportExcel(r: RapportCourbe, nomFichier: string)
 
   feuilleTableau(wb, 'Détail', r.detail, [12, 16, 34, 34, 16, 14, 12, 12, 12, 12, 12, 16]);
 
-  const buffer = await wb.xlsx.writeBuffer();
-  triggerDownload(buffer, nomFichier);
+  const buffer = await wb.xlsx.writeBuffer() as ArrayBuffer;
+  triggerDownload(await ajouterGraphiquesNatifs(buffer, 'Graphiques', graphiques) as unknown as ExcelJS.Buffer, nomFichier);
 }

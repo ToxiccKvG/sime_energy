@@ -153,7 +153,7 @@ export function exporterRapportPdf(r: RapportCourbe, nomFichier: string): void {
     y += h + 3;
   };
   const imgJour = graphiqueJournalier(r.graphiques.journalier);
-  const imgTypes = graphiqueTypesJour(r.graphiques.typesJour);
+  const imgTypes = graphiqueTypesJour(r.graphiques.typesJour, r.graphiques.couleurTypes);
   if (imgJour || imgTypes) {
     titreSection('Graphiques');
     image(imgJour, 760 / 1800);

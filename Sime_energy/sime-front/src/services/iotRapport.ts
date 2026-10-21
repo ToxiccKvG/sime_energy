@@ -50,6 +50,8 @@ export interface EntreeRapport {
   periodes: DevicePeriode[];
   auteur: string;
   commentaire: string;
+  /** Couleurs de l'écran (palette + choix « Couleurs »), reprises dans les graphiques. */
+  couleurs?: { principal?: string; flux?: Partial<Record<keyof FluxRoles, string>> };
   dateExport: Date;
 }
 
@@ -69,7 +71,7 @@ export interface Tableau {
 }
 
 /** Série d'un graphique : une valeur par jour (null = pas de valeur ce jour). */
-export interface SerieGraphique { libelle: string; valeurs: (number | null)[] }
+export interface SerieGraphique { libelle: string; valeurs: (number | null)[]; couleur: string }
 
 export interface GraphiquesRapport {
   journalier: {
@@ -81,6 +83,8 @@ export interface GraphiquesRapport {
     courbes: SerieGraphique[];
   };
   typesJour: { libelle: string; valeur: number | null; nbJours: number }[];
+  /** Couleur des barres « types de jour » (celle de la série principale). */
+  couleurTypes: string;
 }
 
 export interface RapportCourbe {
@@ -468,20 +472,26 @@ export function construireRapport(e: EntreeRapport): RapportCourbe {
   // ── Graphiques : les colonnes du tableau journalier, rien d'autre ──
   const utile = (v: (number | null)[]) => v.some(x => x != null && Math.abs(x) >= 0.0005);
   const memes = (a: (number | null)[], b: (number | null)[]) => a.every((x, i) => Math.abs((x ?? 0) - (b[i] ?? 0)) < 0.0005);
+  const DEFAUT_FLUX: Record<keyof FluxRoles, string> = {
+    reseauSoutire: '#64748b', reseauInjecte: '#a78bfa', pv: '#d97706', groupe: '#f97316', charge: '#0891b2', departs: '#16a34a',
+  };
   const barres: SerieGraphique | null = nonCalculable ? null : {
     libelle: bilan ? `${libellePrincipal} (kWh)` : 'kWh net',
     valeurs: analyse.parJour.map(j => j.kwhNet),
+    couleur: e.couleurs?.principal ?? '#1e3a8a',
   };
   const courbes: SerieGraphique[] = (bilan
     ? fluxPresents.filter(f => !fluxNonMesures.has(f.cle)).map(f => ({
       libelle: `${f.libelle} (kWh)`,
       valeurs: analyse.parJour.map(j => j.flux?.[f.cle] ?? null),
+      couleur: e.couleurs?.flux?.[f.cle] ?? DEFAUT_FLUX[f.cle],
     }))
-    : [{ libelle: 'kWh retour', valeurs: analyse.parJour.map(j => j.kwhRetourTotal) }])
+    : [{ libelle: 'kWh retour', valeurs: analyse.parJour.map(j => j.kwhRetourTotal), couleur: e.couleurs?.flux?.reseauInjecte ?? DEFAUT_FLUX.reseauInjecte }])
     // Une courbe identique aux barres (arrivée = consommation) ou toujours nulle n'apprend rien
     .filter(c => utile(c.valeurs) && !(barres && memes(c.valeurs, barres.valeurs)));
   const graphiques: GraphiquesRapport = {
     journalier: { dates: analyse.parJour.map(j => j.date), exclus: analyse.parJour.map(j => !!j.exclu), barres, courbes },
+    couleurTypes: e.couleurs?.principal ?? '#1e3a8a',
     typesJour: nonCalculable ? [] : [
       { libelle: 'Jours ouvrés', valeur: analyse.jourOuvre.nbJours ? analyse.jourOuvre.kwhMoyen : null, nbJours: analyse.jourOuvre.nbJours },
       { libelle: 'Week-ends', valeur: analyse.weekend.nbJours ? analyse.weekend.kwhMoyen : null, nbJours: analyse.weekend.nbJours },

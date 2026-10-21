@@ -694,9 +694,21 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
       periodes,
       auteur,
       commentaire,
+      // Couleurs des courbes de l'écran (palette + choix « Couleurs ») → graphiques du rapport
+      couleurs: {
+        principal: METRICS.find(m => m.key === 'total')?.color,
+        flux: {
+          reseauSoutire: METRICS.find(m => m.key === 'reseau')?.color,
+          reseauInjecte: METRICS.find(m => m.key === 'retour')?.color,
+          pv: METRICS.find(m => m.key === 'pv')?.color,
+          groupe: METRICS.find(m => m.key === 'groupe')?.color,
+          departs: METRICS.find(m => m.key === 'departs')?.color,
+        },
+      },
       dateExport: new Date(),
     };
-  }, [analyse, nettoyage, nettoyageFlux, filteredRows, enSupabase, chargement, shellyRows, filterType, optsNettoyage, regles, periodes, user, commentaire]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- METRICS est recalculé à chaque rendu (prefsGraph suivi)
+  }, [analyse, nettoyage, nettoyageFlux, prefsGraph, filteredRows, enSupabase, chargement, shellyRows, filterType, optsNettoyage, regles, periodes, user, commentaire]);
   const apercuRapport = useMemo(() => (rapportOuvert ? construireRapport(entreeRapport) : null), [rapportOuvert, entreeRapport]);
 
   const exporterRapport = async (format: 'excel' | 'pdf') => {
