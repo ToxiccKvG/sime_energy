@@ -1,14 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   MapPin, Building2, Layers, ChevronRight, ChevronDown,
-  X, FolderOpen, BarChart3, AlertCircle, CheckCircle2,
+  X, BarChart3, AlertCircle, CheckCircle2,
   FileText, FileSpreadsheet, Zap, Banknote, Inbox, Search, TriangleAlert,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartTooltip, ResponsiveContainer, Cell } from 'recharts'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {

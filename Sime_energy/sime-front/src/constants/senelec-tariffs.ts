@@ -68,6 +68,7 @@ export const TARIFF_2019 = {
 }
 
 // ── GRILLE 2023 ──
+/** @public Exportée pour les tests unitaires (test/frontend). */
 export const TARIFF_2023 = {
   BT: {
     DPP: { t1: 91.17,  t2: 136.49, t3: 159.36, pf: null,     k1: null, k2: null },
@@ -252,8 +253,6 @@ export const TVA_RATE    = 0.18   // 18 % — applicable BT + MT + HT
 export const TCO_RATE_BT = 0.025  // 2.5 % — taxe communale BT uniquement (MT/HT = 0)
 
 // ── COS PHI ──
-export const COSPHI_PENALTY_THRESHOLD = 0.80
-export const COSPHI_BONUS_THRESHOLD   = 0.95
 export const COSPHI_DEFAULT_TRANSFO   = 0.87
 
 // ── CHOIX TARIF MT ──

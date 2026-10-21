@@ -75,29 +75,3 @@ export async function deleteActivity(activityId: string) {
   if (error) throw error;
 }
 
-export async function getAuditActivityWithUserNames(auditId: string) {
-  // Get activities with user names from auth.users table
-  const { data, error } = await supabase
-    .from('audit_activity')
-    .select('*')
-    .eq('audit_id', auditId)
-    .order('created_at', { ascending: false });
-
-  if (error) throw error;
-
-  // Get user names for all activities
-  const activities = data || [];
-  const uniqueUserIds = [...new Set(activities.map(a => a.user_id))];
-
-  if (uniqueUserIds.length === 0) {
-    return activities;
-  }
-
-  // Try to get user info from auth.users (this might fail due to RLS)
-  const enrichedActivities = activities.map(activity => ({
-    ...activity,
-    user_email: 'Utilisateur', // Fallback since we can't access auth.users from client
-  }));
-
-  return enrichedActivities;
-}

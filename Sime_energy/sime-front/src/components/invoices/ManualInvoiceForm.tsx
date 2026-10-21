@@ -26,7 +26,7 @@ import { getAudits } from '@/lib/audit-service'
 import { createInvoice } from '@/lib/invoice-service'
 import type { AuditDB } from '@/lib/audit-service'
 import {
-  SENELEC_TARIFFS, CATEGORIES_BY_TENSION, CATEGORY_LABELS, TVA_RATE, TCO_RATE_BT,
+  SENELEC_TARIFFS, CATEGORIES_BY_TENSION, TVA_RATE, TCO_RATE_BT,
 } from '@/constants/senelec-tariffs'
 import type { TariffCategory, TariffYear } from '@/constants/senelec-tariffs'
 import {
@@ -186,17 +186,6 @@ function TF({
   )
 }
 
-function CalcField({ label, value, unit }: { label: string; value: string | number; unit?: string }) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-xs text-slate-400 font-medium">{label}</Label>
-      <div className="h-9 px-3 flex items-center bg-white/[0.025] border border-white/[0.06] rounded-md text-sm text-slate-400 tabular-nums">
-        <span className="flex-1">{value || '—'}</span>
-        {unit && value ? <span className="text-slate-600 text-xs ml-1">{unit}</span> : null}
-      </div>
-    </div>
-  )
-}
 
 function OverrideField({
   label, calcValue, overrideValue, isManual,
@@ -601,7 +590,6 @@ export function ManualInvoiceForm({
     try {
       let ocr_data
       if (templateType === 'A' && calcA) {
-        const cat = meta.categorie as 'DPP' | 'DMP' | 'PPP' | 'PMP'
         const { tranches, nj, conso, montant_conso, tco, redevance, tva, total_facture } = calcA
         const trancheRows = tranches ? [
           { label: 'Tranche 1', kwh: tranches.t1_kwh, tarif: calcA.r1, montant: tranches.t1_montant },
@@ -807,7 +795,7 @@ export function ManualInvoiceForm({
 
   const renderTemplateA = () => {
     if (!calcA) return null
-    const { nj_auto, nj, conso_auto, conso, tranches, montant_conso, redevance, tco, tva_auto, tva, total_auto, total_facture, arrondi, timbre, solde_global } = calcA
+    const { nj_auto, nj, conso_auto, conso, tranches, montant_conso, tva_auto, total_auto, arrondi, timbre, solde_global } = calcA
     const cat = meta.categorie as 'DPP' | 'DMP' | 'PPP' | 'PMP'
 
     return (
@@ -1057,9 +1045,9 @@ export function ManualInvoiceForm({
     const {
       nj_auto, nj, conso_k1_auto, conso_k2_auto, conso_k1, conso_k2,
       total_fact_k1, total_fact_k2, total_fact_total,
-      k1_tarif, k2_tarif, pf_tarif, k1_montant, k2_montant, prime_fixe,
-      depassement, pdp_auto, pdp, cosphi_montant, tco, redevance,
-      montant_ht, tva_auto, tva, total_auto, total_facture, arrondi, solde_global,
+      k1_montant, k2_montant, prime_fixe,
+      depassement, pdp_auto, cosphi_montant, tco, redevance,
+      montant_ht, tva_auto, total_auto, total_facture, arrondi, solde_global,
     } = calcB
 
     return (

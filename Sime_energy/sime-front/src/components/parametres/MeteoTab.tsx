@@ -9,11 +9,10 @@
  * Stockage : organizations.settings.meteo (réglages partagés par l'organisation)
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
-  BarChart, Bar,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -23,8 +22,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   Search, MapPin, RefreshCw, Loader2, Thermometer,
   Wind, CheckCircle2, AlertCircle, Info, Calendar,
-  BarChart2, Settings2, Database, CloudSun, Droplets,
-  Sun, CloudRain,
+  BarChart2, Settings2, Database, CloudSun,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -42,7 +40,6 @@ import {
   DEFAULT_METEO_SETTINGS,
   type GeoLocation,
   type MeteoSettings,
-  type WeatherRecord,
   type WeatherResult,
   type VariableMeta,
 } from '@/services/meteo-service';
@@ -60,9 +57,6 @@ function tempColor(t: number) {
   return 'text-red-400 bg-red-500/10 border-red-500/20';
 }
 
-function today() {
-  return new Date().toISOString().split('T')[0];
-}
 function daysAgo(n: number) {
   const d = new Date();
   d.setDate(d.getDate() - n);

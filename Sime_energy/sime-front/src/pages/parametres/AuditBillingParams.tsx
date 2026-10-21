@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Save, Zap, TrendingDown, BarChart3, Settings2, Loader2, AlertCircle, CheckCircle2, XCircle, Activity, Wand2, Search, X, Receipt } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

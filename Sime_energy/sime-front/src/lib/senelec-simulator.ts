@@ -127,8 +127,6 @@ export interface SimulateurResult {
 // ─── CosPhi penalty / bonus bands ────────────────────────────────────────────
 // Barème partagé : voir senelec-rules.ts (réexporté pour compatibilité)
 
-export { COSPHI_PENALTY_BANDS } from '@/lib/senelec-rules'
-
 // ─── Transformer loss table (aa, ba, ar, br by transformer kVA) ──────────────
 // Placeholder — values to be filled from CER2E "Données Pertes Transfo" table.
 // MT calculation works without it (falls back to direct K1/K2).

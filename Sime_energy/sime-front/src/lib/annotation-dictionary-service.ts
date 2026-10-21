@@ -10,7 +10,6 @@ import type {
   AnnotationDisplaySettings,
 } from '@/types/annotation-dictionary';
 import {
-  DEFAULT_ANNOTATION_DICTIONARY,
   DEFAULT_DISPLAY_SETTINGS,
   DEFAULT_DICTIONARY_COLLECTION,
 } from '@/types/annotation-dictionary';
@@ -41,27 +40,6 @@ function augmentFieldAliases(field: AnnotationField): AnnotationField {
   const existing = field.aliases ?? [];
   const merged = [...new Set([...hardcoded, ...existing])];
   return { ...field, aliases: merged };
-}
-
-export interface AnnotationDictionaryDB {
-  id: string;
-  organization_id: string | null;
-  name: string;
-  description?: string;
-  color?: string;
-  fields: AnnotationDictionary['fields'];
-  table_templates: AnnotationDictionary['tableTemplates'];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AnnotationSettingsDB {
-  id: string;
-  organization_id: string;
-  show_labels: boolean;
-  selected_dictionary_id: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 /**

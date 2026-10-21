@@ -2,10 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -729,11 +726,6 @@ export function BillingImportModal({ open, onOpenChange, onImportConfirmed }: Pr
     return s;
   }, [duplicateMap]);
   // n° facture par ligne → étiquette « Doublon du n° … »
-  const factureByRowIndex = useMemo(() => {
-    const m = new Map<number, number | null>();
-    for (const r of allRows) m.set(r._rowIndex, r.numeroFacture);
-    return m;
-  }, [allRows]);
 
   // Groups of rows sharing the same numeroFacture (2+ versions) — fed to ManualConflictResolver
   const manualGroups = useMemo<ConflictGroup[]>(() => {

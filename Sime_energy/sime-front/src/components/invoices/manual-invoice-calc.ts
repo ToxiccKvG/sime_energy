@@ -4,7 +4,7 @@
  * Calculs des tranches BT, cos phi, majorations transfo, TVA, et builders ocr_data.
  */
 
-import { BT_TRANCHE_WIDTHS, TCO_RATE_BT, TVA_RATE } from '@/constants/senelec-tariffs'
+import { BT_TRANCHE_WIDTHS } from '@/constants/senelec-tariffs'
 import { calcNJ as calcNJRegle, cosphiPenaltyPct, primeFixe } from '@/lib/senelec-rules'
 import type { TariffCategory } from '@/constants/senelec-tariffs'
 

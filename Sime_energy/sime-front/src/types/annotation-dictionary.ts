@@ -28,18 +28,6 @@ export interface AnnotationField {
 export type TableHeaderLayout = 'row' | 'column' | 'both';
 
 /**
- * Définition d'une en-tête dans un template de tableau
- */
-export interface TableHeaderDefinition {
-  /** Nom de l'en-tête (ce qu'on cherche dans le tableau) */
-  name: string;
-  /** Position : 'row' = en-tête de colonne (1ère ligne), 'column' = en-tête de ligne (1ère colonne) */
-  position: 'row' | 'column';
-  /** Index dans la structure (0 = première colonne/ligne) */
-  index: number;
-}
-
-/**
  * Modèle de tableau attendu avec structure visuelle
  */
 export interface TableTemplate {
@@ -918,67 +906,6 @@ export const SENELEC_DICTIONARY: AnnotationDictionary = {
         'REDEVANCE', 'BASE CALCUL TVA', 'TVA (18%)', 'TOTAL FACTURE',
         'MONTANT TTC', 'SOLDE GLOBAL', 'TOTAL DES SOMMES DUES (1)+(2)',
       ],
-      required: false,
-      excelMappings: [],
-    },
-  ],
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-};
-
-/** Dictionnaire exemple pour Moyenne Tension */
-export const MOYENNE_TENSION_DICTIONARY: AnnotationDictionary = {
-  id: 'moyenne_tension',
-  name: 'Moyenne Tension',
-  description: 'Champs spécifiques aux factures moyenne tension',
-  color: '#06b6d4',
-  fields: [
-    {
-      id: 'mt_pdl',
-      key: 'PDL',
-      description: 'Point de livraison',
-      required: true,
-      category: 'forms',
-    },
-    {
-      id: 'mt_puissance',
-      key: 'Puissance souscrite',
-      description: 'Puissance en kVA',
-      required: true,
-      category: 'forms',
-    },
-    {
-      id: 'mt_tarif',
-      key: 'Option tarifaire',
-      description: 'Type de tarif (ex: TURPE)',
-      required: true,
-      category: 'forms',
-    },
-    {
-      id: 'mt_conso_hp',
-      key: 'Consommation HP',
-      description: 'Consommation heures pleines',
-      required: false,
-      category: 'forms',
-    },
-    {
-      id: 'mt_conso_hc',
-      key: 'Consommation HC',
-      description: 'Consommation heures creuses',
-      required: false,
-      category: 'forms',
-    },
-  ],
-  tableTemplates: [
-    {
-      id: 'mt_detail_conso',
-      name: 'Détail par poste horosaisonnier',
-      description: 'Consommation par tranche horaire',
-      headerLayout: 'row',
-      columnCount: 4,
-      rowCount: 0,
-      columnHeaders: ['Poste', 'Consommation', 'Prix unitaire', 'Montant'],
-      rowHeaders: [],
       required: false,
       excelMappings: [],
     },

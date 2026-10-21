@@ -415,7 +415,6 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
   const [cm, setCm] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [hasParams, setHasParams] = useState(false)
   const [manualAnomalies, setManualAnomalies] = useState<Record<string, ManualAnomaly[]>>({})
   const [tablePage, setTablePage] = useState(1)
 
@@ -501,7 +500,6 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
 
       const paramsDb: AuditBillingParamsDB | null = paramsResult.data?.[0] ?? null
       const params: BillingParams | null = paramsDb ? dbToParams(paramsDb) : null
-      setHasParams(!!params)
 
       // 2. Load verified OCR invoices
       const invoicesRaw = await getVerifiedInvoicesForAudit(auditId)
@@ -886,7 +884,6 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
             const hasTranches = rows.some(r => r.t1_kwh !== null || r.t1_montant !== null)
             const hasNj       = rows.some(r => r.nj !== null)
             const pageRows    = rows.slice((tablePage - 1) * TABLE_PAGE_SIZE, tablePage * TABLE_PAGE_SIZE)
-            const totalPages  = Math.max(1, Math.ceil(rows.length / TABLE_PAGE_SIZE))
             return (
               <table className="w-full text-xs">
                 <thead>

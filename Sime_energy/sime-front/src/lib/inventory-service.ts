@@ -230,15 +230,6 @@ export async function getEquipmentByBuilding(buildingId: string): Promise<Invent
   return (data ?? []).map(toEquipment);
 }
 
-export async function getEquipmentByAudit(auditId: string): Promise<InventoryEquipment[]> {
-  const { data, error } = await supabase
-    .from('audit_equipment')
-    .select('*, equipment_categories(name, color)')
-    .eq('audit_id', auditId);
-  if (error) throw error;
-  return (data ?? []).map(toEquipment);
-}
-
 export async function getInventoryCountsByAudit(auditId: string): Promise<{
   levels: number;
   rooms: number;

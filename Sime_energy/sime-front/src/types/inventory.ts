@@ -1,8 +1,6 @@
 // Inventory module types
 // Hierarchy: SITE (audit_sites) → BÂTIMENT (audit_buildings) → ÉTAGE (audit_levels) → PIÈCE (audit_rooms) → ÉQUIPEMENTS (audit_equipment)
 
-export type ClientType = 'INDUSTRIE' | 'SERVICES';
-export type ServicesSousType = 'HÔTEL' | 'HÔPITAL' | 'ÉCOLE' | 'BUREAUX';
 export type EquipmentStatus = 'EN service' | 'Hors Service';
 
 // ---- SPATIAL HIERARCHY ----
@@ -114,98 +112,6 @@ export interface ClimMetadata {
   heuresAn?: number;
 }
 
-export interface ForceMotriceMetadata {
-  typeMoteur?: string;
-  rendementMoteur?: number;   // η %
-  facteurPuissance?: number;  // cos φ
-  tauxCharge?: number;        // % de la puissance nominale
-  heuresAn?: number;
-  kwhPreCalculated?: number;  // calculé à la sauvegarde
-}
-
-export interface VentilationMetadata {
-  debitAir?: number;     // m³/h
-  pressionPa?: number;   // Pa
-  typeVentil?: string;   // Axial, Centrifuge, CTA, VMC...
-  heuresAn?: number;
-}
-
-export interface PedagogiqueMetadata {
-  story?: string;
-  heuresAn?: number;
-}
-
-export interface AlimentationsMetadata {
-  typeSource?: 'Onduleur' | 'Groupe électrogène' | 'Convertisseur' | 'Autre';
-  tableauElectrique?: string; // tableau de rattachement
-  heuresAn?: number;
-}
-
-// ---- AGGREGATION STATS ----
-
-export interface RoomStats {
-  roomId: string;
-  nbEquipements: number;
-  puissanceTotaleW: number;
-  kwhAn: number;
-  repartition: { categoryName: string; color: string; percent: number }[];
-}
-
-export interface LevelStats {
-  levelId: string;
-  nbEquipements: number;
-  puissanceTotaleKw: number;
-  kwhAn: number;
-}
-
-export interface BuildingStats {
-  buildingId: string;
-  nbEquipements: number;
-  puissanceTotaleKw: number;
-  kwhAn: number;
-}
-
-// ---- SITE STRUCTURE (stored in audit_sites JSONB columns) ----
-
-export interface StructureBati {
-  surfaceTerrain?: number;
-  surfaceBatie?: number;
-  niveaux?: { label: string; surface?: number; hauteur?: number }[];
-  technologies?: ('LED' | 'Fluo' | 'Économique')[];
-  montantM1?: number;
-  montantM2?: number;
-  montantM3?: number;
-  etat?: 'EN service' | 'Hors Service';
-}
-
-export interface EnveloppeBatiment {
-  orientation?: string;
-  typeToit?: string;
-  revetementToit?: string;
-  couleurToit?: string;
-  couleurFenetres?: string;
-  couleurMursExt?: string;
-  typeVitrage?: string;
-  compositionToit?: string;
-  compositionMurs?: string;
-}
-
-export interface AmenagementBatiment {
-  secteur?: string;
-  fonction?: string;
-  usage?: string;
-  systemeCVC?: (
-    | '1. Chauffage'
-    | '2. Clim'
-    | '3. Ventilation'
-    | '4. Froid adiabat'
-    | '5. Refroid. évap.'
-    | '6. Sans cond.'
-    | '7. Chauffe + refroid'
-  )[];
-  tauxFrequence?: number; // %
-}
-
 // ---- FORM HELPERS ----
 
 export const DEFAULT_CATEGORIES = [
@@ -220,24 +126,12 @@ export const DEFAULT_CATEGORIES = [
 ] as const;
 
 // Fixed system types — drive which technical fields appear in the equipment form
-export const EQUIPMENT_TYPES = [
-  'ÉCLAIRAGE',
-  'CLIM',
-  'VENTILATION',
-  'FORCE MOTRICE',
-  'APPAREILS DIVERS',
-  'PÉDAGOGIQUE',
-  'ALIMENTATIONS',
-  'AUTRE',
-] as const;
-export type EquipmentType = typeof EQUIPMENT_TYPES[number];
 
 export const NIVEAU_OPTIONS = [
   'R-2', 'R-1', 'RDC', 'Mezzanine', 'R+1', 'R+2', 'R+3', 'R+4', 'R+5',
   'R+6', 'R+7', 'R+8', 'R+9', 'R+10', 'R+11', 'R+12', 'R+13', 'R+14', 'R+15',
   'Terrasse',
 ] as const;
-
 
 // ---- HEURES DE FONCTIONNEMENT — Modèle Paramétrique ----
 
@@ -252,7 +146,6 @@ export const FUNCTIONAL_TYPES = [
   'Sanitaires',
   'Autre',
 ] as const;
-export type FunctionalType = typeof FUNCTIONAL_TYPES[number];
 
 // 5 hour categories used in the parametric model
 export type HourCategory = 'Eclairage' | 'Climatisation' | 'Informatique' | 'Electromenager' | 'Serveur';
@@ -331,17 +224,4 @@ export function getHourCategoryForEquipment(
     return 'Electromenager';
   }
   return null;
-}
-
-// ---- CALCULS ----
-
-export function computeKwhAn(powerW: number, quantity: number, heuresAn: number, utilizationFactor = 1.0): number {
-  return (powerW * quantity * utilizationFactor / 1000) * heuresAn;
-}
-
-export function computeEclairageTotaux(meta: EclairageMetadata, powerW: number) {
-  const nbLampesTotal = (meta.nbLuminaires ?? 0) * (meta.lampesParLuminaire ?? 1);
-  const puissanceTotaleW = powerW * nbLampesTotal;
-  const kwhAn = meta.heuresAn ? puissanceTotaleW / 1000 * meta.heuresAn : 0;
-  return { nbLampesTotal, puissanceTotaleW, kwhAn };
 }

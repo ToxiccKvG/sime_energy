@@ -173,16 +173,6 @@ export interface AuditCapacites {
   administration?: CapaciteAdministration;
 }
 
-export interface AuditActivity {
-  id: string;
-  auditId: string;
-  date: string;
-  userId: string;
-  userName: string;
-  action: string;
-  details: string;
-}
-
 export interface Audit {
   id: string;
   name: string;

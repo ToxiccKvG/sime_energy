@@ -351,10 +351,6 @@ export function analyzeDuplicates(rows: BillingRow[]): DuplicateAnalysis {
   return { dropped, redressed, anomalous };
 }
 
-export function countDuplicates(rows: BillingRow[]): number {
-  return analyzeDuplicates(rows).dropped.size;
-}
-
 // ─── Computed columns ─────────────────────────────────────────────────────────
 
 function normalizeKW(watts: number | null): number | null {

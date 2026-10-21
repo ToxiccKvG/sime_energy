@@ -1,16 +1,3 @@
-/**
- * Service pour gérer les opérations liées aux mesures et données d'énergie
- * Endpoints: /process-file/measures, /process-file/analyze-energy-label, /process-file/process-hierarchy
- */
-
-export interface MeasurementData {
-  measurements?: any[];
-  kpis?: {
-    avgConsumption?: number;
-    [key: string]: any;
-  };
-}
-
 export interface HierarchyNode {
   id: string;
   name: string;
@@ -29,59 +16,9 @@ export interface HierarchyData {
   hierarchy: HierarchyNode[];
 }
 
-export interface EnergyLabelAnalysis {
-  [key: string]: string | number;
-}
-
 import { backendHeaders } from './backend-client';
 
 const API_URL = import.meta.env.VITE_API_URL;
-
-/**
- * Upload et traite un fichier de mesure (CSV, XLSX, XLS)
- */
-export async function uploadMeasurementFile(
-  file: File,
-  sensorType: string = ""
-): Promise<MeasurementData> {
-  const formData = new FormData();
-  formData.append("file", file);
-  if (sensorType) {
-    formData.append("sensor_type", sensorType);
-  }
-
-  const response = await fetch(`${API_URL}/processing/process-file/measures`, {
-    method: "POST",
-    headers: await backendHeaders(),
-    body: formData,
-  });
-
-  if (!response.ok) {
-    throw new Error(`Erreur lors du traitement de la mesure: ${response.statusText}`);
-  }
-
-  return response.json();
-}
-
-/**
- * Analyse une image d'étiquette énergétique
- */
-export async function analyzeEnergyLabel(file: File): Promise<EnergyLabelAnalysis> {
-  const formData = new FormData();
-  formData.append("image", file);
-
-  const response = await fetch(`${API_URL}/processing/process-file/analyze-energy-label`, {
-    method: "POST",
-    headers: await backendHeaders(),
-    body: formData,
-  });
-
-  if (!response.ok) {
-    throw new Error(`Erreur lors de l'analyse de l'étiquette: ${response.statusText}`);
-  }
-
-  return response.json();
-}
 
 /**
  * Traite une hiérarchie de schéma électrique

@@ -38,15 +38,6 @@ export interface FieldMetadata {
   original_text: string;
 }
 
-export interface InvoiceResult {
-  fileName: string;
-  pageNumber: number;
-  unifiedData: Record<string, any>;
-  tableCount: number;
-  columnCount: number;
-  columns: string[];
-}
-
 export interface ProcessingInfo {
   totalInvoices?: number;
   totalTables?: number;
@@ -151,80 +142,6 @@ export async function processInvoiceFile(file: File, ctx: InvoiceProcessingConte
 }
 
 /**
- * Upload et traite un fichier de facture (PDF ou Excel)
- */
-export async function uploadInvoiceFile(file: File): Promise<StructuredExtractedData[]> {
-  const endpoint = invoiceEndpoint(file.name);
-
-  if (!endpoint) {
-    throw new Error("Format de fichier non supporté. Veuillez utiliser PDF, XLS ou XLSX.");
-  }
-
-  return withRetry(
-    async () => {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetch(`${API_URL}${endpoint}`, {
-        method: "POST",
-        headers: await backendHeaders(),
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const responseData = await response.json();
-      const uploadedData: StructuredExtractedData[] = [];
-      const isPdfFile = file.name.endsWith(".pdf");
-
-      if (isPdfFile) {
-        // Nouvelle structure pour PDF
-        if (responseData.pages && Array.isArray(responseData.pages)) {
-          responseData.pages.forEach((page: any) => {
-            uploadedData.push({
-              isPdf: true,
-              fileName: responseData.fileName || file.name,
-              pageNumber: page.page_number,
-              sections: {},
-              customFields: {},
-              pageImage: page.image,
-              imageWidth: page.width,
-              imageHeight: page.height,
-              forms: page.forms || [],
-              tables: page.tables || [],
-            });
-          });
-        }
-      } else {
-        // Structure pour Excel
-        const dataArray = Array.isArray(responseData) ? responseData : [responseData];
-        dataArray.forEach((extracted: any) => {
-          uploadedData.push({
-            isPdf: false,
-            fileName: file.name,
-            pageNumber: undefined,
-            sections: extracted.sections || {},
-            customFields: extracted.customFields || {},
-          });
-        });
-      }
-
-      return uploadedData;
-    },
-    {
-      maxAttempts: 3,
-      baseDelayMs: 2000, // Plus long pour les gros fichiers
-      maxDelayMs: 30000,
-      timeoutMs: 120000, // 2 minutes
-    },
-    `Upload:${file.name}`
-  );
-}
-
-/**
  * Option pour mapper les tables à un nom de template (dictionnaire)
  */
 export interface TableTemplateMapping {
@@ -249,11 +166,6 @@ export interface InvoiceTablesToJsonPayload {
       table_name?: string; // nom du tableau (issu du template dictionnaire)
     }>;
   }>;
-}
-
-export interface InvoiceTablesToJsonResponse {
-  invoices: InvoiceResult[];
-  processingInfo: ProcessingInfo;
 }
 
 /**
@@ -467,112 +379,3 @@ export async function transformInvoiceTablesToJsonWithRetry(
   );
 }
 
-/**
- * Extrait les bounding boxes d'un PDF
- */
-export function getBoundingBoxesForPdf(
-  data: StructuredExtractedData
-): Array<{
-  fieldKey: string;
-  coordinates: [number, number, number, number];
-  confidence: number;
-  isSelected: boolean;
-  type?: "form" | "table" | "cell";
-  tableIndex?: number;
-}> {
-  const boundingBoxes: Array<{
-    fieldKey: string;
-    coordinates: [number, number, number, number];
-    confidence: number;
-    isSelected: boolean;
-    type?: "form" | "table" | "cell";
-    tableIndex?: number;
-  }> = [];
-
-  // Extraire les bounding boxes depuis forms
-  if (data.isPdf && data.forms && Array.isArray(data.forms)) {
-    data.forms.forEach((form, index) => {
-      if (form.box) {
-        boundingBoxes.push({
-          fieldKey: form.Key || `field_${index}`,
-          coordinates: form.box,
-          confidence: 100,
-          isSelected: false,
-          type: "form",
-        });
-      }
-    });
-  }
-
-  // Ajouter les bounding boxes des tables
-  if (data.isPdf && data.tables && Array.isArray(data.tables)) {
-    data.tables.forEach((table, tableIndex) => {
-      if (table.box) {
-        boundingBoxes.push({
-          fieldKey: `table_${tableIndex}`,
-          coordinates: table.box,
-          confidence: 100,
-          isSelected: false,
-          type: "table",
-          tableIndex: tableIndex,
-        });
-      }
-    });
-  }
-
-  return boundingBoxes;
-}
-
-/**
- * Récupère les sections PDF ou les valeurs par défaut
- */
-export function getPdfSections(
-  data: StructuredExtractedData
-): Record<string, Record<string, FieldMetadata>> {
-  if (!data.isPdf || !data.forms) {
-    return data.sections || {};
-  }
-
-  const sections: Record<string, Record<string, FieldMetadata>> = {};
-
-  data.forms.forEach((form) => {
-    if (!sections.formulaires) {
-      sections.formulaires = {};
-    }
-
-    sections.formulaires[form.Key] = {
-      value: form.Value,
-      coordinates: form.box,
-      confidence: 1.0,
-      page: data.pageNumber || 1,
-      original_text: form.Value,
-    };
-  });
-
-  return sections;
-}
-
-/**
- * Récupère les champs personnalisés PDF ou les valeurs par défaut
- */
-export function getPdfCustomFields(
-  data: StructuredExtractedData
-): Record<string, FieldMetadata> {
-  if (!data.isPdf || !data.forms) {
-    return data.customFields || {};
-  }
-
-  const customFields: Record<string, FieldMetadata> = {};
-
-  data.forms.forEach((form) => {
-    customFields[form.Key] = {
-      value: form.Value,
-      coordinates: form.box,
-      confidence: 1.0,
-      page: data.pageNumber || 1,
-      original_text: form.Value,
-    };
-  });
-
-  return customFields;
-}

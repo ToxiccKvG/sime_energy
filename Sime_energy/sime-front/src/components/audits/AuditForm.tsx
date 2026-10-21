@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/select';
 import {
   ArrowLeft, Save, Plus, Trash2, MapPin, Building2,
-  Factory, Briefcase, HelpCircle, ChevronDown, ChevronRight, Layers, FolderOpen,
+  Factory, Briefcase, HelpCircle, Layers, FolderOpen,
 } from 'lucide-react';
 import AuditQuestionnaire from './AuditQuestionnaire';
 import { refreshProjectContext } from '@/services/project-context-builder';
@@ -113,8 +113,6 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
   const [loadingSites, setLoadingSites] = useState(false);
   const [activeTab, setActiveTab] = useState('basic');
   const [sites, setSites] = useState<FormSite[]>([]);
-  const [expandedZone, setExpandedZone] = useState<number | null>(null);
-  const [expandedBuilding, setExpandedBuilding] = useState<number | null>(null);
   // Track original IDs per site to detect deletions on update
   const originalSiteIds = useRef<Set<string>>(new Set());
 
@@ -378,19 +376,8 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
     setNewSite({ name: '', address: '', zones: [] });
     setNewZone({ name: '', description: '', buildings: [] });
     setNewBuilding({ name: '', type: '', levels: [] });
-    setExpandedZone(null);
   };
 
-  const handleBuildingSection = (buildingIdx: number, section: 'structureBati' | 'enveloppe' | 'amenagement', field: string, value: any) => {
-    setNewZone(prev => {
-      const buildings = [...prev.buildings];
-      buildings[buildingIdx] = {
-        ...buildings[buildingIdx],
-        [section]: { ...buildings[buildingIdx][section], [field]: value },
-      };
-      return { ...prev, buildings };
-    });
-  };
 
   const handleSubmit = async () => {
     if (!formData.name) {

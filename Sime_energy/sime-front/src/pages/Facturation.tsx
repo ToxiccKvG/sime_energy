@@ -12,7 +12,7 @@ import { getAuditInvoices, deleteInvoice } from '@/lib/invoice-service';
 import { autoVerifyProcessingInvoices } from '@/lib/invoice-auto-verify';
 import {
   Upload, FileText, DollarSign, CheckCircle2, Eye, Trash2,
-  AlertCircle, ArrowDown, ArrowUp, Download, Zap,
+  ArrowDown, ArrowUp, Download, Zap,
   LayoutGrid, ScanLine, FileSpreadsheet, Database, Calculator, ShieldAlert,
   ChevronLeft, ChevronRight, TrendingUp, ListFilter, ChevronDown, Search, X,
 } from 'lucide-react';
@@ -556,7 +556,6 @@ const Facturation = () => {
   };
   const amountKpi = { value: Math.round(totalAmount).toLocaleString('fr-FR'), sub: 'FCFA' };
 
-  const getAuditName = (id: string) => audits.find(a => a.id === id)?.name ?? '—';
 
   // Extract a value from OCR form data using the same normalization as the annotation service.
   const getOcrValue = (ocrData: unknown, aliases: string[]): string | null => {

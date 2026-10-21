@@ -6,7 +6,7 @@
  * Aucune dépendance React — safe en dehors des hooks.
  */
 
-import { calculateBillingKPIs, calculateBTTranches } from '@/lib/billing-calculator'
+import { calculateBillingKPIs } from '@/lib/billing-calculator'
 import { mapOcrToInvoiceData } from '@/lib/invoice-mapper'
 import type { AuditInvoice } from '@/lib/invoice-service'
 import type { BillingParams } from '@/types/billing'

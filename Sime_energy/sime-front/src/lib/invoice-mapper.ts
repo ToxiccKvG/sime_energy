@@ -722,22 +722,3 @@ export function mapSenelecToInvoiceData(row: FactureSenelecForSelector): Partial
     k2_montant:         row.montant_energie_k2 ?? undefined,
   }
 }
-
-// ─── Debug helper ─────────────────────────────────────────────────────────────
-
-export function debugOcrData(ocr_data: unknown): void {
-  const { forms, tables } = extractFormsAndTables(ocr_data)
-  const dict    = buildLookup(forms, tables)
-  const billing = extractBillingTable4Col(tables)
-  const energy  = extractEnergyMatrix(tables)
-
-  console.group('[invoice-mapper] OCR debug')
-  console.log('Forms:', forms.length, 'entrées')
-  console.log('Tables brutes:', tables.length, 'tables,', tables.reduce((s, t) => s + t.length, 0), 'lignes')
-  console.log('Lookup unifié:')
-  dict.forEach((v, k) => console.log(`  "${k}" → "${v}"`))
-  console.log('Tableau facturation 4 col:', billing.length, 'lignes')
-  billing.forEach(l => console.log(`  "${l.label}" | q=${l.quantite} t=${l.tarif} m=${l.montant}`))
-  console.log('Matrice énergie:', energy)
-  console.groupEnd()
-}

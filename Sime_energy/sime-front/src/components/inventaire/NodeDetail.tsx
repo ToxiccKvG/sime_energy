@@ -2194,7 +2194,6 @@ function RoomView({
     const cat = categories.find(c => c.id === eq.categoryId);
     const catName = (cat?.name ?? '').toUpperCase();
     const isEclairage = catName.includes('CLAIRAGE');
-    const isAppareils = catName.includes('DIVERS') || catName.includes('APPAREILS');
     const isClim = catName.includes('CLIM');
     const m = (eq.metadata ?? {}) as any;
     setEqForm({

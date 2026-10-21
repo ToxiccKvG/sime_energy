@@ -1,5 +1,4 @@
 import { LogOut, Menu, LayoutDashboard, FileText, Package, ClipboardCheck, Settings } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";

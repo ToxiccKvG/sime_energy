@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import {
   ShieldAlert, ShieldCheck, FileText, Database, Calculator,
   Trash2, CheckCircle2, RefreshCw, AlertTriangle, Filter, Eye,
-  Zap, Hash, Receipt, MessageSquarePlus, ClipboardList,
+  Hash, Receipt, MessageSquarePlus, ClipboardList,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
@@ -35,8 +35,6 @@ import { useOrganization } from '@/context/OrganizationContext'
 
 const fmtXOF  = (n: number) => Math.round(n).toLocaleString('fr-FR')
 const fmtPct  = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(2)} %`
-const fmtNum  = (n: number | null | undefined, unit = 'FCFA') =>
-  n != null ? `${fmtXOF(n)} ${unit}` : '—'
 
 const SOURCE_CONFIG = {
   ocr:     { label: 'OCR',     Icon: FileText,   color: 'text-amber-400',   bg: 'bg-amber-500/15',   border: 'border-amber-500/25' },

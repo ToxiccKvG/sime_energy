@@ -3,12 +3,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
 import { Slider } from '@/components/ui/slider'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
-  Calculator, FileText, Database, ChevronDown, CheckCircle2,
-  AlertTriangle, AlertCircle, Info, RotateCcw, ShieldAlert, TrendingDown,
+  Calculator, FileText, Database, CheckCircle2,
+  AlertTriangle, AlertCircle, RotateCcw, ShieldAlert,
   Search, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -414,7 +412,6 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
   })
   const [isCalculating, setIsCalculating]   = useState(false)
   const [isQuarantining, setIsQuarantining] = useState(false)
-  const [tranchesOpen, setTranchesOpen]     = useState(false)
 
   // Valeurs déclarées SENELEC pour la colonne de comparaison (OCR ou Excel)
   const [declaredValues, setDeclaredValues]           = useState<DeclaredValues | null>(null)
@@ -424,8 +421,6 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
   const [senelecRows, setSenelecRows]                 = useState<FactureSenelecForSelector[]>([])
   const [senelecLoading, setSenelecLoading]           = useState(false)
   const [selectedSenelecRowId, setSelectedSenelecRowId] = useState<string | null>(null)
-  // Reference row kept for index display only
-  const [senelecRefRow, setSenelecRefRow]             = useState<FactureSenelecForSelector | null>(null)
 
   // Cross-source invoice search
   const [searchQuery, setSearchQuery]               = useState('')
@@ -471,7 +466,6 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
     if (!row) return
     const partial = prefillFromSenelec(row)
     setForm(prev => ({ ...prev, ...partial }))
-    setSenelecRefRow(row)
     setDeclaredValues(declaredFromSenelec(row))
     setResult(null)
   }, [selectedSenelecRowId, inputMode, senelecRows])
@@ -605,7 +599,6 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
     setResult(null)
     setSelectedId(null)
     setSelectedSenelecRowId(null)
-    setSenelecRefRow(null)
     setDeclaredValues(null)
   }
 
@@ -687,7 +680,6 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
   const calculatedTTC  = result?.montant_ttc_calcule ?? 0
   const absDeltaPct    = result ? Math.abs(result.delta_pct) : 0
   const isAnomaly      = result?.is_anomaly ?? false
-  const statusCls      = !result ? '' : absDeltaPct < 1 ? 'emerald' : isAnomaly ? 'red' : 'amber'
 
   // Colonne de comparaison active dès qu'une source est chargée (OCR ou SENELEC)
   const showDeclared = declaredValues != null
@@ -773,7 +765,7 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
               :                       'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25'
               : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
             return (
-              <button key={key} onClick={() => { setInputMode(key); setResult(null); setSenelecRefRow(null); setDeclaredValues(null) }}
+              <button key={key} onClick={() => { setInputMode(key); setResult(null); setDeclaredValues(null) }}
                 className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition-all ${cls}`}>
                 <Icon className="w-3.5 h-3.5 shrink-0" />
                 <span>{label}</span>
