@@ -4,7 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 
-export interface Organization {
+interface Organization {
   id: string;
   name: string;
   slug?: string;

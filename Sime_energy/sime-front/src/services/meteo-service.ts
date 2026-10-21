@@ -37,7 +37,7 @@ export interface MeteoSettings {
 }
 
 /** Un enregistrement météo pour un pas de temps (jour ou heure) */
-export interface WeatherRecord {
+interface WeatherRecord {
   time: string;
   temperature_2m_mean?:        number | null;
   temperature_2m_max?:         number | null;

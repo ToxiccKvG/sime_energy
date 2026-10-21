@@ -37,7 +37,7 @@ const NON_ALNUM = /[^a-z0-9]+/g;
 const NUMERO_ABBREV = /\b(no|num|nro)\b/g;
 
 /** « N° Facture », « numéro facture », « Num. facture » → « numero facture » */
-export function normalizeHeader(value: unknown): string {
+function normalizeHeader(value: unknown): string {
   if (value == null) return '';
   return String(value)
     .normalize('NFD').replace(DIACRITICS, '')
@@ -223,7 +223,7 @@ export function isStandardTemplate(rawRows: unknown[][], headerRow: number): boo
 
 // ─── Contrôle du mapping ──────────────────────────────────────────────────────
 
-export interface MappingIssues {
+interface MappingIssues {
   /** Champs indispensables non associés → import impossible */
   blocking: BillingColumnDef[];
   /** Champs requis non associés → lignes signalées incomplètes dans l'aperçu */

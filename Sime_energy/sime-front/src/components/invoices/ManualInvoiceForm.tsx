@@ -39,7 +39,7 @@ import { cn } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface ManualInvoiceFormProps {
+interface ManualInvoiceFormProps {
   open:            boolean
   onOpenChange:    (open: boolean) => void
   onSaved:         () => void

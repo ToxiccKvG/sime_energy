@@ -45,7 +45,7 @@ function augmentFieldAliases(field: AnnotationField): AnnotationField {
 /**
  * Récupère tous les dictionnaires d'annotation pour une organisation
  */
-export async function getAnnotationDictionaries(
+async function getAnnotationDictionaries(
   organizationId: string
 ): Promise<AnnotationDictionary[]> {
   // Fetch org-specific dicts + platform dicts (organization_id IS NULL) in parallel
@@ -112,7 +112,7 @@ export async function getAnnotationDictionaries(
 /**
  * Récupère les paramètres d'affichage pour une organisation
  */
-export async function getAnnotationSettings(
+async function getAnnotationSettings(
   organizationId: string
 ): Promise<AnnotationDisplaySettings> {
   const { data, error } = await supabase

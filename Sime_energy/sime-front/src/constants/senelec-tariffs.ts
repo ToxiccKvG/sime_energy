@@ -6,11 +6,11 @@
 // Année de grille tarifaire — number pour autoriser les grilles custom
 // définies par l'utilisateur dans Paramètres > Calculs & Énergie.
 export type TariffYear = number
-export const STANDARD_TARIFF_YEARS = [2017, 2019, 2023, 2026] as const
+const STANDARD_TARIFF_YEARS = [2017, 2019, 2023, 2026] as const
 
-export type BTCategory  = 'DPP' | 'DMP' | 'PPP' | 'PMP' | 'DGP' | 'PGP'
+type BTCategory  = 'DPP' | 'DMP' | 'PPP' | 'PMP' | 'DGP' | 'PGP'
 export type MTCategory  = 'TCU' | 'TG'  | 'TLU'
-export type HTCategory  = 'HTS' | 'HTG'
+type HTCategory  = 'HTS' | 'HTG'
 export type TariffCategory = BTCategory | MTCategory | HTCategory
 
 // ── STRUCTURE DES TRANCHES BT (référence 60 jours) ──
@@ -26,7 +26,7 @@ export const BT_TRANCHE_WIDTHS: Record<'DPP' | 'DMP' | 'PPP' | 'PMP', [number, n
 }
 
 // ── GRILLE 2017 ──
-export const TARIFF_2017 = {
+const TARIFF_2017 = {
   BT: {
     DPP: { t1: 90.47,  t2: 101.64, t3: 112.65, pf: null,     k1: null, k2: null },
     DMP: { t1: 96.02,  t2: 102.44, t3: 112.02, pf: null,     k1: null, k2: null },
@@ -47,7 +47,7 @@ export const TARIFF_2017 = {
 }
 
 // ── GRILLE 2019 ──
-export const TARIFF_2019 = {
+const TARIFF_2019 = {
   BT: {
     DPP: { t1: 90.47,  t2: 101.64, t3: 112.65, pf: null,     k1: null, k2: null },
     DMP: { t1: 96.02,  t2: 102.44, t3: 112.02, pf: null,     k1: null, k2: null },
@@ -95,7 +95,7 @@ export type TariffGrid = typeof TARIFF_2023
 // Source: Annexe SENELEC — Grille tarifaire applicable à partir du 1er janvier 2026
 // BT: prix en FCFA/kWh par tranche (DPP/DMP/PPP/PMP) ou HHP/HP + prime fixe (DGP/PGP)
 // MT/HT: prix en FCFA/kWh HHP et HP + prime fixe en FCFA/kW/mois
-export const TARIFF_2026 = {
+const TARIFF_2026 = {
   BT: {
     DPP: { t1: 82.00,  t2: 130.40, t3: 159.46, pf: null,      k1: null,   k2: null   },
     DMP: { t1: 111.25, t2: 143.54, t3: 159.46, pf: null,      k1: null,   k2: null   },
@@ -163,14 +163,14 @@ export function isCustomTariffYear(year: number): boolean {
 // αr / βr : réactifs (proportionnels à Wr et H1−H2)
 // Lookup par puissance kVA — interpolation linéaire si valeur exacte absente.
 // Table valide de 25 kVA à 650 kVA. Au-delà : renvoie null (hors plage).
-export interface TransfoCoefficients {
+interface TransfoCoefficients {
   alphaA: number; // αa
   betaA:  number; // βa
   alphaR: number; // αr
   betaR:  number; // βr
 }
 
-export const TRANSFO_LOSS_TABLE: Array<{ kva: number } & TransfoCoefficients> = [
+const TRANSFO_LOSS_TABLE: Array<{ kva: number } & TransfoCoefficients> = [
   { kva:  25, alphaA: 0.0280, betaA: 0.1150,  alphaR: 0.04, betaR:  0.825  },
   { kva:  50, alphaA: 0.0220, betaA: 0.1900,  alphaR: 0.04, betaR:  1.45   },
   { kva:  75, alphaA: 0.0198, betaA: 0.2550,  alphaR: 0.04, betaR:  1.975  },
@@ -262,7 +262,7 @@ export const MT_TARIFF_THRESHOLDS = {
 }
 
 // ── PLAGES DE PUISSANCE BT (kW) ──
-export const BT_POWER_RANGES = {
+const BT_POWER_RANGES = {
   PP: { min: 0,  max: 6   },
   MP: { min: 6,  max: 17  },
   GP: { min: 17, max: 100 },
@@ -286,7 +286,7 @@ export const BT_BAND_CATEGORIES: Record<BTPowerBand, BTCategory[]> = {
 // ── PLAGES DE TENSION/PUISSANCE POUR AUTO-DÉTECTION ──
 // Seuils SENELEC Sénégal (0–1000V BT / 1000–30000V MT / >30000V HT)
 // Plafond pratique BT = 100 kW, MT = 1250 kW
-export const TENSION_POWER_THRESHOLDS = {
+const TENSION_POWER_THRESHOLDS = {
   BT_max_kw: 100,
   MT_max_kw: 1250,
 }

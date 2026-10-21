@@ -6,21 +6,21 @@
  */
 // ─── Schema types (not stored) ─────────────────────────────────────
 
-export type PVSchemaFieldType = 'text' | 'textarea';
+type PVSchemaFieldType = 'text' | 'textarea';
 
-export interface PVSchemaField {
+interface PVSchemaField {
   id: string;
   label: string;
   type: PVSchemaFieldType;
 }
 
-export interface PVSchemaTableRowDef {
+interface PVSchemaTableRowDef {
   id: string;
   label: string;
   subGroup?: string;
 }
 
-export interface PVSchemaCheckboxItemDef {
+interface PVSchemaCheckboxItemDef {
   id: string;
   label: string;
 }
@@ -330,7 +330,7 @@ export const WOYOFAL_TOKEN_CODES = new Set(['830', '831', '832', '833', '834', '
 // code          : code OBIS affiché ('' pour les lignes DATE/HEURE, sans code)
 // signification : mnémonique affiché dans le menu déroulant
 // libelle       : description affichée (lecture seule) dans la colonne « Libellé »
-export type ObisEntry = { key: string; code: string; signification: string; libelle: string };
+type ObisEntry = { key: string; code: string; signification: string; libelle: string };
 
 export const OBIS_TABLE: ObisEntry[] = [
   { key: '1.8.0',        code: '1.8.0',   signification: 'Index cumulé instantané', libelle: 'Consommation du mois en cours' },

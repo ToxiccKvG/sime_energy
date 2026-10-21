@@ -1,4 +1,4 @@
-export interface HierarchyNode {
+interface HierarchyNode {
   id: string;
   name: string;
   file?: string | null;

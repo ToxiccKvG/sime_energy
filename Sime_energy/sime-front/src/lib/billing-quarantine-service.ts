@@ -3,7 +3,7 @@ import type { SimulateurResult } from '@/lib/senelec-simulator';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface QuarantineItemOCR {
+interface QuarantineItemOCR {
   source: 'ocr';
   id: string;
   audit_id: string;
@@ -17,7 +17,7 @@ export interface QuarantineItemOCR {
   quarantine_action_plan: string | null;
 }
 
-export interface QuarantineItemSenelec {
+interface QuarantineItemSenelec {
   source: 'senelec';
   id: string;
   audit_id: string | null;
@@ -31,7 +31,7 @@ export interface QuarantineItemSenelec {
   quarantine_action_plan: string | null;
 }
 
-export interface QuarantineItemManual {
+interface QuarantineItemManual {
   source: 'manual';
   id: string;
   audit_id: string | null;
@@ -52,7 +52,7 @@ export type QuarantineItem = QuarantineItemOCR | QuarantineItemSenelec | Quarant
 
 // ─── OCR quarantine (already in invoice-service.ts, re-exported for unified view) ────
 
-export async function getQuarantinedOCR(organizationId: string): Promise<QuarantineItemOCR[]> {
+async function getQuarantinedOCR(organizationId: string): Promise<QuarantineItemOCR[]> {
   const { data, error } = await supabase
     .from('audit_invoices')
     .select('id,audit_id,file_name,amount,quarantine_reason,quarantine_delta_pct,updated_at,quarantine_comment,quarantine_action_plan')
@@ -117,7 +117,7 @@ export async function unquarantineFactureSenelec(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function getQuarantinedSenelec(organizationId: string): Promise<QuarantineItemSenelec[]> {
+async function getQuarantinedSenelec(organizationId: string): Promise<QuarantineItemSenelec[]> {
   const { data, error } = await supabase
     .from('factures_senelec')
     .select('id,audit_id,partenaire,numero_compte_contrat,mois_facturation,annee_facturation,montant_facture_ttc,quarantine_reason,quarantine_delta_pct,quarantine_ttc_calcule,quarantined_at,quarantine_comment,quarantine_action_plan')
@@ -144,7 +144,7 @@ export async function getQuarantinedSenelec(organizationId: string): Promise<Qua
 
 // ─── Manual quarantine ─────────────────────────────────────────────────────────
 
-export interface ManualQuarantineInput {
+interface ManualQuarantineInput {
   organization_id: string;
   audit_id?: string | null;
   label: string;
@@ -195,7 +195,7 @@ export async function deleteManualQuarantine(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function getManualQuarantineItems(organizationId: string): Promise<QuarantineItemManual[]> {
+async function getManualQuarantineItems(organizationId: string): Promise<QuarantineItemManual[]> {
   const { data, error } = await supabase
     .from('billing_quarantine_manual')
     .select('*')

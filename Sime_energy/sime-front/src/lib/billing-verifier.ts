@@ -13,7 +13,7 @@ import type { BillingParams } from '@/types/billing'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface PosteEcart {
+interface PosteEcart {
   poste:      'energie' | 'prime_fixe' | 'pdp' | 'cosphi' | 'tva' | 'tco' | 'redevance'
   label:      string
   declare:    number | null   // valeur extraite de l'OCR
@@ -22,7 +22,7 @@ export interface PosteEcart {
   ecart_pct:  number          // relatif au montant TTC
 }
 
-export interface InvoiceVerificationResult {
+interface InvoiceVerificationResult {
   invoiceId:          string
   fileName:           string
   invoiceDate:        string | null

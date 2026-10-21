@@ -47,7 +47,7 @@ export function penaliteDepassement(tpf: number, ps: number, pmax: number, nj: n
 // Bonus       : cosφ ≥ 0.96 → rabais = −n × 0.75% (n = steps au-dessus de 0.95, max 5)
 // Pénalité    : cosφ < 0.80 → surcoût progressif
 
-export const COSPHI_PENALTY_BANDS: Array<{ min: number; max: number; pct: number }> = [
+const COSPHI_PENALTY_BANDS: Array<{ min: number; max: number; pct: number }> = [
   { min: 0.80, max: Infinity, pct: 0  },  // zone neutre (0.80–0.95) + bonus (>0.95) géré séparément
   { min: 0.75, max: 0.80,    pct: 5  },
   { min: 0.70, max: 0.75,    pct: 10 },

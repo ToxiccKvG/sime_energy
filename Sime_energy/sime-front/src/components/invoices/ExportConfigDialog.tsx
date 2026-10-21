@@ -22,7 +22,7 @@ interface FieldInfo {
   source: 'verified' | 'raw'; // comes from ocr_data_verified or ocr_data
 }
 
-export interface ExportConfigDialogProps {
+interface ExportConfigDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   invoices: AuditInvoice[];

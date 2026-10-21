@@ -53,7 +53,7 @@ export interface TableTemplate {
   excelMappings?: ExcelMapping[];
 }
 
-export interface ExcelMappingSource {
+interface ExcelMappingSource {
   /** Nom de colonne (en-tête) */
   column?: string;
   /** Nom d'en-tête de ligne */

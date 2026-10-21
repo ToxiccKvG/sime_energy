@@ -6,7 +6,7 @@ export interface PVCheckboxItem {
 }
 
 // One timestamped reading for a senelec meter row
-export interface PVTableRowReading {
+interface PVTableRowReading {
   id: string;
   dateTime: string;
   value: string;
@@ -24,7 +24,7 @@ export interface PVTableRow {
 }
 
 // Legacy — kept for backward compat, superseded by MesureSession
-export interface WoyofalEntry {
+interface WoyofalEntry {
   id: string;
   code: string;
   valeur: string;
@@ -74,7 +74,7 @@ export interface PVQuestionnaire {
   createdAt: string;
 }
 
-export interface AuditSite {
+interface AuditSite {
   id: string;
   name: string;
   address: string;
@@ -91,14 +91,14 @@ export interface AuditSite {
   surfaceToiture?: number;
 }
 
-export interface Responsable {
+interface Responsable {
   nom: string;
   position: string;
   telephone: string;
   email: string;
 }
 
-export interface Employes {
+interface Employes {
   type: string;
   hommesNombre: number;
   femmesNombre: number;
@@ -106,7 +106,7 @@ export interface Employes {
   cadresFemmes: number;
 }
 
-export interface CapaciteHotel {
+interface CapaciteHotel {
   type: string;
   standing: number;
   chambresStandard: number;
@@ -115,13 +115,13 @@ export interface CapaciteHotel {
   totalLits: number;
 }
 
-export interface CapaciteHopital {
+interface CapaciteHopital {
   specialite: string;
   chambresHospitalisation: number;
   litsHospitalisation: number;
 }
 
-export interface CapaciteAdministration {
+interface CapaciteAdministration {
   bureauxIndividuels: number;
   bureaux2Pers: number;
   bureaux3Pers: number;
@@ -129,7 +129,7 @@ export interface CapaciteAdministration {
   bureauxPaysagers: number;
 }
 
-export interface ProgrammeOperations {
+interface ProgrammeOperations {
   quartsJour: number;
   heuresQuart: number;
   horaires: string;
@@ -140,7 +140,7 @@ export interface ProgrammeOperations {
   dureeMaintenance?: string;
 }
 
-export interface AuditGeneralInfo {
+interface AuditGeneralInfo {
   nomEtablissement: string;
   siege: string;
   adresse: string;
@@ -157,7 +157,7 @@ export interface AuditGeneralInfo {
   marches?: string;
 }
 
-export interface AuditPersonnel {
+interface AuditPersonnel {
   dg: string;
   dt: string;
   responsableEnergie: Responsable[];
@@ -166,7 +166,7 @@ export interface AuditPersonnel {
   programmeOperations: ProgrammeOperations;
 }
 
-export interface AuditCapacites {
+interface AuditCapacites {
   usines: AuditSite[];
   hotel?: CapaciteHotel[];
   hopital?: CapaciteHopital[];

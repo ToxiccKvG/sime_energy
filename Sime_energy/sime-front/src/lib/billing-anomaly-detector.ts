@@ -10,7 +10,7 @@ import type { BillingParams } from '@/types/billing'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AnomalyType =
+type AnomalyType =
   | 'estimation'      // index "E" — relevé estimé par SENELEC (pas réel)
   | 'rappel'          // SOLDE DES IMPAYES > 0 (arriérés)
   | 'index_suspect'   // consommation > 3× moyenne des 6 dernières factures
@@ -29,14 +29,14 @@ export interface BillingAnomaly {
   seuil?:     number
 }
 
-export interface AnomalyThresholds {
+interface AnomalyThresholds {
   k2_pct:        number   // % — alerte si K2/total dépasse ce seuil (défaut : 10)
   cosphi_min:    number   // alerte si cosφ < ce seuil (défaut : 0.80)
   ps_ecart_pct:  number   // % — alerte si (Pmax-PS)/PS dépasse ce seuil (défaut : 10)
   index_factor:  number   // facteur multiplicateur pour détection index suspect (défaut : 3)
 }
 
-export const DEFAULT_THRESHOLDS: AnomalyThresholds = {
+const DEFAULT_THRESHOLDS: AnomalyThresholds = {
   k2_pct:       10,
   cosphi_min:   0.80,
   ps_ecart_pct: 10,

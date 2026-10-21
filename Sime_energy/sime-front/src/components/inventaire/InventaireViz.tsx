@@ -1128,7 +1128,7 @@ function VueEnsemble({ categoryStats, topGroups, groupLabel, groupBy, kpis, hasK
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export interface InventaireVizProps {
+interface InventaireVizProps {
   auditId: string;
   onNavigateTo?: (sel: SelectionNode) => void;
 }

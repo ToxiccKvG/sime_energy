@@ -64,7 +64,7 @@ function lookupTariffRates(typeTarif: string | null, invoiceYear: number | null)
 // ─── Auto-fix engine ──────────────────────────────────────────────────────────
 
 /** Taux de TVA standard SENELEC (18%). */
-export const TVA_RATE = 0.18;
+const TVA_RATE = 0.18;
 
 function autoFixRow(row: BillingRow): BillingRow {
   const r = { ...row };
@@ -265,7 +265,7 @@ export function countFixable(rows: BillingRow[]): number {
 
 // ─── Détection d'anomalies (cohérence intrinsèque d'une facture) ───────────────
 
-export interface RowAnomaly {
+interface RowAnomaly {
   count: number;
   reasons: string[];
 }

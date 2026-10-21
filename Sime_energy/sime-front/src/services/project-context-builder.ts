@@ -712,7 +712,7 @@ function buildFacturation(raw: ProjectContextRawData): ProjectContextV1['factura
 
 // ─── API publique ─────────────────────────────────────────────────────────────
 
-export function assembleProjectContext(raw: ProjectContextRawData, generatedBy: string | null): ProjectContextV1 {
+function assembleProjectContext(raw: ProjectContextRawData, generatedBy: string | null): ProjectContextV1 {
   const a = raw.audit;
   const gi = (a.general_info ?? {}) as Record<string, any>;
   const personnel = (a.personnel ?? {}) as Record<string, any>;
@@ -749,7 +749,7 @@ export function assembleProjectContext(raw: ProjectContextRawData, generatedBy: 
   };
 }
 
-export async function buildProjectContext(auditId: string, generatedBy: string | null = null): Promise<ProjectContextV1> {
+async function buildProjectContext(auditId: string, generatedBy: string | null = null): Promise<ProjectContextV1> {
   const raw = await getProjectContextRawData(auditId);
   return assembleProjectContext(raw, generatedBy);
 }

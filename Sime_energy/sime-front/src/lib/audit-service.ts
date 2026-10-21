@@ -21,7 +21,7 @@ export interface AuditDB {
   inventory_counts?: AuditInventoryCounts;
 }
 
-export interface AuditInventoryCounts {
+interface AuditInventoryCounts {
   totalSites: number;
   totalBuildings: number;
   totalEquipment: number;
@@ -39,7 +39,7 @@ export interface AuditSiteDB {
   updated_at: string;
 }
 
-export interface AuditBuildingDB {
+interface AuditBuildingDB {
   id: string;
   site_id: string;
   audit_id: string;

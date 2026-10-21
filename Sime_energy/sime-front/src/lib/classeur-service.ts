@@ -3,12 +3,12 @@ import { mapOcrToInvoiceData, mapSenelecToInvoiceData } from '@/lib/invoice-mapp
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface ClasseurBuilding {
+interface ClasseurBuilding {
   id: string
   name: string
 }
 
-export interface ClasseurZone {
+interface ClasseurZone {
   id: string
   name: string
   buildings: ClasseurBuilding[]
@@ -47,7 +47,7 @@ export interface ClasseurInvoice {
 
 export type NodeType = 'site' | 'zone' | 'building'
 
-export interface NodeMetrics {
+interface NodeMetrics {
   invoiceCount: number
   kwh: number
   fcfa: number
@@ -123,7 +123,7 @@ export async function getAuditSpatialHierarchy(auditId: string): Promise<Spatial
   }
 }
 
-export interface ClasseurInvoicesResult {
+interface ClasseurInvoicesResult {
   invoices: ClasseurInvoice[]
   migrationNeeded: boolean
 }

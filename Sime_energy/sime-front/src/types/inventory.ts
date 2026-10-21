@@ -1,7 +1,7 @@
 // Inventory module types
 // Hierarchy: SITE (audit_sites) → BÂTIMENT (audit_buildings) → ÉTAGE (audit_levels) → PIÈCE (audit_rooms) → ÉQUIPEMENTS (audit_equipment)
 
-export type EquipmentStatus = 'EN service' | 'Hors Service';
+type EquipmentStatus = 'EN service' | 'Hors Service';
 
 // ---- SPATIAL HIERARCHY ----
 
@@ -76,7 +76,7 @@ export interface InventoryEquipment {
 
 // ---- EQUIPMENT METADATA SCHEMAS (stored in metadata JSONB) ----
 
-export interface EclairageMetadata {
+interface EclairageMetadata {
   typeLuminaire?: string;  // description libre du type de luminaire
   typeReflecteur?: string; // type de réflecteur
   technologie?: 'LED' | 'Fluo' | 'Économique' | 'Halogène';
@@ -89,7 +89,7 @@ export interface EclairageMetadata {
   heuresAn?: number;
 }
 
-export interface AppareillsDiversMetadata {
+interface AppareillsDiversMetadata {
   categorie?: 'Bureautique' | 'Informatique' | 'Réseau' | 'Multimédia' | 'Téléphonie' | 'Autres';
   surfaceM2?: number;
   volumeM3?: number;
@@ -99,7 +99,7 @@ export interface AppareillsDiversMetadata {
   feries?: boolean;
 }
 
-export interface ClimMetadata {
+interface ClimMetadata {
   technologie?: 'Inverter' | 'Classique';
   btu?: number;
   puissanceElecW?: number;
@@ -148,7 +148,7 @@ export const FUNCTIONAL_TYPES = [
 ] as const;
 
 // 5 hour categories used in the parametric model
-export type HourCategory = 'Eclairage' | 'Climatisation' | 'Informatique' | 'Electromenager' | 'Serveur';
+type HourCategory = 'Eclairage' | 'Climatisation' | 'Informatique' | 'Electromenager' | 'Serveur';
 
 export interface BuildingTypeParams {
   id: string;

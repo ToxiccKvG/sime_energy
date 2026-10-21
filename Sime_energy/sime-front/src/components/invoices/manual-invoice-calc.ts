@@ -29,7 +29,7 @@ export function calcNJ(dateDebut: string, dateFin: string): number | null {
 }
 
 // ── Template A — calcul tranches BT PP ────────────────────────────────────────
-export interface TranchesResult {
+interface TranchesResult {
   t1_kwh: number; t1_montant: number
   t2_kwh: number; t2_montant: number
   t3_kwh: number; t3_montant: number
@@ -76,7 +76,7 @@ export function calcTVABase_BT_PP(
 }
 
 // ── Template B/C — majorations transformateur ─────────────────────────────────
-export interface MajorationResult {
+interface MajorationResult {
   ma_k1: number
   ma_k2: number
   ma_reactive: number
@@ -111,7 +111,7 @@ type OcrCell  = { text: string }
 type OcrTable = { rows: OcrCell[][] }
 type OcrPage  = { tables: OcrTable[] }
 
-export interface OcrData {
+interface OcrData {
   manual_entry: true
   forms: Array<{ Key: string; Value: string }>
   page: [OcrPage]
@@ -125,7 +125,7 @@ function pushForm(forms: OcrData['forms'], key: string, val: string | number | n
 }
 
 // ── Builder Template A (BT PP — tranches) ────────────────────────────────────
-export interface OcrParamsA {
+interface OcrParamsA {
   conso_total: number
   date_debut: string; date_fin: string; nj: number
   tranches: Array<{ label: string; kwh: number; tarif: number; montant: number }>
@@ -160,7 +160,7 @@ export function buildOcrData_A(p: OcrParamsA): OcrData {
 }
 
 // ── Builder Template B/C (GP + MT + HT — K1/K2 bi-horaire) ──────────────────
-export interface OcrParamsB {
+interface OcrParamsB {
   date_debut: string; date_fin: string; nj: number
   conso_k1: number; conso_k2: number; conso_total: number
   total_fact_k1: number; total_fact_k2: number; total_fact_total: number

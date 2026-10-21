@@ -5,7 +5,7 @@ import { getInventorySnapshot } from '@/lib/inventory-service';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-export interface SynthesisResult {
+interface SynthesisResult {
   observations_generales: string;
   inventaire: string;
   mesures: string;

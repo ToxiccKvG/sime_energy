@@ -23,7 +23,7 @@ import { toast } from 'sonner';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-export interface ImportSummary {
+interface ImportSummary {
   /** Nombre de doublons (même n° facture) retirés avant l'import. */
   duplicatesRemoved: number;
   /** Parmi les retirés, nombre de factures incohérentes (anomalies) écartées. */

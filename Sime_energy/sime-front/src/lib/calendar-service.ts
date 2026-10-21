@@ -13,7 +13,7 @@ export interface OrgCalendarEvent {
   created_at: string;
 }
 
-export type NewOrgCalendarEvent = Pick<OrgCalendarEvent,
+type NewOrgCalendarEvent = Pick<OrgCalendarEvent,
   'organization_id' | 'title' | 'description' | 'event_date' | 'end_date' | 'all_day' | 'color'
 > & { created_by: string };
 

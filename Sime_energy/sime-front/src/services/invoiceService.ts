@@ -30,7 +30,7 @@ export interface StructuredExtractedData {
   }>;
 }
 
-export interface FieldMetadata {
+interface FieldMetadata {
   value: string;
   coordinates: [number, number, number, number];
   page: number;
@@ -38,7 +38,7 @@ export interface FieldMetadata {
   original_text: string;
 }
 
-export interface ProcessingInfo {
+interface ProcessingInfo {
   totalInvoices?: number;
   totalTables?: number;
   tableCount?: number;
@@ -63,7 +63,7 @@ export interface ProcessingInfo {
   };
 }
 
-export interface BackendInvoiceResponse {
+interface BackendInvoiceResponse {
   dictionary?: {
     id: string;
     name: string;
@@ -100,7 +100,7 @@ function invoiceEndpoint(fileName: string): string | null {
   return null;
 }
 
-export interface InvoiceProcessingContext {
+interface InvoiceProcessingContext {
   invoiceId: string;
   auditId: string;
   organizationId: string;
@@ -144,12 +144,12 @@ export async function processInvoiceFile(file: File, ctx: InvoiceProcessingConte
 /**
  * Option pour mapper les tables à un nom de template (dictionnaire)
  */
-export interface TableTemplateMapping {
+interface TableTemplateMapping {
   tableIndex: number;
   tableName: string; // nom du tableau (template du dictionnaire)
 }
 
-export interface InvoiceTablesToJsonPayload {
+interface InvoiceTablesToJsonPayload {
   dictionary_name?: string;
   dictionary_id?: string;
   pages: Array<{
@@ -171,7 +171,7 @@ export interface InvoiceTablesToJsonPayload {
 /**
  * Transforme les données des tableaux en format JSON unifié
  */
-export async function transformInvoiceTablesToJson(
+async function transformInvoiceTablesToJson(
   extractedData: StructuredExtractedData[],
   tableMappings?: TableTemplateMapping[],
   dictionaryName?: string,
@@ -235,7 +235,7 @@ export async function transformInvoiceTablesToJson(
 /**
  * Configuration pour le retry avec backoff
  */
-export interface RetryOptions {
+interface RetryOptions {
   maxAttempts?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
@@ -273,7 +273,7 @@ function getBackoffDelay(attempt: number, baseDelayMs: number, maxDelayMs: numbe
 /**
  * Fonction utilitaire générique pour retry avec backoff exponentiel
  */
-export async function withRetry<T>(
+async function withRetry<T>(
   operation: () => Promise<T>,
   options: RetryOptions = {},
   context?: string

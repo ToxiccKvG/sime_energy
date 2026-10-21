@@ -131,7 +131,7 @@ export interface SimulateurResult {
 // Placeholder — values to be filled from CER2E "Données Pertes Transfo" table.
 // MT calculation works without it (falls back to direct K1/K2).
 
-export interface TransfoLossEntry {
+interface TransfoLossEntry {
   kva: number
   aa: number   // alpha actif
   ba: number   // bêta actif (×H1)
@@ -139,7 +139,7 @@ export interface TransfoLossEntry {
   br: number   // bêta réactif (×(H1−H2))
 }
 
-export const TRANSFO_LOSS_TABLE: TransfoLossEntry[] = [
+const TRANSFO_LOSS_TABLE: TransfoLossEntry[] = [
   // { kva: 100, aa: 1.0027, ba: 0.0012, ar: 1.0250, br: 0.0250 },
   // Fill from CER2E Excel "Données Pertes transfo" sheet
 ]
