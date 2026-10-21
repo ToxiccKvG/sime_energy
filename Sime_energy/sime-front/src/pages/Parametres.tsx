@@ -13,7 +13,7 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { useOrganization } from '@/context/OrganizationContext';
-import { supabase } from '@/lib/supabase';
+import { updateCurrentUserMetadata, updateCurrentUserPassword, verifyPassword } from '@/lib/auth-service';
 import { cn } from '@/lib/utils';
 import { SENELEC_TARIFFS, CATEGORY_LABELS, setCustomTariffGrids } from '@/constants/senelec-tariffs';
 import type { TariffYear } from '@/constants/senelec-tariffs';
@@ -158,9 +158,7 @@ export default function Parametres() {
   const handleSaveProfile = async () => {
     setSavingProfile(true);
     try {
-      const { error } = await supabase.auth.updateUser({
-        data: { first_name: firstName, last_name: lastName, phone, poste },
-      });
+      const { error } = await updateCurrentUserMetadata({ first_name: firstName, last_name: lastName, phone, poste });
       if (error) throw error;
       toast.success('Profil mis à jour');
     } catch (err) {
@@ -176,12 +174,9 @@ export default function Parametres() {
     if (newPassword !== confirmPassword) { toast.error('Les mots de passe ne correspondent pas'); return; }
     setSavingPassword(true);
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email: user?.email || '',
-        password: currentPassword,
-      });
+      const { error: authError } = await verifyPassword(user?.email || '', currentPassword);
       if (authError) { toast.error('Mot de passe actuel incorrect'); return; }
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      const { error } = await updateCurrentUserPassword(newPassword);
       if (error) throw error;
       toast.success('Mot de passe mis à jour');
       setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
@@ -196,12 +191,10 @@ export default function Parametres() {
     setSavingEnergie(true);
     try {
       // Grilles tarifaires : restent par utilisateur (lues par AuthContext)
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          energy_settings: {
-            ...energyMetaRaw,
-            custom_tariff_grids: grids,
-          },
+      const { error } = await updateCurrentUserMetadata({
+        energy_settings: {
+          ...energyMetaRaw,
+          custom_tariff_grids: grids,
         },
       });
       if (error) throw error;

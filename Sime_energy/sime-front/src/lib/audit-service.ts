@@ -384,3 +384,10 @@ export function computeAuditCompletion(
 
   return criteres.reduce((total, [ok, poids]) => total + (ok ? poids : 0), 0);
 }
+
+export function getAuditSiteNames(auditId: string) {
+  return supabase
+    .from('audit_sites')
+    .select('id, name')
+    .eq('audit_id', auditId);
+}

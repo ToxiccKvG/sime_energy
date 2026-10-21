@@ -176,3 +176,36 @@ export async function getInvoiceStats(auditId: string) {
     averageConfidence,
   };
 }
+
+// Rattachement des factures OCR aux sites du classeur.
+export function getInvoiceSiteAssignments(auditId: string) {
+  return supabase
+    .from('audit_invoices')
+    .select('id, classeur_site_id')
+    .eq('audit_id', auditId);
+}
+
+export function getVerifiedAuditInvoices(auditId: string) {
+  return supabase
+    .from('audit_invoices')
+    .select('*')
+    .eq('audit_id', auditId)
+    .eq('status', 'verified')
+    .order('invoice_date', { ascending: true });
+}
+
+export function getAllInvoices() {
+  return supabase
+    .from('audit_invoices')
+    .select('*')
+    .order('created_at', { ascending: false });
+}
+
+// Temps réel : rappelle onChange à chaque changement des factures de l'organisation.
+export function subscribeToOrganizationInvoices(organizationId: string, onChange: () => void) {
+  const sub = supabase
+    .channel(`audit_invoices:${organizationId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'audit_invoices', filter: `organization_id=eq.${organizationId}` }, onChange)
+    .subscribe();
+  return () => { sub.unsubscribe(); };
+}

@@ -2,10 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { Upload, FileText, Download, Trash2, Loader2, FolderOpen, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase'
+import { listAuditDocuments, uploadAuditDocument, createAuditDocumentSignedUrl, removeAuditDocument } from '@/lib/audit-document-service'
 import { cn } from '@/lib/utils'
-
-const BUCKET = 'audit-documents'
 
 interface Doc {
   name:       string
@@ -52,9 +50,7 @@ export function DocumentsTab({ auditId }: DocumentsTabProps) {
 
   async function loadDocs() {
     setLoading(true)
-    const { data, error } = await supabase.storage
-      .from(BUCKET)
-      .list(auditId, { sortBy: { column: 'updated_at', order: 'desc' } })
+    const { data, error } = await listAuditDocuments(auditId)
 
     if (error) {
       // Bucket inexistant ou pas de politique d'accès → afficher message
@@ -77,8 +73,7 @@ export function DocumentsTab({ auditId }: DocumentsTabProps) {
 
     setUploading(true)
     try {
-      const path = `${auditId}/${Date.now()}_${file.name}`
-      const { error } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: false })
+      const { error } = await uploadAuditDocument(auditId, file)
       if (error) throw error
       toast.success(`${file.name} ajouté`)
       await loadDocs()
@@ -97,15 +92,13 @@ export function DocumentsTab({ auditId }: DocumentsTabProps) {
   }
 
   async function handleDownload(docName: string) {
-    const { data, error } = await supabase.storage
-      .from(BUCKET)
-      .createSignedUrl(`${auditId}/${docName}`, 120)
+    const { data, error } = await createAuditDocumentSignedUrl(auditId, docName, 120)
     if (error || !data?.signedUrl) { toast.error('Impossible de générer le lien'); return }
     window.open(data.signedUrl, '_blank')
   }
 
   async function handleDelete(docName: string) {
-    const { error } = await supabase.storage.from(BUCKET).remove([`${auditId}/${docName}`])
+    const { error } = await removeAuditDocument(auditId, docName)
     if (error) { toast.error('Erreur lors de la suppression'); return }
     setDocs(prev => prev.filter(d => d.name !== docName))
     toast.success('Document supprimé')

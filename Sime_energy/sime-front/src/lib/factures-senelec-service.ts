@@ -217,3 +217,28 @@ export async function getFacturesSenelec(
   if (error) throw error;
   return data ?? [];
 }
+
+// Rattachement des factures SENELEC aux sites du classeur.
+export function getFactureSenelecSiteAssignments(auditId: string) {
+  return supabase
+    .from('factures_senelec')
+    .select('id, classeur_site_id')
+    .eq('audit_id', auditId);
+}
+
+// Recherche par numéro de facture (saisie numérique) ou par partenaire.
+export function searchFacturesSenelec(organizationId: string, q: string) {
+  const isNum = /^\d+$/.test(q.trim());
+  let query = supabase
+    .from('factures_senelec')
+    .select('id,audit_id,numero_facture,partenaire,montant_facture_ttc,mois_facturation,annee_facturation')
+    .eq('organization_id', organizationId)
+    .limit(8);
+
+  if (isNum) {
+    query = query.eq('numero_facture', parseInt(q.trim()));
+  } else {
+    query = query.ilike('partenaire', `%${q}%`);
+  }
+  return query;
+}

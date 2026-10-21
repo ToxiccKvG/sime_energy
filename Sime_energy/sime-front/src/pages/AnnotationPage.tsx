@@ -39,7 +39,7 @@ import {
   EyeOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { updateInvoice, getAuditInvoices } from '@/lib/invoice-service';
+import { updateInvoice, getAuditInvoices, getAllInvoices } from '@/lib/invoice-service';
 import type { AuditInvoice } from '@/lib/invoice-service';
 import type { StructuredExtractedData } from '@/services/invoiceService';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -120,11 +120,7 @@ export function AnnotationPage() {
         if (auditId) {
           data = await getAuditInvoices(auditId);
         } else {
-          const { supabase } = await import('@/lib/supabase');
-          const { data: allInvoices, error } = await supabase
-            .from('audit_invoices')
-            .select('*')
-            .order('created_at', { ascending: false });
+          const { data: allInvoices, error } = await getAllInvoices();
 
           if (error) throw error;
           data = allInvoices || [];

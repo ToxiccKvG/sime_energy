@@ -20,9 +20,8 @@ import {
 import type { SimulateurInput, SimulateurResult } from '@/lib/senelec-simulator'
 import type { AuditInvoice } from '@/lib/invoice-service'
 import type { TariffCategory } from '@/constants/senelec-tariffs'
-import { getFacturesSenelecForSelector } from '@/lib/factures-senelec-service'
+import { getFacturesSenelecForSelector, searchFacturesSenelec } from '@/lib/factures-senelec-service'
 import type { FactureSenelecForSelector } from '@/lib/factures-senelec-service'
-import { supabase } from '@/lib/supabase'
 import {
   quarantineFactureSenelec,
   unquarantineFactureSenelec,
@@ -520,20 +519,7 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
 
       // SENELEC — search numero_facture + partenaire
       try {
-        const isNum = /^\d+$/.test(q.trim())
-        let query = supabase
-          .from('factures_senelec')
-          .select('id,audit_id,numero_facture,partenaire,montant_facture_ttc,mois_facturation,annee_facturation')
-          .eq('organization_id', orgId)
-          .limit(8)
-
-        if (isNum) {
-          query = query.eq('numero_facture', parseInt(q.trim()))
-        } else {
-          query = query.ilike('partenaire', `%${q}%`)
-        }
-
-        const { data } = await query
+        const { data } = await searchFacturesSenelec(orgId, q)
         for (const row of (data ?? [])) {
           const label = [
             row.numero_facture ? `N°${row.numero_facture}` : null,

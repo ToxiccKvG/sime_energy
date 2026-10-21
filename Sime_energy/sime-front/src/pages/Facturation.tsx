@@ -8,7 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { refreshProjectContextInBackground } from '@/hooks/useProjectContext';
 import { logActivity } from '@/lib/activity-service';
 import { getAudits } from '@/lib/audit-service';
-import { getAuditInvoices, deleteInvoice } from '@/lib/invoice-service';
+import { getAuditInvoices, deleteInvoice, subscribeToOrganizationInvoices } from '@/lib/invoice-service';
 import { autoVerifyProcessingInvoices } from '@/lib/invoice-auto-verify';
 import {
   Upload, FileText, DollarSign, CheckCircle2, Eye, Trash2,
@@ -31,7 +31,6 @@ import { toast } from 'sonner';
 import { InvoiceImportDialog } from '@/components/invoices/InvoiceImportDialog';
 import { InvoiceViewDialog } from '@/components/invoices/InvoiceViewDialog';
 import { BillingImportModal } from '@/components/invoices/BillingImportModal';
-import { supabase } from '@/lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { exportVerifiedInvoicesToExcel } from '@/lib/export-service';
 import { ExportConfigDialog } from '@/components/invoices/ExportConfigDialog';
@@ -376,11 +375,7 @@ const Facturation = () => {
 
   useEffect(() => {
     if (!organization?.id || MOCK_MODE) return;
-    const sub = supabase
-      .channel(`audit_invoices:${organization.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'audit_invoices', filter: `organization_id=eq.${organization.id}` }, loadData)
-      .subscribe();
-    return () => { sub.unsubscribe(); };
+    return subscribeToOrganizationInvoices(organization.id, loadData);
   }, [organization?.id]);
 
   const loadData = async () => {

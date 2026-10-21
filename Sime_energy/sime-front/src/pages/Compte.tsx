@@ -9,7 +9,7 @@ import { User, Mail, Building2, Loader2 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/lib/supabase";
+import { updateCurrentUserMetadata } from "@/lib/auth-service";
 
 export default function Compte() {
   const navigate = useNavigate();
@@ -46,13 +46,11 @@ export default function Compte() {
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          first_name: firstName,
-          last_name: lastName,
-          phone,
-          organization: organizationName,
-        },
+      const { error } = await updateCurrentUserMetadata({
+        first_name: firstName,
+        last_name: lastName,
+        phone,
+        organization: organizationName,
       });
 
       if (error) throw error;

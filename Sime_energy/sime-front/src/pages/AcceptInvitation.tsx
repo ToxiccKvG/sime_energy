@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Loader2, CheckCircle, AlertCircle, LogIn } from 'lucide-react';
 import { acceptInvitation, getInvitationByCode } from '@/lib/organization-invitation-service';
 import type { OrganizationInvitation } from '@/lib/organization-invitation-service';
-import { supabase } from '@/lib/supabase';
+import { getOrganization } from '@/lib/organization-service';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 
 export default function AcceptInvitation() {
@@ -43,11 +43,7 @@ export default function AcceptInvitation() {
         setInvitation(inv);
 
         // Fetch organization details
-        const { data: org, error: orgError } = await supabase
-          .from('organizations')
-          .select('*')
-          .eq('id', inv.organization_id)
-          .single();
+        const { data: org, error: orgError } = await getOrganization(inv.organization_id);
 
         if (orgError) throw orgError;
         setOrganization(org);

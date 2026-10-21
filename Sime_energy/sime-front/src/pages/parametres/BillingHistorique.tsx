@@ -9,10 +9,11 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LineChart, ReferenceLine, Legend,
 } from 'recharts'
-import { supabase } from '@/lib/supabase'
-import { getVerifiedInvoicesForAudit } from '@/lib/billing-params-service'
+import { getVerifiedInvoicesForAudit, getAuditBillingParamsRows } from '@/lib/billing-params-service'
+import { getInvoiceSiteAssignments, getVerifiedAuditInvoices } from '@/lib/invoice-service'
+import { getAuditSiteNames } from '@/lib/audit-service'
 import { mapOcrToInvoiceData, mapSenelecToInvoiceData } from '@/lib/invoice-mapper'
-import { getFacturesSenelecForSelector } from '@/lib/factures-senelec-service'
+import { getFacturesSenelecForSelector, getFactureSenelecSiteAssignments } from '@/lib/factures-senelec-service'
 import { calculateBillingKPIs } from '@/lib/billing-calculator'
 import { verifyInvoice } from '@/lib/billing-verifier'
 import { detectAnomalies, type BillingAnomaly } from '@/lib/billing-anomaly-detector'
@@ -455,15 +456,9 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
     setSiteDataLoading(true)
     try {
       const [ocrRes, senRes, sitesRes] = await Promise.all([
-        supabase.from('audit_invoices')
-          .select('id, classeur_site_id')
-          .eq('audit_id', auditId),
-        supabase.from('factures_senelec')
-          .select('id, classeur_site_id')
-          .eq('audit_id', auditId),
-        supabase.from('audit_sites')
-          .select('id, name')
-          .eq('audit_id', auditId),
+        getInvoiceSiteAssignments(auditId),
+        getFactureSenelecSiteAssignments(auditId),
+        getAuditSiteNames(auditId),
       ])
 
       const assignments: SiteAssignmentMap = {}
@@ -494,7 +489,7 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
     try {
       // 1. Load params + SENELEC rows in parallel
       const [paramsResult, senelecRows] = await Promise.all([
-        supabase.from('audit_billing_params').select('*').eq('audit_id', auditId).limit(1),
+        getAuditBillingParamsRows(auditId),
         getFacturesSenelecForSelector(auditId).catch(() => []),
       ])
 
@@ -515,12 +510,7 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
 
       // 3. Build OCR rows if any
       if (invoicesRaw.length > 0) {
-        const { data: invoicesFull } = await supabase
-          .from('audit_invoices')
-          .select('*')
-          .eq('audit_id', auditId)
-          .eq('status', 'verified')
-          .order('invoice_date', { ascending: true })
+        const { data: invoicesFull } = await getVerifiedAuditInvoices(auditId)
 
         const invoices = invoicesFull ?? []
 

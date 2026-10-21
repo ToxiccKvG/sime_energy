@@ -60,3 +60,7 @@ export async function getVerifiedInvoicesForAudit(auditId: string): Promise<Invo
   if (error) throw error
   return (data ?? []) as InvoiceForSelector[]
 }
+
+export function getAuditBillingParamsRows(auditId: string) {
+  return supabase.from('audit_billing_params').select('*').eq('audit_id', auditId).limit(1)
+}
