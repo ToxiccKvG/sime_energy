@@ -77,6 +77,7 @@ export function calculateBTTranches(
 
 // ─── Conversion mesures → énergie (MODULE 3) ─────────────────────────────────
 
+/** @public Exportée pour les tests unitaires (test/frontend). */
 export function convertPowerToEnergy(
   power_watts: number,
   intervalle_minutes: 1 | 5 | 10 | 15 | 30,
@@ -84,6 +85,7 @@ export function convertPowerToEnergy(
   return (power_watts * (intervalle_minutes / 60)) / 1000
 }
 
+/** @public Exportée pour les tests unitaires (test/frontend). */
 export function sumMeasurements(
   measures: Array<{ power_w: number; timestamp: Date }>,
   intervalle_minutes: number,

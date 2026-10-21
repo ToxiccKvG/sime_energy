@@ -267,6 +267,7 @@ function makeDate(y: number, m: number, d: number): Date | null {
   return new Date(y, m - 1, d);
 }
 
+/** @public Exportée pour les tests unitaires (test/frontend). */
 export function parseExcelDate(value: unknown, dateFormat: DateFormat = 'auto'): Date | null {
   if (value == null) return null;
   if (value instanceof Date) return value;

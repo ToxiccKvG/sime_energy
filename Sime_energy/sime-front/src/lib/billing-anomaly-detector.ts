@@ -225,6 +225,7 @@ export function detectAnomalies(
 
 // ─── Regroupement par facture ─────────────────────────────────────────────────
 
+/** @public Exportée pour les tests unitaires (test/frontend). */
 export function groupAnomaliesByInvoice(
   anomalies: BillingAnomaly[],
 ): Map<string, BillingAnomaly[]> {

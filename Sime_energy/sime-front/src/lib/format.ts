@@ -38,7 +38,10 @@ export function formatEnergy(kwh: number): string {
   return `${formatNumber(kwh, 0)} kWh`;
 }
 
-/** Percentage with 1 decimal. Ex: 34,5 % */
+/**
+ * Percentage with 1 decimal. Ex: 34,5 %
+ * @public Exportée pour les tests unitaires (test/frontend).
+ */
 export function formatPercent(p: number, decimals = 1): string {
   return `${formatNumber(p, decimals)} %`;
 }

@@ -150,6 +150,7 @@ export function verifyInvoice(
 
 // ─── Vérification batch ───────────────────────────────────────────────────────
 
+/** @public Exportée pour les tests unitaires (test/frontend). */
 export function verifyAllInvoices(
   invoices: AuditInvoice[],
   params: BillingParams,
