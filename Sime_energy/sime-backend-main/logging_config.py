@@ -31,9 +31,11 @@ def setup_logging(level=logging.INFO):
     
     # Configuration spécifique pour les modules
     loggers_config = {
-        'app.api.V1.proccesing': logging.INFO,
+        'app.api.V1.processing.processing': logging.INFO,
         'app.core.llm': logging.INFO,
-        'app.core.utils': logging.INFO,
+        'app.core.measures': logging.INFO,
+        'app.core.invoices': logging.INFO,
+        'app.core.documents': logging.INFO,
         'uvicorn': logging.WARNING,
         'fastapi': logging.WARNING,
         'httpx': logging.WARNING,

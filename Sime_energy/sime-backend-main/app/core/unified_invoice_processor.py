@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from app.core.utils import normaliser_date
+from app.core.invoices import normaliser_date
 
 class TableType(Enum):
     KEY_VALUE = 'key_value'

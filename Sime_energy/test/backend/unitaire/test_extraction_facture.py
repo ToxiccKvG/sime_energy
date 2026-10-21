@@ -3,13 +3,12 @@ import json
 
 import pytest
 
-from app.core.utils import (
+from app.core.documents import (
     _strip_coordinates_for_mistral,
     extract_and_parse_json,
-    extract_invoice_fields,
-    normaliser_date,
     pdf_to_base64_url,
 )
+from app.core.invoices import extract_invoice_fields, normaliser_date
 
 
 class TestExtractInvoiceFields:

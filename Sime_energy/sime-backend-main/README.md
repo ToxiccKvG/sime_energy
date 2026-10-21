@@ -34,26 +34,24 @@ sime-backend-main/
 │   │   └── V1/
 │   │       ├── __init__.py          # Montage des routers (/processing, /ai)
 │   │       ├── processing/
-│   │       │   └── proccesing.py    # Tous les endpoints de traitement de fichiers
+│   │       │   └── processing.py    # Tous les endpoints de traitement de fichiers
 │   │       └── ai/
 │   │           └── router.py        # Endpoint synthèse IA (DeepSeek)
 │   ├── core/
 │   │   ├── config.py                # Variables d'env + prompt OCR normalization
 │   │   ├── llm.py                   # Wrappers AWS Textract, Mistral Bedrock
-│   │   ├── utils.py                 # Parsers CSV (Voltcraft, TH30, etc.), calcul KPIs
+│   │   ├── measures.py              # Parsers capteurs (Voltcraft, TH30, etc.), KPIs, graphiques
+│   │   ├── invoices.py              # Extraction des champs de facture, normalisation des dates
+│   │   ├── documents.py             # PDF, images et JSON des réponses LLM
 │   │   ├── unified_invoice_processor.py  # Processeur factures multi-pages
-│   │   ├── auth.py                  # Helpers JWT Supabase
-│   │   └── database.py              # Config SQLAlchemy (legacy, non utilisé en prod)
-│   ├── crud/                        # CRUD SQLAlchemy (legacy — non utilisé en prod)
-│   │   └── *.py
-│   └── schemas/                     # Schémas Pydantic legacy
-│       └── *.py
+│   │   ├── auth.py                  # Jeton Supabase et contrôle d'appartenance
+│   │   └── supabase_client.py       # Client Supabase partagé (service_role)
 └── scripts/
     └── sql/
         └── 01_schema.sql            # Schéma de référence legacy — NE PAS appliquer en prod
 ```
 
-> **Note:** Les dossiers `crud/` et `schemas/` sont un legacy SQLAlchemy non utilisé en production. Toutes les opérations DB passent par le client Supabase Python directement dans `proccesing.py`.
+> **Note:** Toutes les opérations DB passent par le client Supabase Python (`app/core/supabase_client.py`).
 
 ---
 

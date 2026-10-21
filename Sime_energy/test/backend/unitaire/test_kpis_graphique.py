@@ -2,7 +2,7 @@
 import pandas as pd
 import pytest
 
-from app.core.utils import (
+from app.core.measures import (
     calculate_kpis,
     parse_rht10_txt,
     parse_sentinel_excel,

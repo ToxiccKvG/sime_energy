@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 from app.core.llm import _parse_trp
-from app.core.utils import _strip_coordinates_for_mistral, extract_invoice_fields
+from app.core.documents import _strip_coordinates_for_mistral
+from app.core.invoices import extract_invoice_fields
 
 
 CAPTURE = Path(__file__).resolve().parents[1] / "fixtures" / "textract_facture.json"

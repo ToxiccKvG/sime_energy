@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 from trp import Document as TrpDocument
 from app.core.config import PROMPT
 import json
-from app.core.utils import extract_and_parse_json
+from app.core.documents import extract_and_parse_json
 import os
 
 from dotenv import load_dotenv

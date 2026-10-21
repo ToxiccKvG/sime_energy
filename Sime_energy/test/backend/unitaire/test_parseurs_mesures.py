@@ -6,7 +6,7 @@ Les fichiers d'exemple de fixtures/ reproduisent le format attendu par chaque pa
 import pandas as pd
 import pytest
 
-from app.core.utils import (
+from app.core.measures import (
     parse_rht10_txt,
     parse_sentinel_excel,
     parse_smart_energy_csv,

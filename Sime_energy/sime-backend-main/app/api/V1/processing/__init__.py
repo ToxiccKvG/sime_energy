@@ -1,4 +1,4 @@
-from .proccesing import router as processing_router
+from .processing import router as processing_router
 from fastapi import APIRouter
 
 router = APIRouter()

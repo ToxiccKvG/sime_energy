@@ -7,7 +7,12 @@ import io
 import logging
 import base64
 from app.core.llm import _textract_analyze_bytes, _parse_trp, _normalize_with_llm, _analyze_energy_label_with_mistral
-from app.core.utils import calculate_kpis, _strip_coordinates_for_mistral, _pil_image_to_bytes, extract_invoice_fields, normaliser_date, parse_voltcraft_csv, parse_th30_csv, parse_smart_energy_csv, parse_rht10_txt, parse_sentinel_excel, prepare_chart_data
+from app.core.documents import _pil_image_to_bytes, _strip_coordinates_for_mistral
+from app.core.invoices import extract_invoice_fields, normaliser_date
+from app.core.measures import (
+    calculate_kpis, parse_rht10_txt, parse_sentinel_excel, parse_smart_energy_csv,
+    parse_th30_csv, parse_voltcraft_csv, prepare_chart_data,
+)
 from app.core.auth import Utilisateur, auth_requise, controler_facture, utilisateur_courant, verifier_membre
 from app.core.supabase_client import supabase
 from app.core.unified_invoice_processor import UnifiedInvoiceProcessor

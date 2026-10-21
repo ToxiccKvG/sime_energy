@@ -4,7 +4,7 @@ Règles : parent manquant = somme des enfants ; un seul enfant manquant = parent
 """
 import json
 
-from app.api.V1.processing.proccesing import process_hierarchy
+from app.api.V1.processing.processing import process_hierarchy
 
 
 def traiter(noeuds):
