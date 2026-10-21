@@ -7,7 +7,7 @@ import { useChartPreferences, usePalette, seriesColor, chartTitle } from '@/lib/
 import { ChartZoom } from '@/components/shared/ChartZoom';
 import {
   ScatterChart, Scatter, BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, AreaChart, Area, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, AreaChart, Area, Legend, Brush,
 } from 'recharts';
 import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import {
@@ -1495,7 +1495,7 @@ export function AnalyseTab() {
                       <AreaChart data={serieData} margin={{ top: 10, right: 30, bottom: 35, left: 45 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                         <XAxis dataKey="date" tick={{ fill: '#cbd5e1', fontSize: 10 }} interval="preserveStartEnd"
-                          label={{ value: 'Temps (date)', position: 'insideBottom', offset: -5, fill: '#cbd5e1', fontSize: 11 }} />
+                          label={{ value: 'Temps (date)', position: 'insideBottom', offset: 2, fill: '#cbd5e1', fontSize: 11 }} />
                         <YAxis yAxisId="left" tick={{ fill: '#cbd5e1', fontSize: 10 }}
                           tickFormatter={(v: number) => fmtFr(v, v >= 100 ? 0 : 1)}
                           label={{ value: axisLabelForUnit(serieUnits[0]), angle: -90, position: 'insideLeft', fill: '#cbd5e1', fontSize: 11, offset: 5 }} />
@@ -1516,6 +1516,7 @@ export function AnalyseTab() {
                             dot={false}
                             hide={isHidden(m.key)} />
                         ))}
+                        <Brush dataKey="date" height={22} stroke="#60a5fa" fill="rgba(255,255,255,0.04)" travellerWidth={8} />
                       </AreaChart>
                     </ResponsiveContainer>
                     </ChartZoom>

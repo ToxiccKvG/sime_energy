@@ -5,7 +5,7 @@
 
 import { useMemo } from 'react';
 import {
-  XAxis, YAxis, CartesianGrid, Tooltip, Scatter, Line, Area, ComposedChart,
+  XAxis, YAxis, CartesianGrid, Tooltip, Scatter, Line, Area, ComposedChart, Brush,
 } from 'recharts';
 import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { Badge } from '@/components/ui/badge';
@@ -79,6 +79,8 @@ export function EnvCourbeView({ rows, g }: { rows: ShellyRow[]; g: GrandeurDef }
             labelFormatter={(ts: number) => new Date(ts).toLocaleString('fr-FR')}
             formatter={(value: number) => [`${fmtFr(value, 2)} ${g.unit}`, g.label]} />
           <Line dataKey="v" name={g.label} stroke={g.color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+          {/* Curseur de période : glisser les poignées pour zoomer sur une partie */}
+          <Brush dataKey="ts" tickFormatter={fmtTs} height={22} stroke="#60a5fa" fill="rgba(255,255,255,0.04)" travellerWidth={8} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>

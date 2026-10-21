@@ -228,3 +228,8 @@ html[data-text-size]:not([data-text-size="normal"]) .recharts-legend-wrapper * {
 .recharts-default-tooltip .recharts-tooltip-item-separator,
 .recharts-default-tooltip .recharts-tooltip-item-value,
 .recharts-default-tooltip .recharts-tooltip-item-unit { color: #e2e8f0 !important; }
+
+/* Grille des graphiques au choix (réglage « Grille », lib/chart-preferences.ts) */
+html.graphiques-sans-grille .recharts-cartesian-grid {
+  display: none;
+}

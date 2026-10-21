@@ -81,6 +81,8 @@ export interface ChartPreferences {
   palette: PaletteId;
   /** Légendes visibles sous les graphiques. */
   showLegend: boolean;
+  /** Grille de fond des graphiques (remarque du manager, 12/10 : « au choix »). */
+  showGrid: boolean;
   /** Titres personnalisés, par identifiant de graphique (`module:vue`). */
   titles: Record<string, string>;
   /**
@@ -113,7 +115,7 @@ export const ECHELLES_CHALEUR: { id: EchelleChaleurId; label: string; hint: stri
     stops: ['#2166ac', '#67a9cf', '#f7f7f7', '#ef8a62', '#b2182b'] },
 ];
 
-const DEFAULTS: ChartPreferences = { palette: 'defaut', showLegend: true, titles: {}, seriesColors: {}, echelleChaleur: 'donnee' };
+const DEFAULTS: ChartPreferences = { palette: 'defaut', showLegend: true, showGrid: true, titles: {}, seriesColors: {}, echelleChaleur: 'donnee' };
 const STORAGE_KEY = 'sime-chart-prefs-v1';
 
 function load(): ChartPreferences {
@@ -124,6 +126,7 @@ function load(): ChartPreferences {
     return {
       palette: PALETTES.some(p => p.id === parsed.palette) ? parsed.palette! : DEFAULTS.palette,
       showLegend: typeof parsed.showLegend === 'boolean' ? parsed.showLegend : DEFAULTS.showLegend,
+      showGrid: typeof parsed.showGrid === 'boolean' ? parsed.showGrid : DEFAULTS.showGrid,
       titles: parsed.titles && typeof parsed.titles === 'object' ? parsed.titles : {},
       seriesColors: parsed.seriesColors && typeof parsed.seriesColors === 'object' ? parsed.seriesColors : {},
       echelleChaleur: ECHELLES_CHALEUR.some(e => e.id === parsed.echelleChaleur) ? parsed.echelleChaleur! : DEFAULTS.echelleChaleur,
@@ -136,8 +139,18 @@ function load(): ChartPreferences {
 let state: ChartPreferences = load();
 const listeners = new Set<() => void>();
 
+/**
+ * Grille masquée par une classe sur <html> (index.css) : un seul réglage
+ * pour tous les graphiques Recharts, sans reprendre chaque CartesianGrid.
+ */
+function appliquerGrille() {
+  if (typeof document !== 'undefined') document.documentElement.classList.toggle('graphiques-sans-grille', !state.showGrid);
+}
+appliquerGrille();
+
 function persist() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* stockage indisponible */ }
+  appliquerGrille();
   listeners.forEach(l => l());
 }
 
@@ -145,6 +158,7 @@ export function getChartPreferences(): ChartPreferences { return state; }
 
 export function setPalette(palette: PaletteId) { state = { ...state, palette }; persist(); }
 export function setShowLegend(showLegend: boolean) { state = { ...state, showLegend }; persist(); }
+export function setShowGrid(showGrid: boolean) { state = { ...state, showGrid }; persist(); }
 
 /** Titre personnalisé d'un graphique ; chaîne vide = revenir au titre automatique. */
 export function setChartTitle(chartId: string, title: string) {

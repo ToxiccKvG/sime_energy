@@ -8,9 +8,9 @@
 // ============================================================
 
 import { useEffect, useRef, useState } from 'react';
-import { Palette as PaletteIcon, Tags, Pencil, Check, X, RotateCcw, Ruler } from 'lucide-react';
+import { Palette as PaletteIcon, Tags, Pencil, Check, X, RotateCcw, Ruler, Grid3x3 } from 'lucide-react';
 import {
-  PALETTES, useChartPreferences, usePalette, setPalette, setShowLegend, setChartTitle, chartTitle,
+  PALETTES, useChartPreferences, usePalette, setPalette, setShowLegend, setShowGrid, setChartTitle, chartTitle,
   type PaletteId,
 } from '@/lib/chart-preferences';
 import {
@@ -111,6 +111,17 @@ export function ChartOptions({ chartId, defaultTitle, hideTitle = false, unit, d
       >
         <Tags className="h-3.5 w-3.5" />
         Légendes
+      </button>
+
+      <button
+        onClick={() => setShowGrid(!prefs.showGrid)}
+        title={prefs.showGrid ? 'Masquer la grille des graphiques' : 'Afficher la grille des graphiques'}
+        className={`flex items-center gap-1.5 text-xs transition-colors ${
+          prefs.showGrid ? 'text-blue-400 hover:text-blue-300' : 'text-slate-500 hover:text-white'
+        }`}
+      >
+        <Grid3x3 className="h-3.5 w-3.5" />
+        Grille
       </button>
 
       {prefixes.length > 0 && (

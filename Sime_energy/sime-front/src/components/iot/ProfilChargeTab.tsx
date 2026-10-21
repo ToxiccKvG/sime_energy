@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ReferenceLine,
+  Tooltip, Legend, ReferenceLine, Brush,
 } from 'recharts';
 import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { CouleursDonnees } from '@/components/shared/CouleursDonnees';
@@ -1157,7 +1157,7 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
               <AreaChart data={chartDataJournalier} margin={{ top: 10, right: 30, bottom: 30, left: 30 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                 <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} interval="preserveStartEnd"
-                  label={{ value: 'Date', position: 'insideBottom', offset: -5, fill: '#94a3b8', fontSize: 11 }} />
+                  label={{ value: 'Date', position: 'insideBottom', offset: 2, fill: '#94a3b8', fontSize: 11 }} />
                 <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }}
                   label={{ value: 'Valeur', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11, offset: 10 }} />
                 <Tooltip content={<ChartTooltip />} />
@@ -1170,12 +1170,13 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
                     stroke={m.color} fill={`${m.color}25`} strokeWidth={m.key === 'total' ? 2.5 : 1.5}
                     hide={isHidden(m.key)} />
                 ))}
+                <Brush dataKey="date" height={22} stroke="#60a5fa" fill="rgba(255,255,255,0.04)" travellerWidth={8} />
               </AreaChart>
             ) : (
               <BarChart data={chartDataJournalier} margin={{ top: 10, right: 30, bottom: 30, left: 30 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                 <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} interval="preserveStartEnd"
-                  label={{ value: 'Date', position: 'insideBottom', offset: -5, fill: '#94a3b8', fontSize: 11 }} />
+                  label={{ value: 'Date', position: 'insideBottom', offset: 2, fill: '#94a3b8', fontSize: 11 }} />
                 <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }}
                   label={{ value: 'Valeur', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11, offset: 10 }} />
                 <Tooltip content={<ChartTooltip />} />
@@ -1185,6 +1186,7 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
                   <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} unit={m.unit}
                     radius={[2, 2, 0, 0]} hide={isHidden(m.key)} />
                 ))}
+                <Brush dataKey="date" height={22} stroke="#60a5fa" fill="rgba(255,255,255,0.04)" travellerWidth={8} />
               </BarChart>
             )}
           </ResponsiveContainer>
