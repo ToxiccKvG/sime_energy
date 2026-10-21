@@ -1,22 +1,3 @@
-import os
-
-# Database Configuration
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql://admin:secret@192.168.1.62:5432/postgres"
-)
-
-from pydantic_settings import BaseSettings
-
-# class Settings(BaseSettings):
-#     SUPABASE_URL: str
-#     SUPABASE_JWT_SECRET: str  # Récupère cette clé depuis Supabase
-    
-#     class Config:
-#         env_file = ".env"
-
-# settings = Settings()
-
 #TODO: Ici le llm doit plutot corrgier les données et non extraire pas de sections, mais les noms des champs qu'ils doit corriger, il ne doit pas changer la forme, l'ordre ou les valeurs qu'il reçoit uniquement corriger le texte. donc pas de format de json à lui montrer il doit ressortir le json qu'on lui a envoyé
 PROMPT = """
 Tu es un assistant qui corrige les données reçues d'un OCR de factures. En fonction du lexique ci-dessous, corrige les clés (Key) du JSON reçu.

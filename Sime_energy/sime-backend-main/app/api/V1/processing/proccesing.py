@@ -17,7 +17,6 @@ import chardet
 import tempfile
 import os
 from datetime import datetime
-import re
 
 # Configuration du logger
 logging.basicConfig(level=logging.INFO)
@@ -45,33 +44,9 @@ def decoder_texte(contents: bytes) -> str:
             continue
     raise HTTPException(status_code=400, detail="Encodage du fichier illisible. Utilisez UTF-8 ou ISO-8859-1")
 
-class MeasurementData(BaseModel):
-    timestamp: str
-    consumption: float
-    current: Optional[float] = None
-    power: Optional[float] = None
-    apparent_power: Optional[float] = None
-
-class KPIs(BaseModel):
-    duration: str
-    avgConsumption: str
-    peakConsumption: str
-    totalConsumption: str
-    minConsumption: str
-    measurementCount: int
-
-class ProcessedMeasures(BaseModel):
-    measurements: List[MeasurementData]
-    kpis: KPIs
-    sensor_type: str
-    processing_info: Dict[str, Any]
-
 class TableCell(BaseModel):
     text: str
     box: Optional[List[float]] = None
-
-class TableRow(BaseModel):
-    cells: List[TableCell]
 
 class InvoiceTable(BaseModel):
     table_name: Optional[str] = None

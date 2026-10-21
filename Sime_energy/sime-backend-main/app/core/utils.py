@@ -410,19 +410,14 @@ def calculate_kpis(df: pd.DataFrame, metadata: Dict[str, Any], sensor_type: str)
     # Adapter les unités selon le type de capteur
     if sensor_type == "89_VOLTCRAFT":
         unit = "W"
-        total_unit = "Wh"
     elif sensor_type == "TH_30":
         unit = "°C"
-        total_unit = "°C"  # Pour les températures, on peut utiliser la somme comme indicateur
     elif sensor_type == "SMART_ENERGY_METER":
         unit = "W"
-        total_unit = "kWh"  # Pour Smart Energy Meter, utiliser kWh pour le total
     elif sensor_type == "SENTINEL":
         unit = "W"
-        total_unit = "Wh"  # Pour Sentinel, utiliser Wh pour le total
     elif sensor_type == "RHT_10":
         unit = "°C"
-        total_unit = "°C"  # Pour RHT_10, utiliser °C pour la température
     
     return KPIs(
         duration=duration,
@@ -548,7 +543,7 @@ def prepare_chart_data(df: pd.DataFrame, sensor_type: str, max_points: int = 100
                 )
             
             chart_data.append(measurement)
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError):
             continue
     
     return chart_data    

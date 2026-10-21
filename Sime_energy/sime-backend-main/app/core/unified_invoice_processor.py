@@ -209,7 +209,6 @@ class UnifiedInvoiceProcessor:
         best_score = 0.0
         
         for signature_name, signature in self.signatures.items():
-            score = 0.0
             
             # Score structure (40% du total)
             structure_score = 0.0
@@ -486,7 +485,6 @@ class UnifiedInvoiceProcessor:
             return {}
 
         headers = template.get("columnHeaders") or []
-        header_layout = template.get("headerLayout") or template.get("header_layout")
         header_offset = 1 if headers else 0  # rowIndex est compté sur les données (hors ligne d'en-tête)
         results: Dict[str, Any] = {}
 
@@ -728,49 +726,6 @@ class UnifiedInvoiceProcessor:
         
         return df
     
-    def aggregate_invoices(self, all_unified_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Agréger plusieurs factures déjà unifiées (unified_data)
-        -> Calcule les totaux de consommation et de montant
-        """
-        aggregated_data = {}
-        total_conso = 0.0
-        total_amount = 0.0
-        all_conso_values = []
-
-        for unified_data in all_unified_data:
-            for key, val in unified_data.items():
-                val = str(val).replace(",", ".").strip()
-
-                if "CONSOM" in key:
-                    try:
-                        value = float(val)
-                        total_conso += value
-                        all_conso_values.append(value)
-                    except ValueError:
-                        continue
-
-                elif "MONTANT" in key:
-                    try:
-                        total_amount += float(val)
-                    except ValueError:
-                        continue
-
-        # Calculs complémentaires
-        avg_conso = sum(all_conso_values) / len(all_conso_values) if all_conso_values else 0.0
-        variance = (
-            sum((x - avg_conso) ** 2 for x in all_conso_values) / len(all_conso_values)
-            if all_conso_values else 0.0
-        )
-        std_conso = variance ** 0.5
-
-        aggregated_data["TOTAL_CONSOMMATION_KWH_GLOBAL"] = round(total_conso, 2)
-        aggregated_data["MOYENNE_CONSOMMATION_KWH"] = round(avg_conso, 2)
-        aggregated_data["ECART_TYPE_CONSOMMATION_KWH"] = round(std_conso, 2)
-        aggregated_data["TOTAL_MONTANT_FCFA_GLOBAL"] = round(total_amount, 2)
-
-        return aggregated_data
-
 def main():
     """Test principal avec les deux types de factures"""
     print(" TEST DU PROCESSEUR UNIFIÉ")
