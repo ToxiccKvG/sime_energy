@@ -1029,8 +1029,16 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
           ].map(({ label, data, color }) => (
             <div key={label} className="bg-white/5 rounded-xl border border-white/10 p-3 text-center">
               <p className="text-slate-400 text-xs">{label}</p>
-              <p className={`${color} text-xl font-bold mt-1`}>{fmtFr(data.kwhMoyen, 1)}</p>
-              <p className="text-slate-500 text-xs">kWh moyen/j · {data.nbJours}j</p>
+              {/* Non mesuré ou aucun jour : « — », jamais 0,0 (même règle que le rapport) */}
+              {nettoyageFlux?.nature === 'aucune' || data.nbJours === 0 ? <>
+                <p className="text-slate-500 text-xl font-bold mt-1">—</p>
+                <p className="text-slate-500 text-xs">
+                  {nettoyageFlux?.nature === 'aucune' ? 'Non calculable : consommation non mesurée' : 'Aucun jour de ce type retenu'}
+                </p>
+              </> : <>
+                <p className={`${color} text-xl font-bold mt-1`}>{fmtFr(data.kwhMoyen, 1)}</p>
+                <p className="text-slate-500 text-xs">kWh moyen/j · {data.nbJours}j</p>
+              </>}
             </div>
           ))}
         </div>
