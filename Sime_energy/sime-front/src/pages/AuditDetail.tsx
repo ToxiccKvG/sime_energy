@@ -10,7 +10,7 @@ import { AuditActivityTimeline } from '@/components/audits/AuditActivityTimeline
 import { AddActivityDialog } from '@/components/audits/AddActivityDialog';
 import { ProjectContextDialog } from '@/components/project-context/ProjectContextDialog';
 import { Audit } from '@/types/audit';
-import { AuditInvoiceStats, AuditInventoryStats } from '@/types/auditActivity';
+import { AuditInvoiceStats, AuditInventoryStats } from '@/types/audit-activity';
 import { getAudit, getAuditSites, getAuditBuildings, updateAudit, computeAuditCompletion } from '@/lib/audit-service';
 import { getInventoryCountsByAudit } from '@/lib/inventory-service';
 import { getInvoiceStats } from '@/lib/invoice-service';

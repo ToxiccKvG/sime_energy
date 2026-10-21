@@ -10,7 +10,7 @@ import { useOrganization } from '@/context/OrganizationContext';
 import { useAuth } from '@/context/AuthContext';
 import { getAudits } from '@/lib/audit-service';
 import { createInvoice, updateInvoice } from '@/lib/invoice-service';
-import { processInvoiceFile } from '@/services/invoiceService';
+import { processInvoiceFile } from '@/services/invoice-processing-service';
 import type { AuditDB } from '@/lib/audit-service';
 import { ManualInvoiceForm } from '@/components/invoices/ManualInvoiceForm';
 

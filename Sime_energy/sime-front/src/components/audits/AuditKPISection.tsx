@@ -1,4 +1,4 @@
-import { AuditInvoiceStats, AuditInventoryStats } from '@/types/auditActivity';
+import { AuditInvoiceStats, AuditInventoryStats } from '@/types/audit-activity';
 import { TrendingUp, FileText, Package } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';

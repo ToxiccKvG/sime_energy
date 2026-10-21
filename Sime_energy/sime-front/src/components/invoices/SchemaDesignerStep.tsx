@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Plus, Trash2, Download, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { generateHierarchyJSON, processHierarchy, HierarchyData } from "@/services/measurementService";
+import { generateHierarchyJSON, processHierarchy, HierarchyData } from "@/services/measurement-service";
 
 interface SchemaComponent {
   id: string;

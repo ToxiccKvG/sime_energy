@@ -5,7 +5,7 @@
  */
 
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { StructuredExtractedData } from '@/services/invoiceService';
+import { StructuredExtractedData } from '@/services/invoice-processing-service';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

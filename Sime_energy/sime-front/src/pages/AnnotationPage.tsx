@@ -41,11 +41,11 @@ import {
 import { toast } from 'sonner';
 import { updateInvoice, getAuditInvoices, getAllInvoices } from '@/lib/invoice-service';
 import type { AuditInvoice } from '@/lib/invoice-service';
-import type { StructuredExtractedData } from '@/services/invoiceService';
+import type { StructuredExtractedData } from '@/services/invoice-processing-service';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAnnotationDictionary } from '@/hooks/useAnnotationDictionary';
 import type { ValidationResult } from '@/types/annotation-dictionary';
-import { transformInvoiceTablesToJsonWithRetry } from '@/services/invoiceService';
+import { transformInvoiceTablesToJsonWithRetry } from '@/services/invoice-processing-service';
 import { refreshProjectContextInBackground } from '@/hooks/useProjectContext';
 
 interface FormField {

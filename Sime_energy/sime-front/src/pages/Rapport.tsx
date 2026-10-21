@@ -4,7 +4,7 @@ import { Loader2, Save, Sparkles, ArrowLeft, FileBarChart2, FileDown, FileText }
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { getAudit, updateAudit } from '@/lib/audit-service';
-import { analyzeAuditWithAI } from '@/services/deepseekService';
+import { analyzeAuditWithAI } from '@/services/deepseek-service';
 import { toast } from 'sonner';
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle,
