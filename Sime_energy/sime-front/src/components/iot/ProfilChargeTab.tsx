@@ -25,6 +25,7 @@ import { fetchDevicePeriodes } from '@/lib/shelly-device-period-service';
 import { useAuth } from '@/context/AuthContext';
 import { construireRapport, etatDuFlux, type EntreeRapport } from '@/services/iotRapport';
 import { exporterRapportExcel } from '@/services/iotRapportExcel';
+import { exporterRapportPdf } from '@/services/iotRapportPdf';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -324,7 +325,12 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
  *   vues) et n'affiche plus son propre chargeur.
  * @param lignes     lignes d'un fichier importé dans Analyse (sinon le contexte).
  */
-export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAnalyse | null; lignes?: ShellyRow[] } = {}) {
+export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
+  perimetre?: PerimetreAnalyse | null;
+  lignes?: ShellyRow[];
+  /** Incrémenté par le bouton « Rapport » de la barre d'Analyse : ouvre la fenêtre du rapport. */
+  demandeRapport?: number;
+} = {}) {
   const { state } = useIOT();
   const csvRows = lignes ?? state.shellyRows;
 
@@ -656,13 +662,18 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
   const [rapportErreur, setRapportErreur] = useState<string | null>(null);
   const [periodes, setPeriodes] = useState<Awaited<ReturnType<typeof fetchDevicePeriodes>>>([]);
   useEffect(() => {
+    if (demandeRapport > 0) setRapportOuvert(true);
+  }, [demandeRapport]);
+  useEffect(() => {
     if (!rapportOuvert || !enSupabase) return;
     fetchDevicePeriodes().then(setPeriodes).catch(() => setPeriodes([]));
   }, [rapportOuvert, enSupabase]);
 
   const entreeRapport = useMemo<EntreeRapport>(() => {
     const meta = user?.user_metadata ?? {};
-    const auteur = meta.first_name && meta.last_name ? `${meta.first_name} ${meta.last_name}` : (user?.email ?? 'utilisateur');
+    // Compte connecté ; espaces en trop du profil retirés (« Maurice  DIOUF »)
+    const auteur = (meta.first_name && meta.last_name ? `${meta.first_name} ${meta.last_name}` : (user?.email ?? 'utilisateur'))
+      .replace(/\s+/g, ' ').trim();
     const uniques = (f: (r: ShellyRow) => string | undefined) =>
       [...new Set(shellyRows.map(f).filter((x): x is string => Boolean(x)))].sort();
     return {
@@ -688,7 +699,7 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
   }, [analyse, nettoyage, nettoyageFlux, filteredRows, enSupabase, chargement, shellyRows, filterType, optsNettoyage, regles, periodes, user, commentaire]);
   const apercuRapport = useMemo(() => (rapportOuvert ? construireRapport(entreeRapport) : null), [rapportOuvert, entreeRapport]);
 
-  const exporterRapport = async () => {
+  const exporterRapport = async (format: 'excel' | 'pdf') => {
     setRapportEnCours(true);
     setRapportErreur(null);
     try {
@@ -699,7 +710,8 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
         p.sites.length === 1 ? p.sites[0] : p.sites.length ? `${p.sites.length}_sites` : 'fichier',
         p.debut, p.fin,
       ].filter(Boolean).join('_').replace(/[^\p{L}\p{N}_-]+/gu, '_');
-      await exporterRapportExcel(rapport, `${nom}.xlsx`);
+      if (format === 'excel') await exporterRapportExcel(rapport, `${nom}.xlsx`);
+      else exporterRapportPdf(rapport, `${nom}.pdf`);
       setRapportOuvert(false);
     } catch (e) {
       setRapportErreur(e instanceof Error ? e.message : String(e));
@@ -1063,9 +1075,9 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
               variant="outline"
               className="border-white/20 text-white hover:bg-white/10"
               onClick={() => setRapportOuvert(true)}
-              title="Rapport Excel : synthèse, journalier, types de jour, mensuel, qualité, détail par appareil"
+              title="Rapport Excel ou PDF : synthèse, journalier, types de jour, mensuel, qualité"
             >
-              <Download className="h-4 w-4 mr-1" /> Rapport Excel
+              <Download className="h-4 w-4 mr-1" /> Rapport
             </Button>
           </div>
         </div>
@@ -1161,7 +1173,7 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
         <Dialog open={rapportOuvert} onOpenChange={setRapportOuvert}>
           <DialogContent className="max-w-2xl bg-[#0f111a] border-white/10 text-slate-100">
             <DialogHeader>
-              <DialogTitle>Rapport Excel — courbe de charge</DialogTitle>
+              <DialogTitle>Rapport — courbe de charge</DialogTitle>
             </DialogHeader>
             {apercuRapport && (
               <div className="space-y-4 text-sm max-h-[60vh] overflow-y-auto pr-1">
@@ -1194,8 +1206,13 @@ export function ProfilChargeTab({ perimetre, lignes }: { perimetre?: PerimetreAn
             )}
             <DialogFooter>
               <Button variant="ghost" className="text-slate-300" onClick={() => setRapportOuvert(false)}>Annuler</Button>
-              <Button onClick={exporterRapport} disabled={rapportEnCours} className="bg-blue-600 hover:bg-blue-500">
-                <Download className="h-4 w-4 mr-1" /> {rapportEnCours ? 'Préparation…' : 'Télécharger le rapport'}
+              <Button onClick={() => exporterRapport('pdf')} disabled={rapportEnCours} variant="outline" className="border-white/20 text-white hover:bg-white/10"
+                title="Document à lire : synthèse, chiffres clés, journalier, types de jour, mois, qualité">
+                <Download className="h-4 w-4 mr-1" /> PDF
+              </Button>
+              <Button onClick={() => exporterRapport('excel')} disabled={rapportEnCours} className="bg-blue-600 hover:bg-blue-500"
+                title="Classeur complet, avec le détail par appareil et par jour">
+                <Download className="h-4 w-4 mr-1" /> {rapportEnCours ? 'Préparation…' : 'Excel'}
               </Button>
             </DialogFooter>
           </DialogContent>

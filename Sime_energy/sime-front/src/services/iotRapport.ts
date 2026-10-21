@@ -68,6 +68,21 @@ export interface Tableau {
   note?: string;
 }
 
+/** Série d'un graphique : une valeur par jour (null = pas de valeur ce jour). */
+export interface SerieGraphique { libelle: string; valeurs: (number | null)[] }
+
+export interface GraphiquesRapport {
+  journalier: {
+    dates: Date[];
+    exclus: boolean[];
+    /** Série principale en barres ; null quand elle n'est pas mesurée. */
+    barres: SerieGraphique | null;
+    /** Flux mesurés à part, en courbes séparées : jamais empilés ni additionnés. */
+    courbes: SerieGraphique[];
+  };
+  typesJour: { libelle: string; valeur: number | null; nbJours: number }[];
+}
+
 export interface RapportCourbe {
   titre: string;
   sousTitre: string;
@@ -80,6 +95,7 @@ export interface RapportCourbe {
   mensuel: Tableau;
   qualite: { signalements: Tableau; joursExclus: Tableau; listes: [string, string][]; sites: Tableau | null };
   detail: Tableau;
+  graphiques: GraphiquesRapport;
 }
 
 const nf = (v: number, d = 1) => v.toLocaleString('fr-FR', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -104,6 +120,21 @@ const FLUX: { cle: keyof FluxRoles; libelle: string }[] = [
 const ROLE_DU_FLUX: Record<keyof FluxRoles, string> = {
   reseauSoutire: 'M1_RESEAU', reseauInjecte: 'M1_RESEAU', pv: 'M5_PV', groupe: 'M4_GROUPE', charge: 'M3_CHARGE', departs: 'DEPART',
 };
+
+const LIBELLE_METHODE: Record<string, string> = {
+  arrivee: "compteur d'arrivée", charge_M3: 'compteur de charge M3', departs: 'somme des départs',
+  indeterminee: 'indéterminée', non_declaree: 'non déclarée',
+};
+
+const LIBELLE_NATURE: Record<string, string> = {
+  consommation: 'consommation', reseau: 'énergie réseau seule', departs: 'départs mesurés', lignes: 'lignes du fichier', aucune: 'non mesurée',
+};
+
+/** Version des règles (horodatage) écrite comme une date lisible. */
+function versionLisible(v: string): string {
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? v : `du ${d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`;
+}
 
 const LIBELLE_ROLE: Record<string, string> = {
   M1_RESEAU: 'Arrivée réseau', M2_SELECTEUR: 'Sélecteur (M2)', M3_CHARGE: 'Charge (M3)', M4_GROUPE: 'Groupe',
@@ -182,7 +213,7 @@ export function construireRapport(e: EntreeRapport): RapportCourbe {
     e.options.completude ? 'jours incomplets exclus des statistiques' : 'jours incomplets conservés',
     e.options.masquerZeros ? 'appareils à 0 masqués du détail' : 'appareils à 0 conservés',
   ].join(' · ')]);
-  if (p.source === 'base') perimetre.push(['Règles qualité', `version ${e.versionRegles}`]);
+  if (p.source === 'base') perimetre.push(['Règles qualité', `version ${versionLisible(e.versionRegles)}`]);
   if (bilan?.methodes) perimetre.push(['Méthode de consommation', bilan.methodes]);
   perimetre.push(['Rapport établi par', `${e.auteur} — ${e.dateExport.toLocaleString('fr-FR')}`]);
 
@@ -398,7 +429,7 @@ export function construireRapport(e: EntreeRapport): RapportCourbe {
       { titre: 'kWh série principale', format: 'kwh' }, { titre: 'Non mesuré (kWh)', format: 'kwh' }, { titre: 'Remarque', format: 'texte' },
     ],
     lignes: nettoyage.sites.map(s => [
-      s.site, s.methode, s.nature,
+      s.site, LIBELLE_METHODE[s.methode] ?? s.methode, LIBELLE_NATURE[s.nature] ?? s.nature,
       s.nature === 'aucune' ? null : s.principal, s.nonMesure, s.raison ?? (s.explication || null),
     ]),
   } : null;
@@ -434,6 +465,30 @@ export function construireRapport(e: EntreeRapport): RapportCourbe {
       }),
   };
 
+  // ── Graphiques : les colonnes du tableau journalier, rien d'autre ──
+  const utile = (v: (number | null)[]) => v.some(x => x != null && Math.abs(x) >= 0.0005);
+  const memes = (a: (number | null)[], b: (number | null)[]) => a.every((x, i) => Math.abs((x ?? 0) - (b[i] ?? 0)) < 0.0005);
+  const barres: SerieGraphique | null = nonCalculable ? null : {
+    libelle: bilan ? `${libellePrincipal} (kWh)` : 'kWh net',
+    valeurs: analyse.parJour.map(j => j.kwhNet),
+  };
+  const courbes: SerieGraphique[] = (bilan
+    ? fluxPresents.filter(f => !fluxNonMesures.has(f.cle)).map(f => ({
+      libelle: `${f.libelle} (kWh)`,
+      valeurs: analyse.parJour.map(j => j.flux?.[f.cle] ?? null),
+    }))
+    : [{ libelle: 'kWh retour', valeurs: analyse.parJour.map(j => j.kwhRetourTotal) }])
+    // Une courbe identique aux barres (arrivée = consommation) ou toujours nulle n'apprend rien
+    .filter(c => utile(c.valeurs) && !(barres && memes(c.valeurs, barres.valeurs)));
+  const graphiques: GraphiquesRapport = {
+    journalier: { dates: analyse.parJour.map(j => j.date), exclus: analyse.parJour.map(j => !!j.exclu), barres, courbes },
+    typesJour: nonCalculable ? [] : [
+      { libelle: 'Jours ouvrés', valeur: analyse.jourOuvre.nbJours ? analyse.jourOuvre.kwhMoyen : null, nbJours: analyse.jourOuvre.nbJours },
+      { libelle: 'Week-ends', valeur: analyse.weekend.nbJours ? analyse.weekend.kwhMoyen : null, nbJours: analyse.weekend.nbJours },
+      { libelle: 'Jours fériés', valeur: analyse.ferieOuDimanche.nbJours ? analyse.ferieOuDimanche.kwhMoyen : null, nbJours: analyse.ferieOuDimanche.nbJours },
+    ],
+  };
+
   const sitesTitre = p.sites.length === 1 ? p.sites[0] : p.sites.length ? `${p.sites.length} sites` : 'Fichier importé';
   return {
     titre: `Courbe de charge — ${sitesTitre}`,
@@ -447,5 +502,6 @@ export function construireRapport(e: EntreeRapport): RapportCourbe {
     mensuel,
     qualite: { signalements, joursExclus, listes, sites },
     detail,
+    graphiques,
   };
 }

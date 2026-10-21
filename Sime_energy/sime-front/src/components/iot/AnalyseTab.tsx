@@ -4,8 +4,6 @@ import { exportJsonToXlsx } from '@/lib/excel-utils';
 import { appliquerLecture, proposerLecture, lireFichierImporte } from '@/lib/iot-lecture-fichier';
 import { ChartOptions } from '@/components/shared/ChartOptions';
 import { useChartPreferences, usePalette, seriesColor, chartTitle } from '@/lib/chart-preferences';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import { ChartZoom } from '@/components/shared/ChartZoom';
 import {
   ScatterChart, Scatter, BarChart, Bar, LineChart, Line,
@@ -483,35 +481,10 @@ export function AnalyseTab() {
 
   // ---- Profil Mi actif ----
 
-  // ---- Ref graphiques + export PDF ----
-  const chartRef = useRef<HTMLDivElement>(null);
-  const [exportingPDF, setExportingPDF] = useState(false);
-
-  const exportPDF = useCallback(async () => {
-    if (!chartRef.current) return;
-    setExportingPDF(true);
-    try {
-      const canvas = await html2canvas(chartRef.current, {
-        backgroundColor: '#0f111a',
-        scale: 2,
-        useCORS: true,
-        logging: false,
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-      const pageW = doc.internal.pageSize.getWidth();
-      const pageH = doc.internal.pageSize.getHeight();
-      doc.setFontSize(11);
-      doc.setTextColor(30, 40, 80);
-      doc.text(`IOT — Analyse · ${new Date().toLocaleDateString('fr-FR')}`, 14, 10);
-      const imgH = (canvas.height / canvas.width) * (pageW - 20);
-      const maxH = pageH - 20;
-      doc.addImage(imgData, 'PNG', 10, 16, pageW - 20, Math.min(imgH, maxH));
-      doc.save(`iot_analyse_${new Date().toISOString().slice(0, 10)}.pdf`);
-    } finally {
-      setExportingPDF(false);
-    }
-  }, []);
+  // ---- Rapport (Courbe de charge) ----
+  // Remplace l'ancienne capture d'écran en PDF : le bouton de la barre ouvre le
+  // rapport de la Courbe de charge (Vue d'ensemble), qui porte les chiffres vérifiés.
+  const [demandeRapport, setDemandeRapport] = useState(0);
 
   // ---- Import fichier ----
   const [localRows, setLocalRows] = useState<ShellyRow[]>([]);
@@ -1332,10 +1305,10 @@ export function AnalyseTab() {
                       <Button size="sm" variant="ghost" className="text-slate-400 hover:text-white h-7 px-2" onClick={exportCSV} title="Exporter les relevés (Excel)">
                         <Download className="h-3.5 w-3.5" />
                       </Button>
-                      <Button size="sm" variant="ghost" className="text-slate-400 hover:text-red-400 h-7 px-2" onClick={exportPDF} disabled={exportingPDF} title="Exporter le graphique en PDF">
-                        {exportingPDF
-                          ? <span className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin inline-block" />
-                          : <FileText className="h-3.5 w-3.5" />}
+                      <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-7 px-2 gap-1.5"
+                        onClick={() => { setMode('courbe'); setDemandeRapport(n => n + 1); }}
+                        title="Rapport PDF ou Excel de la courbe de charge (synthèse, graphiques, journalier, qualité)">
+                        <FileText className="h-3.5 w-3.5" /> Rapport
                       </Button>
                     </div>
                   </div>
@@ -1353,7 +1326,7 @@ export function AnalyseTab() {
               );
             })()}
 
-            <div ref={chartRef} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
               {/* Titre repris dans l'export PDF/image */}
               <p className="text-white font-medium text-sm">{displayChartTitle}</p>
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1438,6 +1411,7 @@ export function AnalyseTab() {
                   <ProfilChargeTab
                     perimetre={supabaseRows.length > 0 ? perimetreAnalyse : null}
                     lignes={supabaseRows.length > 0 ? undefined : activeRows}
+                    demandeRapport={demandeRapport}
                   />
                 </div>
               )}

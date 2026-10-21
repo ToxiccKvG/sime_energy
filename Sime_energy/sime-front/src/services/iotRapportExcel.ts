@@ -9,6 +9,7 @@
 import ExcelJS from 'exceljs';
 import { triggerDownload } from '@/lib/excel-utils';
 import type { RapportCourbe, Tableau } from './iotRapport';
+import { graphiqueJournalier, graphiqueTypesJour } from './iotRapportGraphiques';
 
 const BLEU = 'FF1E3A8A';
 const GRIS = 'FFF1F5F9';
@@ -146,6 +147,21 @@ export async function exporterRapportExcel(r: RapportCourbe, nomFichier: string)
     l++;
     ws.getCell(l, 1).value = `${r.commentaire.auteur} — ${r.commentaire.date.toLocaleString('fr-FR')}. Interprétation de l'analyste, distincte des chiffres mesurés.`;
     ws.getCell(l, 1).font = { italic: true, color: { argb: 'FF64748B' } };
+  }
+
+  // ── Graphiques (images, mêmes séries que les feuilles) ──────
+  const imgJour = graphiqueJournalier(r.graphiques.journalier);
+  const imgTypes = graphiqueTypesJour(r.graphiques.typesJour);
+  if (imgJour || imgTypes) {
+    const wg = wb.addWorksheet('Graphiques');
+    let ligne = 0;
+    if (imgJour) {
+      wg.addImage(wb.addImage({ base64: imgJour, extension: 'png' }), { tl: { col: 0, row: ligne }, ext: { width: 1080, height: 456 } });
+      ligne += 25;
+    }
+    if (imgTypes) {
+      wg.addImage(wb.addImage({ base64: imgTypes, extension: 'png' }), { tl: { col: 0, row: ligne }, ext: { width: 720, height: 312 } });
+    }
   }
 
   // ── Feuilles de données ─────────────────────────────────────
