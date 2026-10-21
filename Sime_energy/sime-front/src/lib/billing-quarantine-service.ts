@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, toJson } from '@/lib/db';
 import type { SimulateurResult } from '@/lib/senelec-simulator';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -95,7 +95,7 @@ export async function quarantineFactureSenelec(
       quarantine_ttc_calcule: ttc_calcule,
       quarantined_at: new Date().toISOString(),
       quarantined_by: userId,
-      quarantine_sim_result: simResult ?? null,
+      quarantine_sim_result: toJson(simResult ?? null),
     })
     .eq('id', id);
   if (error) throw error;
@@ -169,7 +169,7 @@ export async function createManualQuarantine(input: ManualQuarantineInput): Prom
       delta_pct: input.delta_pct,
       delta_fcfa: input.delta_fcfa,
       quarantine_reason: input.quarantine_reason,
-      sim_input: input.sim_input ?? null,
+      sim_input: toJson(input.sim_input ?? null),
       quarantined_by: input.quarantined_by,
     });
   if (error) throw error;
@@ -309,7 +309,7 @@ export async function getFactureSenelecDetail(id: string): Promise<FactureSenele
     .eq('id', id)
     .single();
   if (error) return null;
-  return data as FactureSenelecDetail;
+  return data as unknown as FactureSenelecDetail;
 }
 
 // ─── Unified view ──────────────────────────────────────────────────────────────

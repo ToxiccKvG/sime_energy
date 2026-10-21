@@ -155,6 +155,8 @@ interface AuditGeneralInfo {
   miseService: string;
   exportatrice: boolean;
   marches?: string;
+  /** Synthèse rédigée dans la page Rapport, stockée dans general_info */
+  synthesis?: Record<string, string>;
 }
 
 interface AuditPersonnel {

@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/db';
 import { backendHeaders } from './backend-client';
 import { getAudit, getAuditSites, getAuditBuildings } from '@/lib/audit-service';
 import { getInventorySnapshot } from '@/lib/inventory-service';
@@ -89,7 +89,11 @@ async function buildAuditContext(auditId: string): Promise<string> {
       sites_couverts: [...new Set(snapshot.map((e) => e.siteName))],
       batiments_couverts: [...new Set(snapshot.map((e) => e.buildingName))],
     },
-    factures: (invoices ?? []).map((inv) => ({
+    // TODO(bug) : la requête ci-dessus lit supplier_name, total_amount, total_kwh, period_start et period_end,
+    // colonnes absentes d'audit_invoices (les vraies : supplier, amount ; kWh et période sont dans ocr_data).
+    // Supabase refuse la requête : la synthèse IA est rédigée sans les factures. Signalé par le typage du
+    // 2026-10-21, correction à décider. FactureAttendue décrit la forme que ce code suppose.
+    factures: ((invoices ?? []) as unknown as FactureAttendue[]).map((inv) => ({
       fournisseur: inv.supplier_name,
       date: inv.invoice_date,
       montant: inv.total_amount,
@@ -111,6 +115,16 @@ async function buildAuditContext(auditId: string): Promise<string> {
 // ─── Appel DeepSeek via backend proxy ──────────────────────────────────────
 // La clé API DeepSeek est stockée côté serveur (DEEPSEEK_API_KEY dans .env backend).
 // Le frontend envoie uniquement le contexte JSON au backend, sans exposer la clé.
+
+// Forme supposée (à tort) des factures dans la synthèse : voir le TODO(bug) plus bas.
+type FactureAttendue = {
+  supplier_name?: string;
+  invoice_date?: string;
+  total_amount?: number;
+  total_kwh?: number;
+  period_start?: string;
+  period_end?: string;
+};
 
 export async function analyzeAuditWithAI(
   auditId: string,

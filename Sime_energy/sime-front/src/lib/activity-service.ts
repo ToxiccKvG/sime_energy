@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/db';
 
 export interface AuditActivityLog {
   id: string;
@@ -64,7 +64,7 @@ export async function getAuditActivity(auditId: string) {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data || [];
+  return (data || []) as AuditActivityLog[];
 }
 
 export async function deleteActivity(activityId: string) {

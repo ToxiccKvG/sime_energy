@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/db';
 
 // Compte de l'utilisateur connecté (profil, mot de passe).
 // Les fonctions renvoient la réponse Supabase telle quelle ; l'appelant gère l'erreur.

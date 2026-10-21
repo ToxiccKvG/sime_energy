@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/db';
 
 /**
  * En-têtes de tout appel au backend FastAPI : le jeton Supabase de l'utilisateur

@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, toJson, fromJson } from '@/lib/db';
 import type { OrgCalendarEvent } from '@/lib/calendar-service';
 import type { OrganizationSettings } from '@/lib/organization-settings-service';
 import type { ProjectContextV1 } from '@/types/project-context';
@@ -54,7 +54,12 @@ async function getOcrInvoicesByAudit(auditId: string) {
   return (data ?? []) as Record<string, any>[];
 }
 
-async function selectByAudit(table: string, auditId: string, orderBy?: string) {
+// Tables du projet rattachées par audit_id, lues en entier pour assembler le contexte.
+type TableDuProjet =
+  | 'audit_sites' | 'audit_zones' | 'audit_buildings' | 'audit_levels' | 'audit_rooms'
+  | 'building_type_params' | 'audit_billing_params';
+
+async function selectByAudit(table: TableDuProjet, auditId: string, orderBy?: string) {
   let query = supabase.from(table).select('*').eq('audit_id', auditId);
   if (orderBy) query = query.order(orderBy, { ascending: true });
   const { data, error } = await query;
@@ -101,7 +106,7 @@ export async function saveProjectContext(auditId: string, context: ProjectContex
   // updated_at volontairement non modifié : la génération du snapshot n'est pas une édition du projet
   const { error } = await supabase
     .from('audits')
-    .update({ project_context: context, project_context_at: context.generated_at })
+    .update({ project_context: toJson(context), project_context_at: context.generated_at })
     .eq('id', auditId);
   if (error) throw error;
 }
@@ -113,7 +118,7 @@ export async function getProjectContext(auditId: string): Promise<{ context: Pro
     .eq('id', auditId)
     .single();
   if (error) throw error;
-  return { context: data.project_context as ProjectContextV1 | null, generatedAt: data.project_context_at };
+  return { context: fromJson<ProjectContextV1 | null>(data.project_context), generatedAt: data.project_context_at };
 }
 
 export async function listOrganizationAuditIds(organizationId: string): Promise<string[]> {

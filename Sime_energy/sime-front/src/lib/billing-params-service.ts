@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@/lib/db'
 import type { AuditBillingParamsDB } from '@/types/billing'
 
 export async function getBillingParams(auditId: string, siteId: string) {

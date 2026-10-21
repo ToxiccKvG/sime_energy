@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/db';
 import { logActivity } from '@/lib/activity-service';
 
 export interface AuditInvoice {
@@ -32,7 +32,7 @@ export async function getAuditInvoices(auditId: string) {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data || [];
+  return (data || []) as AuditInvoice[];
 }
 
 export async function createInvoice(auditId: string, organizationId: string, invoice: Partial<AuditInvoice>, userId: string) {
@@ -74,7 +74,7 @@ export async function createInvoice(auditId: string, organizationId: string, inv
     console.warn('Activity logging failed (non-blocking):', e);
   });
 
-  return data;
+  return data as AuditInvoice;
 }
 
 export async function updateInvoice(invoiceId: string, updates: Partial<AuditInvoice>, auditId?: string, organizationId?: string, userId?: string) {
@@ -114,7 +114,7 @@ export async function updateInvoice(invoiceId: string, updates: Partial<AuditInv
     }
   }
 
-  return data;
+  return data as AuditInvoice;
 }
 
 export async function deleteInvoice(invoiceId: string) {

@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, toJson } from '@/lib/db';
 import { Audit } from '@/types/audit';
 
 // Types pour Supabase
@@ -68,8 +68,8 @@ export async function createAudit(audit: Partial<Audit>, organizationId: string,
         completion_percentage: audit.completionPercentage || 0,
         responsable: audit.responsable,
         client_type: audit.clientType,
-        general_info: audit.generalInfo || {},
-        personnel: audit.personnel || {},
+        general_info: toJson(audit.generalInfo || {}),
+        personnel: toJson(audit.personnel || {}),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
@@ -110,7 +110,7 @@ export async function getAudit(auditId: string) {
     .single();
 
   if (error) throw error;
-  return data;
+  return data as AuditDB;
 }
 
 // Mettre à jour un audit
@@ -126,8 +126,8 @@ export async function updateAudit(auditId: string, updates: Partial<Audit>) {
       completion_percentage: updates.completionPercentage,
       responsable: updates.responsable,
       client_type: updates.clientType,
-      general_info: updates.generalInfo,
-      personnel: updates.personnel,
+      general_info: toJson(updates.generalInfo),
+      personnel: toJson(updates.personnel),
       updated_at: new Date().toISOString(),
     })
     .eq('id', auditId)
@@ -171,7 +171,7 @@ export async function getAuditSites(auditId: string) {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data;
+  return data as AuditSiteDB[];
 }
 
 // Créer un bâtiment
@@ -324,7 +324,10 @@ export async function getDashboardActivity(auditIds: string[]): Promise<Activity
     .order('created_at', { ascending: false })
     .limit(15);
   if (error) throw error;
-  return data ?? [];
+  // TODO(bug) : les colonnes `action` et `entity_type` n'existent pas dans audit_activity (les vraies sont
+  // `action_type` et `title`) : Supabase refuse la requête et l'activité du tableau de bord ne s'affiche jamais.
+  // Signalé par le typage du 2026-10-21, correction à décider.
+  return (data ?? []) as unknown as ActivityItem[];
 }
 
 // Notes d'inventaire (constats & rapport) — partagées par tous les membres de l'organisation

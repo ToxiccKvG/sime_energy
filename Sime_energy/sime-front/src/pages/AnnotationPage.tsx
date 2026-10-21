@@ -72,7 +72,7 @@ export function AnnotationPage() {
    */
   const scheduleOcrSave = (
     key: string,
-    saveFn: () => Promise<void>,
+    saveFn: () => Promise<unknown>,
     delay = 400
   ) => {
     const current = pendingSaves.current[key];
@@ -123,7 +123,7 @@ export function AnnotationPage() {
           const { data: allInvoices, error } = await getAllInvoices();
 
           if (error) throw error;
-          data = allInvoices || [];
+          data = (allInvoices || []) as AuditInvoice[];
         }
 
         setInvoices(data);

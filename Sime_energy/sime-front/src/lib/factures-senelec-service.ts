@@ -1,4 +1,5 @@
-import { supabase } from './supabase';
+import { supabase } from '@/lib/db';
+import type { TablesInsert } from '@/types/database';
 import type { BillingRow } from '@/components/invoices/billing-import.types';
 
 const BATCH_SIZE = 500;
@@ -89,7 +90,7 @@ export async function upsertFacturesSenelec(
     const batch = records.slice(i, i + BATCH_SIZE);
     const { error, count } = await supabase
       .from('factures_senelec')
-      .upsert(batch, { onConflict: 'organization_id,numero_compte_contrat,numero_facture', count: 'exact' });
+      .upsert(batch as TablesInsert<'factures_senelec'>[], { onConflict: 'organization_id,numero_compte_contrat,numero_facture', count: 'exact' });
     if (error) throw error;
     inserted += count ?? batch.length;
   }

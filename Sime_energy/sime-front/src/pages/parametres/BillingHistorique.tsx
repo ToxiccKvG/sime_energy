@@ -493,7 +493,7 @@ export function BillingHistorique({ auditId }: BillingHistoriqueProps) {
         getFacturesSenelecForSelector(auditId).catch(() => []),
       ])
 
-      const paramsDb: AuditBillingParamsDB | null = paramsResult.data?.[0] ?? null
+      const paramsDb = (paramsResult.data?.[0] ?? null) as AuditBillingParamsDB | null
       const params: BillingParams | null = paramsDb ? dbToParams(paramsDb) : null
 
       // 2. Load verified OCR invoices

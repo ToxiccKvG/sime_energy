@@ -10,6 +10,7 @@ import { AuditActivityTimeline } from '@/components/audits/AuditActivityTimeline
 import { AddActivityDialog } from '@/components/audits/AddActivityDialog';
 import { ProjectContextDialog } from '@/components/project-context/ProjectContextDialog';
 import { Audit } from '@/types/audit';
+import { fromJson } from '@/lib/db';
 import { AuditInvoiceStats, AuditInventoryStats } from '@/types/audit-activity';
 import { getAudit, getAuditSites, getAuditBuildings, updateAudit, computeAuditCompletion } from '@/lib/audit-service';
 import { getInventoryCountsByAudit } from '@/lib/inventory-service';
@@ -68,13 +69,13 @@ const AuditDetail = () => {
           id: auditData.id,
           name: auditData.name,
           color: auditData.color,
-          status: auditData.status,
+          status: auditData.status as Audit['status'],
           startDate: auditData.start_date,
           endDate: auditData.end_date,
           completionPercentage: auditData.completion_percentage,
           responsable: auditData.responsable,
-          generalInfo: auditData.general_info || {},
-          personnel: auditData.personnel || {},
+          generalInfo: fromJson<Audit['generalInfo']>(auditData.general_info || {}),
+          personnel: fromJson<Audit['personnel']>(auditData.personnel || {}),
           capacites: { usines: [] },
           createdAt: auditData.created_at,
           updatedAt: auditData.updated_at,

@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, toJson } from '@/lib/db';
 import type { MeteoSettings } from '@/services/meteo-service';
 
 // Réglages partagés par l'organisation — colonne organizations.settings (JSONB)
@@ -35,7 +35,7 @@ export async function updateOrganizationSettings(
   };
   const { data, error } = await supabase
     .from('organizations')
-    .update({ settings: next })
+    .update({ settings: toJson(next) })
     .eq('id', organizationId)
     .select('settings')
     .single();

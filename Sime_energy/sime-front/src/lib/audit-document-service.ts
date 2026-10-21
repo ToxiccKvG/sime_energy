@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@/lib/db'
 
 // Documents d'un projet : bucket Storage, un dossier par audit.
 // Les fonctions renvoient la réponse Supabase telle quelle ; l'appelant gère l'erreur.

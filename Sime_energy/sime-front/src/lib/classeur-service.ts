@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@/lib/db'
 import { mapOcrToInvoiceData, mapSenelecToInvoiceData } from '@/lib/invoice-mapper'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -201,15 +201,15 @@ export async function classifyInvoice(
   assignment: { site_id: string | null; zone_id: string | null; building_id: string | null },
   source: 'ocr' | 'senelec' = 'ocr'
 ) {
-  const table = source === 'senelec' ? 'factures_senelec' : 'audit_invoices'
-  const payload: Record<string, unknown> = {
+  const classement = {
     classeur_site_id:     assignment.site_id,
     classeur_zone_id:     assignment.zone_id,
     classeur_building_id: assignment.building_id,
   }
-  if (source === 'ocr') payload.updated_at = new Date().toISOString()
-
-  const { error } = await supabase.from(table).update(payload).eq('id', invoiceId)
+  // factures_senelec n'a pas de colonne updated_at : un appel par table pour que le typage le vérifie.
+  const { error } = source === 'senelec'
+    ? await supabase.from('factures_senelec').update(classement).eq('id', invoiceId)
+    : await supabase.from('audit_invoices').update({ ...classement, updated_at: new Date().toISOString() }).eq('id', invoiceId)
   if (error) throw error
 }
 

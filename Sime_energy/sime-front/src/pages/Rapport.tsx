@@ -4,20 +4,21 @@ import { Loader2, Save, Sparkles, ArrowLeft, FileBarChart2, FileDown, FileText }
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { getAudit, updateAudit } from '@/lib/audit-service';
+import type { Audit } from '@/types/audit';
 import { analyzeAuditWithAI } from '@/services/deepseek-service';
 import { toast } from 'sonner';
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle,
 } from 'docx';
 
-interface SynthesisData {
+type SynthesisData = {
   observations_generales: string;
   inventaire: string;
   mesures: string;
   facturation: string;
   recommandations: string;
   conclusions: string;
-}
+};
 
 const defaultSynthesis: SynthesisData = {
   observations_generales: '',
@@ -218,7 +219,7 @@ const Rapport = () => {
     try {
       const current = await getAudit(auditId);
       await updateAudit(auditId, {
-        generalInfo: { ...(current?.general_info || {}), synthesis },
+        generalInfo: { ...((current?.general_info || {}) as Audit['generalInfo']), synthesis },
       });
       toast.success('Rapport sauvegardé');
     } catch {

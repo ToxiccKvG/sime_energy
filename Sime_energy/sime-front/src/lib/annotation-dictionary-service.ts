@@ -3,7 +3,8 @@
  * Supporte plusieurs dictionnaires par organisation
  */
 
-import { supabase } from '@/lib/supabase';
+import { supabase, toJson, fromJson } from '@/lib/db';
+import type { TablesUpdate } from '@/types/database';
 import type {
   AnnotationDictionary,
   AnnotationDictionaryCollection,
@@ -91,8 +92,8 @@ async function getAnnotationDictionaries(
     color: d.color,
     // Augment each field with hardcoded aliases in case the row was stored
     // before the `aliases` property was introduced.
-    fields: (d.fields || []).map(augmentFieldAliases),
-    tableTemplates: d.table_templates || [],
+    fields: (fromJson<AnnotationDictionary['fields']>(d.fields) || []).map(augmentFieldAliases),
+    tableTemplates: fromJson<AnnotationDictionary['tableTemplates']>(d.table_templates) || [],
     createdAt: d.created_at,
     updatedAt: d.updated_at,
   }));
@@ -163,8 +164,8 @@ export async function createDictionary(
       name: dictionary.name,
       description: dictionary.description,
       color: dictionary.color,
-      fields: dictionary.fields,
-      table_templates: dictionary.tableTemplates,
+      fields: toJson(dictionary.fields),
+      table_templates: toJson(dictionary.tableTemplates),
     })
     .select()
     .single();
@@ -176,8 +177,8 @@ export async function createDictionary(
     name: data.name,
     description: data.description,
     color: data.color,
-    fields: data.fields || [],
-    tableTemplates: data.table_templates || [],
+    fields: fromJson<AnnotationDictionary['fields']>(data.fields) || [],
+    tableTemplates: fromJson<AnnotationDictionary['tableTemplates']>(data.table_templates) || [],
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   };
@@ -190,15 +191,15 @@ export async function updateDictionary(
   dictionaryId: string,
   updates: Partial<Omit<AnnotationDictionary, 'id' | 'createdAt' | 'updatedAt'>>
 ): Promise<AnnotationDictionary> {
-  const updateData: Record<string, unknown> = {
+  const updateData: TablesUpdate<'annotation_dictionaries'> = {
     updated_at: new Date().toISOString(),
   };
 
   if (updates.name !== undefined) updateData.name = updates.name;
   if (updates.description !== undefined) updateData.description = updates.description;
   if (updates.color !== undefined) updateData.color = updates.color;
-  if (updates.fields !== undefined) updateData.fields = updates.fields;
-  if (updates.tableTemplates !== undefined) updateData.table_templates = updates.tableTemplates;
+  if (updates.fields !== undefined) updateData.fields = toJson(updates.fields);
+  if (updates.tableTemplates !== undefined) updateData.table_templates = toJson(updates.tableTemplates);
 
   const { data, error } = await supabase
     .from('annotation_dictionaries')
@@ -214,8 +215,8 @@ export async function updateDictionary(
     name: data.name,
     description: data.description,
     color: data.color,
-    fields: data.fields || [],
-    tableTemplates: data.table_templates || [],
+    fields: fromJson<AnnotationDictionary['fields']>(data.fields) || [],
+    tableTemplates: fromJson<AnnotationDictionary['tableTemplates']>(data.table_templates) || [],
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   };

@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/db';
 
 export interface OrganizationInvitation {
   id: string;
@@ -42,7 +42,7 @@ export async function getInvitationByCode(code: string): Promise<OrganizationInv
     return null;
   }
 
-  return data;
+  return data as OrganizationInvitation;
 }
 
 // Accept invitation and add user to organization
