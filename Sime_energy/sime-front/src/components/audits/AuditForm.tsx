@@ -33,7 +33,11 @@ import {
 import AuditQuestionnaire from './AuditQuestionnaire';
 import { refreshProjectContext } from '@/services/project-context-builder';
 import { BUILDING_TYPES } from '@/constants/building-types';
-
+import { NumField, SiteSection, StrField } from './audit-form/fields';
+import {
+  CVC_OPTIONS, FORME_JURIDIQUE_OPTIONS, ORIENTATION_OPTIONS, SENEGAL_REGIONS, SENEGAL_VILLES,
+  TYPE_TOIT_OPTIONS, TYPE_VITRAGE_OPTIONS,
+} from './audit-form/options';
 
 interface AuditFormProps {
   audit?: Audit;
@@ -70,40 +74,6 @@ interface FormBuilding {
   enveloppe?: Record<string, any>;
   amenagement?: Record<string, any>;
 }
-
-const CVC_OPTIONS = [
-  '1. Chauffage', '2. Clim', '3. Ventilation',
-  '4. Froid adiabat', '5. Refroid. évap.', '6. Sans cond.', '7. Chauffe + refroid',
-];
-
-const SENEGAL_REGIONS = [
-  'Dakar', 'Thiès', 'Saint-Louis', 'Louga', 'Diourbel', 'Fatick',
-  'Kaolack', 'Ziguinchor', 'Kolda', 'Tambacounda', 'Matam', 'Kaffrine',
-  'Sédhiou', 'Kédougou',
-];
-
-const SENEGAL_VILLES = [
-  'Dakar', 'Pikine', 'Guédiawaye', 'Rufisque', 'Bargny',
-  'Thiès', 'Mbour', 'Tivaouane', 'Saly',
-  'Saint-Louis', 'Dagana', 'Podor',
-  'Louga', 'Linguère', 'Kébémer',
-  'Diourbel', 'Mbacké', 'Touba', 'Bambey',
-  'Fatick', 'Gossas', 'Foundiougne',
-  'Kaolack', 'Nioro du Rip', 'Guinguinéo',
-  'Ziguinchor', 'Bignona', 'Oussouye',
-  'Kolda', 'Vélingara',
-  'Tambacounda', 'Bakel', 'Goudiry',
-  'Matam', 'Kanel',
-  'Kaffrine', 'Birkilane',
-  'Sédhiou', 'Bounkiling',
-  'Kédougou', 'Saraya',
-  'Autre',
-];
-
-const ORIENTATION_OPTIONS = ['Nord', 'Nord-Est', 'Est', 'Sud-Est', 'Sud', 'Sud-Ouest', 'Ouest', 'Nord-Ouest'];
-const TYPE_TOIT_OPTIONS = ['Tôle ondulée', 'Béton (dalle)', 'Tuiles', 'Fibrociment', 'Chaume', 'Mixte', 'Autre'];
-const TYPE_VITRAGE_OPTIONS = ['Simple vitrage', 'Double vitrage', 'Simple vitrage teinté', 'Polycarbonate', 'Sans vitrage significatif', 'Autre'];
-const FORME_JURIDIQUE_OPTIONS = ['SARL', 'SA', 'SNC', 'GIE', 'EURL', 'Établissement public', 'EPIC', 'Autre'];
 
 export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
   const { user } = useAuth();
@@ -1866,36 +1836,6 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
           )}
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
-
-// ---- HELPERS ----
-
-function SiteSection({ title, color, children }: { title: string; color: 'orange' | 'blue' | 'emerald'; children: React.ReactNode }) {
-  const colors = { orange: 'text-orange-400 border-orange-500/30 bg-orange-500/5', blue: 'text-blue-400 border-blue-500/30 bg-blue-500/5', emerald: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' };
-  return (
-    <div className={`rounded-lg border p-3 space-y-3 ${colors[color]}`}>
-      <p className="text-xs font-semibold uppercase">{title}</p>
-      {children}
-    </div>
-  );
-}
-
-function StrField({ label, value, onChange }: { label: string; value?: string; onChange: (v: string) => void }) {
-  return (
-    <div className="space-y-1">
-      <Label className="text-slate-400 text-xs">{label}</Label>
-      <Input value={value || ''} onChange={e => onChange(e.target.value)} className="bg-slate-700/50 border-slate-600 h-8 text-sm" />
-    </div>
-  );
-}
-
-function NumField({ label, value, onChange }: { label: string; value?: number; onChange: (v: number | undefined) => void }) {
-  return (
-    <div className="space-y-1">
-      <Label className="text-slate-400 text-xs">{label}</Label>
-      <Input type="number" value={value ?? ''} onChange={e => onChange(e.target.value ? parseFloat(e.target.value) : undefined)} className="bg-slate-700/50 border-slate-600 h-8 text-sm" />
     </div>
   );
 }
