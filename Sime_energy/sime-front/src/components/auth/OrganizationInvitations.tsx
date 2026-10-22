@@ -1,11 +1,16 @@
 /**
- * Invitations par lien (page Mon compte).
+ * Inviter un membre (page Mon compte) — accès sur invitation seulement.
  *
- * Un membre génère un lien `/invite?code=…` (12 caractères, 7 jours), le
- * transmet lui-même (mail, WhatsApp…) ; l'invité crée son compte ou se
- * connecte, ouvre le lien et accepte → il rejoint l'organisation via la RPC
- * `accept_invitation` (voir organization-invitation-service.ts). Pas d'envoi
- * d'e-mail automatique : l'ancien endpoint backend /auth/invite n'existe plus.
+ * Décision du 21/10/2026 : plus d'inscription libre. Un admin saisit
+ * l'e-mail et le rôle (membre ou admin) ; la fonction serveur
+ * `inviter-membre` enregistre l'invitation et renvoie un lien personnel,
+ * que l'admin copie et transmet lui-même (WhatsApp, mail…) :
+ *  - personne sans compte : elle ouvre le lien, choisit son mot de passe
+ *    et rejoint l'organisation ;
+ *  - personne qui a déjà un compte : elle se connecte puis accepte.
+ * L'invitation vaut 7 jours ; un lien de création de compte doit être ouvert
+ * dans les 24 h (sinon « Nouveau lien »). Pas d'e-mail automatique pour
+ * l'instant (option retenue le 21/10).
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -15,11 +20,9 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import {
-  createInvitation, getOrganizationInvitations, revokeInvitation, type OrganizationInvitation,
+  getMonRole, getOrganizationInvitations, inviterMembre, revokeInvitation, type OrganizationInvitation,
 } from '@/lib/organization-invitation-service';
-import { Check, Copy, Link2, Loader2, Send, Trash2 } from 'lucide-react';
-
-const EXPIRES_DAYS = 7;
+import { Check, Copy, Loader2, RefreshCw, Send, Trash2, UserPlus } from 'lucide-react';
 
 interface Props {
   organizationId: string;
@@ -30,12 +33,10 @@ const STATUS_LABEL: Record<OrganizationInvitation['status'], string> = {
   pending: 'En attente',
   accepted: 'Acceptée',
   expired: 'Expirée',
-  revoked: 'Révoquée',
+  revoked: 'Annulée',
 };
 
-function inviteUrl(code: string): string {
-  return `${window.location.origin}/invite?code=${code}`;
-}
+const ROLE_LABEL = { member: 'Membre', admin: 'Admin' } as const;
 
 function fmtDate(iso?: string): string {
   if (!iso) return '—';
@@ -46,12 +47,14 @@ function fmtDate(iso?: string): string {
 export function OrganizationInvitations({ organizationId, organizationName }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [monRole, setMonRole] = useState<'member' | 'admin' | null>(null);
   const [email, setEmail] = useState('');
+  const [role, setRole] = useState<'member' | 'admin'>('member');
   const [creating, setCreating] = useState(false);
   const [invitations, setInvitations] = useState<OrganizationInvitation[]>([]);
   const [loading, setLoading] = useState(true);
-  const [lastLink, setLastLink] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
+  const [dernier, setDernier] = useState<{ email: string; lien: string; compteExistant: boolean } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -63,49 +66,57 @@ export function OrganizationInvitations({ organizationId, organizationName }: Pr
     }
   }, [organizationId, toast]);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    if (!user?.id) return;
+    getMonRole(organizationId, user.id).then(setMonRole).catch(() => setMonRole(null));
+  }, [organizationId, user?.id]);
 
-  const copy = async (code: string) => {
+  useEffect(() => { if (monRole === 'admin') reload(); }, [monRole, reload]);
+
+  const copier = async (lien: string) => {
     try {
-      await navigator.clipboard.writeText(inviteUrl(code));
-      setCopied(code);
-      setTimeout(() => setCopied(null), 2000);
+      await navigator.clipboard.writeText(lien);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } catch {
       toast({ title: 'Copie impossible', description: 'Sélectionnez le lien et copiez-le manuellement.', variant: 'destructive' });
     }
   };
 
-  const handleCreate = async () => {
-    if (!user?.id) return;
-    const trimmed = email.trim();
-    if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-      toast({ title: 'E-mail invalide', description: 'Corrigez l\'adresse ou laissez le champ vide.', variant: 'destructive' });
+  const inviter = async (adresse: string, roleInvite: 'member' | 'admin', remplace?: OrganizationInvitation) => {
+    const trimmed = adresse.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      toast({ title: 'E-mail invalide', description: 'Saisissez l\'adresse e-mail de la personne à inviter.', variant: 'destructive' });
       return;
     }
     setCreating(true);
     try {
-      const inv = await createInvitation(organizationId, user.id, trimmed || undefined, EXPIRES_DAYS);
-      setLastLink(inviteUrl(inv.code));
+      const inv = await inviterMembre(organizationId, trimmed, roleInvite);
+      // « Nouveau lien » : l'ancienne invitation est annulée
+      if (remplace) await revokeInvitation(remplace.id).catch(() => undefined);
+      setDernier({ email: trimmed, lien: inv.lien, compteExistant: inv.compte_existant });
       setEmail('');
-      await copy(inv.code);
-      toast({ title: 'Lien créé et copié', description: `Valable ${EXPIRES_DAYS} jours${trimmed ? `, réservé à ${trimmed}` : ''}.` });
+      await copier(inv.lien);
+      toast({ title: 'Invitation créée, lien copié', description: `Transmettez-le à ${trimmed}.` });
       await reload();
     } catch (e) {
-      toast({ title: 'Erreur', description: e instanceof Error ? e.message : 'Impossible de créer l\'invitation', variant: 'destructive' });
+      toast({ title: 'Invitation impossible', description: e instanceof Error ? e.message : 'Erreur inconnue', variant: 'destructive' });
     } finally {
       setCreating(false);
     }
   };
 
-  const handleRevoke = async (inv: OrganizationInvitation) => {
+  const annuler = async (inv: OrganizationInvitation) => {
     try {
       await revokeInvitation(inv.id);
-      if (lastLink === inviteUrl(inv.code)) setLastLink(null);
       await reload();
     } catch (e) {
-      toast({ title: 'Erreur', description: e instanceof Error ? e.message : 'Impossible de révoquer', variant: 'destructive' });
+      toast({ title: 'Erreur', description: e instanceof Error ? e.message : 'Impossible d\'annuler', variant: 'destructive' });
     }
   };
+
+  // Seuls les admins invitent
+  if (monRole !== 'admin') return null;
 
   const pending = invitations.filter((i) => i.status === 'pending');
   const others = invitations.filter((i) => i.status !== 'pending').slice(0, 5);
@@ -115,36 +126,53 @@ export function OrganizationInvitations({ organizationId, organizationName }: Pr
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-white">
           <Send className="h-5 w-5" />
-          Inviter dans {organizationName}
+          Inviter un membre dans {organizationName}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-slate-400">
-          Générez un lien d'invitation et transmettez-le vous-même (e-mail, WhatsApp…). La personne crée son compte
-          ou se connecte, ouvre le lien et rejoint l'organisation. Le lien est valable {EXPIRES_DAYS} jours ; si vous
-          indiquez un e-mail, seul ce compte pourra l'utiliser.
+          L'accès à la plateforme se fait sur invitation. Saisissez l'e-mail de la personne et son rôle, puis
+          transmettez-lui le lien (WhatsApp, e-mail…). Sans compte, elle choisira son mot de passe en ouvrant le lien ;
+          avec un compte, elle se connectera puis acceptera. Seul ce compte e-mail pourra utiliser l'invitation.
         </p>
         <div className="flex flex-col md:flex-row gap-2">
           <Input
             type="email"
-            placeholder="E-mail de l'invité (facultatif)"
+            placeholder="prenom.nom@cer2e.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') inviter(email, role); }}
             className="md:flex-1 bg-white/5 text-white placeholder:text-slate-500 border-white/10 focus-visible:ring-primary/70 focus-visible:border-primary/40"
           />
-          <Button onClick={handleCreate} disabled={creating} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
-            {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-            Générer un lien
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as 'member' | 'admin')}
+            className="h-10 rounded-md bg-white/5 border border-white/10 text-white text-sm px-2"
+            title="Membre : consulte et analyse. Admin : gère aussi les comptes Shelly, les rôles d'appareils et les invitations."
+          >
+            <option value="member" className="bg-[#1a1d2e]">Membre</option>
+            <option value="admin" className="bg-[#1a1d2e]">Admin</option>
+          </select>
+          <Button onClick={() => inviter(email, role)} disabled={creating} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
+            {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+            Inviter
           </Button>
         </div>
 
-        {lastLink && (
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
-            <code className="flex-1 truncate text-xs text-emerald-200" title={lastLink}>{lastLink}</code>
-            <Button variant="ghost" size="sm" className="h-7 text-emerald-300 hover:text-white" onClick={() => copy(lastLink.split('code=')[1])}>
-              {copied === lastLink.split('code=')[1] ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            </Button>
+        {dernier && (
+          <div className="space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
+            <p className="text-xs text-emerald-200">
+              Lien pour {dernier.email} —{' '}
+              {dernier.compteExistant
+                ? 'cette personne a déjà un compte : elle se connecte puis accepte.'
+                : 'à ouvrir dans les 24 h ; elle choisira son mot de passe.'}
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 truncate text-xs text-emerald-100" title={dernier.lien}>{dernier.lien}</code>
+              <Button variant="ghost" size="sm" className="h-7 text-emerald-300 hover:text-white" onClick={() => copier(dernier.lien)}>
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              </Button>
+            </div>
           </div>
         )}
 
@@ -159,14 +187,18 @@ export function OrganizationInvitations({ organizationId, organizationName }: Pr
               {pending.map((inv) => (
                 <li key={inv.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
                   <span className="flex-1 min-w-0">
-                    <span className="text-slate-200">{inv.invited_email || 'Lien ouvert (sans e-mail)'}</span>
+                    <span className="text-slate-200">{inv.invited_email || 'Sans e-mail (ancien lien)'}</span>
+                    <span className="ml-2 text-[11px] text-slate-400">{ROLE_LABEL[inv.role ?? 'member']}</span>
                     <span className="block text-[11px] text-slate-500">créée le {fmtDate(inv.created_at)} · expire le {fmtDate(inv.expires_at)}</span>
                   </span>
-                  <Button variant="outline" size="sm" className="h-7 border-white/20 text-slate-300 hover:bg-white/5 text-xs" onClick={() => copy(inv.code)}>
-                    {copied === inv.code ? <Check className="h-3.5 w-3.5 mr-1" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
-                    {copied === inv.code ? 'Copié' : 'Copier le lien'}
-                  </Button>
-                  <Button variant="ghost" size="sm" className="h-7 text-red-400 hover:text-red-300 hover:bg-red-500/10" title="Révoquer" onClick={() => handleRevoke(inv)}>
+                  {inv.invited_email && (
+                    <Button variant="outline" size="sm" className="h-7 border-white/20 text-slate-300 hover:bg-white/5 text-xs"
+                      disabled={creating} title="Crée un nouveau lien et annule celui-ci"
+                      onClick={() => inviter(inv.invited_email!, inv.role ?? 'member', inv)}>
+                      <RefreshCw className="h-3.5 w-3.5 mr-1" /> Nouveau lien
+                    </Button>
+                  )}
+                  <Button variant="ghost" size="sm" className="h-7 text-red-400 hover:text-red-300 hover:bg-red-500/10" title="Annuler l'invitation" onClick={() => annuler(inv)}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </li>

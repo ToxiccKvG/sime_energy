@@ -641,7 +641,7 @@ async function resolveDeviceIds(opts: {
   deviceType?: string; deviceName?: string;
 }): Promise<string[]> {
   if (opts.deviceIds && opts.deviceIds.length > 0) return opts.deviceIds;
-  let q = supabase.from('shelly_devices_catalog').select('device_id');
+  let q = supabase.from('shelly_devices_catalog_visible').select('device_id');
   if (opts.site)         q = q.eq('site', opts.site);
   if (opts.deviceFamily) q = q.eq('device_family', opts.deviceFamily);
   if (opts.deviceType)   q = q.eq('device_type', opts.deviceType);
@@ -691,7 +691,7 @@ async function reconcilierAppareils<T extends { device_id: string; name?: string
   if (rows.length === 0) return rows;
   try {
     const [{ data: catalogue, error }, periodes] = await Promise.all([
-      supabase.from('shelly_devices_catalog').select('device_id,name,site'),
+      supabase.from('shelly_devices_catalog_visible').select('device_id,name,site'),
       fetchDevicePeriodes(),
     ]);
     if (error) throw error;
@@ -908,7 +908,7 @@ export async function fetchDisponibles(): Promise<DisponiblesResult> {
     // suit ni les renommages ni les changements de site côté Shelly Cloud
     // (ex. 441d6475d44c = "Arrivée générale"/Donsin, listé "Compteur 2"/Académie).
     const { data: catalogData, error: catalogError } = await supabase
-      .from('shelly_devices_catalog')
+      .from('shelly_devices_catalog_visible')
       .select('device_id,name,site,room,device_family');
     if (catalogError) throw catalogError;
 

@@ -4,7 +4,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, CheckCircle, AlertCircle, LogIn } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, LogIn, KeyRound } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { supabase } from '@/lib/supabase';
 import { acceptInvitation, getInvitationByCode } from '@/lib/organization-invitation-service';
 import type { InvitationPreview } from '@/lib/organization-invitation-service';
 import { AuthLayout } from '@/components/auth/AuthLayout';
@@ -22,6 +24,14 @@ export default function AcceptInvitation() {
   const [error, setError] = useState<string | null>(null);
 
   const code = searchParams.get('code');
+
+  // Personne arrivée par un lien de création de compte (inviter-membre) : elle
+  // choisit son mot de passe avant de rejoindre l'organisation. Décision du
+  // 21/10/2026 : accès sur invitation, mot de passe choisi par la personne.
+  const doitChoisirMotDePasse = !!user?.invited_at && user?.user_metadata?.mot_de_passe_choisi !== true;
+  const [motDePasse, setMotDePasse] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [enregistrement, setEnregistrement] = useState(false);
 
   useEffect(() => {
     const loadInvitation = async () => {
@@ -53,6 +63,29 @@ export default function AcceptInvitation() {
 
     loadInvitation();
   }, [code]);
+
+  const handleChoisirMotDePasse = async () => {
+    if (motDePasse.length < 8) {
+      toast({ title: 'Mot de passe trop court', description: 'Au moins 8 caractères.', variant: 'destructive' });
+      return;
+    }
+    if (motDePasse !== confirmation) {
+      toast({ title: 'Les deux saisies diffèrent', description: 'Retapez le même mot de passe.', variant: 'destructive' });
+      return;
+    }
+    setEnregistrement(true);
+    try {
+      const { error: errMdp } = await supabase.auth.updateUser({ password: motDePasse, data: { mot_de_passe_choisi: true } });
+      if (errMdp) throw errMdp;
+      setMotDePasse('');
+      setConfirmation('');
+      await handleAcceptInvitation();
+    } catch (err) {
+      toast({ title: 'Mot de passe non enregistré', description: err instanceof Error ? err.message : 'Erreur inconnue', variant: 'destructive' });
+    } finally {
+      setEnregistrement(false);
+    }
+  };
 
   const handleAcceptInvitation = async () => {
     if (!invitation || !user?.id) {
@@ -96,17 +129,15 @@ export default function AcceptInvitation() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Button
-              onClick={() => navigate('/login')}
+              onClick={() => navigate(`/login?retour=${encodeURIComponent(`/invite?code=${code ?? ''}`)}`)}
               className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center gap-2"
             >
               <LogIn className="h-4 w-4" />
               Se connecter
             </Button>
             <p className="text-xs text-center text-slate-400">
-              Pas encore de compte ?{' '}
-              <a href="/signup" className="text-primary hover:underline font-semibold">
-                S'inscrire
-              </a>
+              Pas encore de compte ? L'accès se fait sur invitation : demandez à un admin de votre organisation
+              de vous envoyer un lien.
             </p>
           </CardContent>
         </Card>
@@ -165,6 +196,38 @@ export default function AcceptInvitation() {
               className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/90"
             >
               Retour
+            </Button>
+          </CardContent>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
+  if (doitChoisirMotDePasse) {
+    return (
+      <AuthLayout title="Bienvenue" subtitle={`Rejoindre ${organization.name}`}>
+        <Card className="bg-white/5 border-white/10">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <KeyRound className="h-6 w-6 text-primary" />
+              <CardTitle className="text-white">Choisissez votre mot de passe</CardTitle>
+            </div>
+            <CardDescription className="text-slate-300">
+              Compte : {user.email}. Ce mot de passe vous servira à vous connecter ; personne d'autre ne le connaît.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Input type="password" placeholder="Mot de passe (8 caractères minimum)" value={motDePasse}
+              onChange={(e) => setMotDePasse(e.target.value)} autoComplete="new-password"
+              className="h-11 bg-white/5 text-white placeholder:text-slate-500 border-white/10" />
+            <Input type="password" placeholder="Confirmez le mot de passe" value={confirmation}
+              onChange={(e) => setConfirmation(e.target.value)} autoComplete="new-password"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleChoisirMotDePasse(); }}
+              className="h-11 bg-white/5 text-white placeholder:text-slate-500 border-white/10" />
+            <Button onClick={handleChoisirMotDePasse} disabled={enregistrement || accepting}
+              className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/90">
+              {enregistrement || accepting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Enregistrer et rejoindre {organization.name}
             </Button>
           </CardContent>
         </Card>

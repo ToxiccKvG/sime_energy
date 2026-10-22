@@ -5,10 +5,10 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ThemeProvider } from "next-themes";
 import { useAuth } from "@/context/AuthContext";
 import { OrganizationProvider } from "@/context/OrganizationContext";
+import { RequireOrganization } from "@/components/auth/RequireOrganization";
 import { AppSidebar } from "@/components/AppSidebar";
 import { AppHeader } from "@/components/AppHeader";
 import { Login } from "./pages/Login";
-import { Signup } from "./pages/Signup";
 import { ForgotPassword } from "./pages/ForgotPassword";
 import AcceptInvitation from "./pages/AcceptInvitation";
 import Index from "./pages/Index";
@@ -57,7 +57,8 @@ const App = () => (
           <Routes>
             {/* Routes publiques */}
             <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
+            {/* Inscription libre fermée (21/10/2026) : accès sur invitation (/invite) */}
+            <Route path="/signup" element={<Navigate to="/login" replace />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/invite" element={<AcceptInvitation />} />
@@ -68,6 +69,7 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <OrganizationProvider>
+                    <RequireOrganization>
                     <div className="flex min-h-screen w-full bg-[#0f111a] text-slate-100">
                       <AppSidebar />
                       <div className="flex flex-1 flex-col min-w-0">
@@ -90,6 +92,7 @@ const App = () => (
                         </main>
                       </div>
                     </div>
+                    </RequireOrganization>
                   </OrganizationProvider>
                 </ProtectedRoute>
               }

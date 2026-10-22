@@ -4,6 +4,7 @@
  */
 
 import { computeMeasurementKpis, MeasurementKpis, QuantityKind } from './measurementStats';
+import { backendHeaders } from './backend-client';
 
 export interface MeasurementData {
   /** Identifiant du relevé en base (measurement_files) ; absent tant qu'il n'est pas persisté. */
@@ -73,6 +74,7 @@ export async function uploadMeasurementFile(
 
   const response = await fetch(`${API_URL}/processing/process-file/measures`, {
     method: "POST",
+    headers: await backendHeaders(),
     body: formData,
   });
 
@@ -112,6 +114,7 @@ export async function analyzeEnergyLabel(file: File): Promise<EnergyLabelAnalysi
 
   const response = await fetch(`${API_URL}/processing/process-file/analyze-energy-label`, {
     method: "POST",
+    headers: await backendHeaders(),
     body: formData,
   });
 
@@ -130,9 +133,7 @@ export async function processHierarchy(
 ): Promise<{ hierarchy: HierarchyData; [key: string]: any }> {
   const response = await fetch(`${API_URL}/processing/process-file/process-hierarchy`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: await backendHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       hierarchy: hierarchyData,
     }),

@@ -225,7 +225,7 @@ export async function fetchSites(): Promise<string[]> {
 // appareils momentanément muets disparaissaient donc du filtre.
 export async function fetchRooms(sites?: string[]): Promise<string[]> {
   let q = supabase
-    .from('shelly_devices_catalog')
+    .from('shelly_devices_catalog_visible')
     .select('room')
     .not('room', 'is', null)
     .limit(2000);
@@ -249,7 +249,7 @@ export async function fetchRooms(sites?: string[]): Promise<string[]> {
 // très loin du plafond.
 export async function fetchDevices(sites?: string[], families?: DeviceFamily[]): Promise<Device[]> {
   let q = supabase
-    .from('shelly_devices_catalog')
+    .from('shelly_devices_catalog_visible')
     .select('device_id,name,site,room,device_type,device_family,derniere_lecture')
     .limit(2000);
   if (sites && sites.length > 0)       q = q.in('site', sites);

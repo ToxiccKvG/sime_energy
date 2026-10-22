@@ -60,7 +60,15 @@ export async function fetchAccounts(): Promise<ShellyAccount[]> {
 // refusait alors toute création (« permission denied for table »). Un site
 // déjà existant se modifie via updateAccount.
 
-export async function createAccount(account: ShellyAccountInput): Promise<ShellyAccount> {
+export async function createAccount(account: ShellyAccountInput, organizationId: string): Promise<ShellyAccount> {
+  // Le site appartient à l'organisation de l'admin (site_organisation) : sans
+  // cette ligne, les règles d'accès refusent le compte et masquent ses mesures.
+  // Un site déjà rattaché garde son organisation.
+  const { error: siteError } = await supabase
+    .from('site_organisation')
+    .upsert({ site: account.site, organization_id: organizationId }, { onConflict: 'site', ignoreDuplicates: true });
+  if (siteError) throw siteError;
+
   const { data, error } = await supabase
     .from('shelly_accounts')
     .insert(account)

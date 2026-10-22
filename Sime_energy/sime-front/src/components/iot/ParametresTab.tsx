@@ -32,6 +32,7 @@ import { forceMetadataRefresh } from '@/lib/shelly-device-config-service';
 import { ShellyDeviceTypesPanel } from './ShellyDeviceTypesPanel';
 import { ShellyDeviceRolesPanel } from './ShellyDeviceRolesPanel';
 import { ShellyDeviceChannelsPanel } from './ShellyDeviceChannelsPanel';
+import { useOrganization } from '@/context/OrganizationContext';
 
 type SubTab = 'comptes' | 'roles' | 'types' | 'canaux';
 
@@ -88,6 +89,7 @@ const EMPTY_FORM: FormState = {
 // ══════════════════════════════════════════════════════════════
 
 export function ParametresTab() {
+  const { organization } = useOrganization();
   const [subTab, setSubTab]             = useState<SubTab>('comptes');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [showKeyHelp, setShowKeyHelp]   = useState(false);
@@ -189,7 +191,8 @@ export function ParametresTab() {
       if (editingId) {
         await updateAccount(editingId, payload);
       } else {
-        await createAccount(payload);
+        if (!organization) throw new Error('Aucune organisation active : impossible de rattacher le site.');
+        await createAccount(payload, organization.id);
       }
       setModalOpen(false);
       await load();

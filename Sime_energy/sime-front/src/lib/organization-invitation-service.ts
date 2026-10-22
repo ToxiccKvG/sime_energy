@@ -11,6 +11,7 @@ export interface OrganizationInvitation {
   accepted_at?: string;
   accepted_by_user_id?: string;
   status: 'pending' | 'accepted' | 'expired' | 'revoked';
+  role?: 'member' | 'admin';
 }
 
 // Generate a unique invitation code
@@ -93,12 +94,16 @@ export async function getOrganizationInvitations(organizationId: string): Promis
   return data || [];
 }
 
-// Revoke an invitation
+// Annuler une invitation — seulement si elle est encore en attente : une
+// invitation déjà acceptée garde son statut (test du 22/10 : la liste de
+// l'admin, pas encore rafraîchie, permettait d'« annuler » une invitation
+// déjà utilisée). Retirer un membre est une autre action.
 export async function revokeInvitation(invitationId: string): Promise<void> {
   const { error } = await supabase
     .from('organization_invitations')
     .update({ status: 'revoked' })
-    .eq('id', invitationId);
+    .eq('id', invitationId)
+    .eq('status', 'pending');
 
   if (error) throw error;
 }
@@ -114,4 +119,47 @@ export async function getPendingInvitationsForEmail(email: string): Promise<Orga
 
   if (error) throw error;
   return data || [];
+}
+
+// ── Invitation par la plateforme (accès sur invitation seulement, 21/10/2026) ──
+// La fonction serveur `inviter-membre` vérifie que l'appelant est admin,
+// enregistre l'invitation et renvoie le lien personnel à transmettre :
+// lien de création de compte (choix du mot de passe) si la personne n'a pas
+// encore de compte, lien /invite?code=… sinon.
+export interface InvitationCreee {
+  lien: string;
+  compte_existant: boolean;
+  code: string;
+  expires_at: string;
+  role: 'member' | 'admin';
+}
+
+export async function inviterMembre(
+  organizationId: string,
+  email: string,
+  role: 'member' | 'admin',
+): Promise<InvitationCreee> {
+  const { data, error } = await supabase.functions.invoke('inviter-membre', {
+    body: { organization_id: organizationId, email, role, origin: window.location.origin },
+  });
+  if (error) {
+    // Message d'erreur renvoyé par la fonction, s'il y en a un
+    const ctx = (error as { context?: Response }).context;
+    const detail = ctx ? await ctx.json().then((b: { error?: string }) => b?.error).catch(() => undefined) : undefined;
+    throw new Error(detail ?? error.message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data as InvitationCreee;
+}
+
+/** Rôle de l'utilisateur connecté dans l'organisation (null s'il n'en est pas membre). */
+export async function getMonRole(organizationId: string, userId: string): Promise<'member' | 'admin' | null> {
+  const { data, error } = await supabase
+    .from('organization_users')
+    .select('role')
+    .eq('organization_id', organizationId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data?.role as 'member' | 'admin' | undefined) ?? null;
 }

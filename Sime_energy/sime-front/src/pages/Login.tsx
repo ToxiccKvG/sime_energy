@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
@@ -12,7 +12,11 @@ export function Login() {
   const [loading, setLoading] = useState(false);
   const { signIn } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
+  // Retour après connexion (ex. accepter une invitation) : chemin interne seulement
+  const retour = searchParams.get("retour");
+  const destination = retour && retour.startsWith("/") && !retour.startsWith("//") ? retour : "/";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,7 +27,7 @@ export function Login() {
         title: "Connexion réussie",
         description: "Bienvenue!",
       });
-      navigate("/");
+      navigate(destination);
     } catch (error) {
       toast({
         title: "Erreur de connexion",

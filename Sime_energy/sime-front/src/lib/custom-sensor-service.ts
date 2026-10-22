@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { metaFromPreambleLines, type SpreadsheetMeta } from './excel-utils';
+import { backendHeaders } from '@/services/backend-client';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -20,7 +21,7 @@ export interface TablePreview {
 export async function previewTableViaBackend(file: File): Promise<TablePreview> {
   const formData = new FormData();
   formData.append('file', file);
-  const response = await fetch(`${API_URL}/processing/process-file/measures/preview`, { method: 'POST', body: formData });
+  const response = await fetch(`${API_URL}/processing/process-file/measures/preview`, { method: 'POST', headers: await backendHeaders(), body: formData });
   if (!response.ok) {
     let detail = response.statusText;
     try { const body = await response.json(); if (body?.detail) detail = body.detail; } catch { /* non-JSON */ }
