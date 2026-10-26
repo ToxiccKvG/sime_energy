@@ -15,12 +15,14 @@
 
 ### Comptes Shelly Cloud
 
-La collecte lit **3 comptes**. La table `shelly_accounts` est la source de vérité (voir § 3.1).
+La collecte lit **5 sites** (une clé Shelly par site). La table `shelly_accounts` est la source de vérité (voir § 3.1).
 
 | Site | Pays / distributeur | Compte | Serveur |
 |---|---|---|---|
 | Ma Maison | Sénégal / SENELEC | d.gassama@cer2e.com | shelly-88-eu |
-| Académie CER2E | Sénégal / SENELEC | academy@cer2e.com | shelly-97-eu |
+| Académie CER2E | Sénégal / SENELEC | academy@cer2e.com (logement principal) | shelly-97-eu |
+| Bureau CER2E Dakar | Sénégal / SENELEC | clé du logement Dakar, collecté depuis le 19/10 | shelly-299-eu |
+| Bureau CER2E Thiès | Sénégal / SENELEC | clé du logement Thiès, collecté depuis le 19/10 | shelly-299-eu |
 | Donsin | Burkina Faso / **SONABEL** | compte dédié Donsin | shelly-271-eu |
 
 - Les mots de passe ne sont jamais écrits dans le dépôt. Ils sont gérés par le manager.
@@ -65,7 +67,7 @@ La collecte lit **3 comptes**. La table `shelly_accounts` est la source de véri
   - **incident sur la centrale depuis le 20/08** : la production tombe à environ un tiers (≈ 45 kWh/j au lieu de ≈ 150). Le constat date du 19/10 et la fin de l'incident est inconnue. Ne jamais supprimer ces données : elles sont marquées « Incident ».
 - **Anomalie ouverte** : M1 du Building communal ne remonte aucune injection, alors que M2/M3 voient jusqu'à −2,2 kW. Piste : la configuration du Pro 3EM ou le rapport du TC. Non résolu.
 - **Panne du 25/09** : 22 appareils sur 25 hors ligne, piles pleines, PV en marche. **Le problème est physique, sur place** (passerelle ou point d'accès tombé probablement vers 08:51), pas dans la collecte. Une visite est nécessaire.
-- **Logements du compte** (16/10) : le compte en a trois dans l'app (Académie principal, Bureau Dakar, Bureau Thiès). La clé enregistrée ne voit **que le logement principal**, car chaque logement a sa propre clé. Les bureaux de Dakar et de Thiès ne sont plus collectés depuis juin/juillet. Correctif proposé, pas encore fait : les ajouter comme comptes distincts.
+- **Logements du compte** (16/10) : le compte en a trois dans l'app (Académie principal, Bureau Dakar, Bureau Thiès). **Chaque logement a sa propre clé** : une clé ne voit que son logement. Les bureaux n'étaient plus collectés depuis juin/juillet. **Depuis le 19/10, ils sont collectés comme deux sites distincts**, « Bureau CER2E Dakar » et « Bureau CER2E Thiès », avec chacun sa ligne dans `shelly_accounts`. Les appareils de Dakar (Général SENELEC, Yacouba, Bakary, Samba…) sont ceux du Shelly EM corrigé le 19/10 (§ 2).
 
 ---
 
@@ -141,7 +143,7 @@ La collecte lit **3 comptes**. La table `shelly_accounts` est la source de véri
 | Panne Académie du 25/09 | Visite sur site nécessaire |
 | Production PV Building communal ÷ 3 depuis le 20/08 | À vérifier sur site (onduleur, strings) |
 | Injection absente sur M1 Building communal | Configuration Pro 3EM / rapport du TC à vérifier |
-| Bureaux Dakar et Thiès non collectés | Ajouter leurs clés comme comptes distincts |
+| Rôles des appareils des bureaux Dakar et Thiès | 5 appareils de Dakar sans rôle (constat du 26/10) |
 | Station Donsin muette la nuit | Cause à confirmer (batterie, support Shelly) |
 | Pays et distributeur par site | À ajouter avec le moteur tarifaire |
 | Énergie non distribuée | À faire avec le manager |
