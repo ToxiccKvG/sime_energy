@@ -43,8 +43,9 @@ La collecte lit **5 sites** (une clé Shelly par site). La table `shelly_account
 - Compte Shelly dédié depuis le 09/07. Il contient la station météo, le capteur d'ouverture de porte, le H&T « Base vie » et une Plug M.
 - **Le PV est en aval de l'« Arrivée générale »** : ce compteur ne voit que le complément SONABEL. Il n'y a ni compteur de charge (M3) ni compteur PV (M5), donc **aucun bilan complet n'est possible**. Mode de calcul : `indeterminee`. On n'affiche que les « départs mesurés ».
 - **L'Arrivée générale est déconnectée volontairement depuis le 30/08** (décision du 16/10). Ce n'est pas une panne. Le Shelly H&T et The Pill sont aussi déconnectés volontairement.
-- **Appareils censés tourner au 26/10 : PC1 FOND_BUREAU et PC2 ENTREE** (prises Shelly), plus le capteur d'ouverture de porte, qui n'émet que lorsque la porte bouge.
-- **Station météo** (`XB211299189491624`) — **débranchée volontairement le 26/10 à 10:55 UTC** (déclarée dans `shelly_device_retraits`). Ce qui suit vaut pour ses données jusqu'à cette date :
+- **Appareils actifs au 26/10 : PC1 FOND_BUREAU et PC2 ENTREE** (prises Shelly), la station météo et le capteur d'ouverture de porte (qui n'émet que lorsque la porte bouge).
+- **Coupure du 26/10 à 10:55 UTC** : PC1 et PC2 hors ligne (tension 218 V puis ≈ 100 V au dernier relevé). La station et le capteur de porte se sont tus en même temps, alors qu'ils sont toujours branchés. **Piste non vérifiée :** ce sont des capteurs Bluetooth qui passent par un relais sur secteur, peut-être PC1 ou PC2. L'app Shelly continue d'afficher leurs dernières valeurs sans les marquer « hors ligne » : seule la base dit s'ils émettent vraiment.
+- **Station météo** (`XB211299189491624`) :
   - elle n'émet que de **07:20 à 17:56 UTC** (probablement une mise en veille faute de charge solaire, non confirmé). Ne jamais présenter de moyenne sur 24 h ni de minimum de nuit ;
   - `precipitation_mm` est un **compteur cumulé** depuis l'installation. Seul l'écart entre deux relevés compte, et il ne faut **jamais le filtrer** (ni bornes ni filtre anti-aberrant) ;
   - `battery_level` est bloqué à 67 % : utiliser `battery_voltage_v` à la place. L'UV suit exactement l'éclairement (corrélation de 1,00) ;
