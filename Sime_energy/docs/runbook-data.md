@@ -58,7 +58,7 @@ supabase db query --linked "insert into site_absences (site, start_at, note) val
 # au retour :
 supabase db query --linked "update site_absences set end_at='2026-10-20 18:00+00' where site='Ma Maison' and end_at is null"
 ```
-`site` = valeur exacte de `shelly_cl.site`. Absence en cours déclarée : **Ma Maison depuis le 28/09/2026 15:30 UTC** (fin à renseigner au retour).
+`site` = valeur exacte de `shelly_cl.site`. Dernière absence déclarée : **Ma Maison du 28/09/2026 15:30 au 11/10/2026 09:00 UTC** (close le 26/10). Aucune absence en cours.
 
 ### Coupures SENELEC et énergie non distribuée
 

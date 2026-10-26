@@ -34,7 +34,7 @@ La collecte lit **5 sites** (une clé Shelly par site). La table `shelly_account
 - Le Shelly EM « EM-SENELEC » mesure deux choses : **canal 1 = arrivée SENELEC** (rôle `M1_RESEAU`) et canal 2 = éclairage.
 - Les prises représentent environ 87 % de l'arrivée. Le reste apparaît comme « non mesuré » dans la courbe de charge, et c'est normal.
 - Mode de calcul de la consommation : `arrivee` (table `site_bilan`).
-- Absence déclarée : propriétaire en voyage à partir du 28/09 vers 15-16 h (`site_absences`).
+- Absence déclarée (`site_absences`) : propriétaire en voyage **du 28/09 vers 15 h 30 au 11/10 vers 9 h UTC**. Pendant l'absence, la maison consomme 3,5 à 5,8 kWh par jour (veille ≈ 200 W), contre 6 à 15 kWh en temps normal.
 - Piles à changer, constatées le 28/09 : Gen3_H&T (0 %), BLU H&T_Salon (4 %, valeur figée depuis le 17/09).
 - **La « Clé station météo » (`b0b21cfaf1a0`) n'est pas à Ma Maison** (21/10). C'est la passerelle de la station de Donsin. Elle a été déclarée retirée.
 
@@ -146,6 +146,7 @@ La collecte lit **5 sites** (une clé Shelly par site). La table `shelly_account
 | Production PV Building communal ÷ 3 depuis le 20/08 | À vérifier sur site (onduleur, strings) |
 | Injection absente sur M1 Building communal | Configuration Pro 3EM / rapport du TC à vérifier |
 | Rôles des appareils des bureaux Dakar et Thiès | 5 appareils de Dakar sans rôle (constat du 26/10) |
+| 3 appareils de Dakar au libellé incertain | « Télé », « Woyofal », « Prise Bureau » : ce qu'ils mesurent n'est pas connu (26/10). Leurs données sont comptées, seulement signalées |
 | Station Donsin muette la nuit | Cause à confirmer (batterie, support Shelly) |
 | Pays et distributeur par site | À ajouter avec le moteur tarifaire |
 | Énergie non distribuée | À faire avec le manager |
