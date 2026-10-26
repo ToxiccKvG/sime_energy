@@ -15,7 +15,7 @@
 
 ### Comptes Shelly Cloud
 
-La collecte lit **5 sites** (une clé Shelly par site). La table `shelly_accounts` est la source de vérité (voir § 3.1).
+La collecte lit **6 sites** (une clé Shelly par site). La table `shelly_accounts` est la source de vérité (voir § 3.1).
 
 | Site | Pays / distributeur | Compte | Serveur |
 |---|---|---|---|
@@ -24,9 +24,10 @@ La collecte lit **5 sites** (une clé Shelly par site). La table `shelly_account
 | Bureau CER2E Dakar | Sénégal / SENELEC | clé du logement Dakar, collecté depuis le 19/10 | shelly-299-eu |
 | Bureau CER2E Thiès | Sénégal / SENELEC | clé du logement Thiès, collecté depuis le 19/10 | shelly-299-eu |
 | Donsin | Burkina Faso / **SONABEL** | compte dédié Donsin | shelly-271-eu |
+| Prestation CER2E | Sénégal / SENELEC | prestation@cer2e.com, **pièce SENELEC seulement**, collecté depuis le 26/10 | shelly-98-eu |
 
 - Les mots de passe ne sont jamais écrits dans le dépôt. Ils sont gérés par le manager.
-- Le compte « Prestation CER2E » est suspendu et retiré de la configuration.
+- **Collecte partielle d'un compte** (26/10) : la colonne `shelly_accounts.appareils_inclus` (liste de `device_id`) limite la collecte à ces appareils ; leurs canaux `_1`, `_2`… suivent. Vide = tout le compte.
 - Le pays et le distributeur ne sont stockés nulle part en base (décision du 01/09 : à ajouter avec le moteur tarifaire). **Ne jamais écrire « SENELEC » dans un libellé générique** : c'est faux pour Donsin.
 
 ### Ma Maison (17/09)
@@ -37,6 +38,12 @@ La collecte lit **5 sites** (une clé Shelly par site). La table `shelly_account
 - Absence déclarée (`site_absences`) : propriétaire en voyage **du 28/09 vers 15 h 30 au 11/10 vers 9 h UTC**. Pendant l'absence, la maison consomme 3,5 à 5,8 kWh par jour (veille ≈ 200 W), contre 6 à 15 kWh en temps normal.
 - Piles à changer, constatées le 28/09 : Gen3_H&T (0 %), BLU H&T_Salon (4 %, valeur figée depuis le 17/09).
 - **La « Clé station météo » (`b0b21cfaf1a0`) n'est pas à Ma Maison** (21/10). C'est la passerelle de la station de Donsin. Elle a été déclarée retirée.
+
+### Prestation CER2E — SENELEC de Mme Boussara (26/10)
+
+- Compte réactivé le 26/10 (suspendu depuis fin mai). Le logement a 11 appareils (prises, clim, TV…), mais **seule la pièce SENELEC est collectée** : le Shelly EM `08f9e0e4d080`, arrivée SENELEC de Mme Boussara (rôle `M1_RESEAU`). Pince 2 (`_1`) à 0 Wh depuis l'installation.
+- **C'est l'ancien « M4_Groupe électrogène » de l'Académie** (relevés du 16/04 au 01/09), réinstallé ici : premier relevé du cloud le **30/09 à 12 h UTC**. Les deux affectations sont dans `shelly_device_periodes`.
+- **Du 30/09 au 25/10, il n'existe que des totaux horaires** (API cloud `v2/statistics/power-consumption/em-1p`, plage ≤ 2 jours pour avoir l'heure), exportés dans `Documents/CER2E-SIME/IOT/Prestation_SENELEC/`. Relevés minute en base à partir du 26/10 15:38 UTC. L'API renvoie certains jours en double au pas journalier : recalculer le journalier depuis l'horaire.
 
 ### Donsin (Burkina Faso)
 
@@ -70,6 +77,7 @@ La collecte lit **5 sites** (une clé Shelly par site). La table `shelly_account
 - **Anomalie ouverte** : M1 du Building communal ne remonte aucune injection, alors que M2/M3 voient jusqu'à −2,2 kW. Piste : la configuration du Pro 3EM ou le rapport du TC. Non résolu.
 - **Panne du 25/09** : 22 appareils sur 25 hors ligne, piles pleines, PV en marche. **Le problème est physique, sur place** (passerelle ou point d'accès tombé probablement vers 08:51), pas dans la collecte. Une visite est nécessaire.
 - **Logements du compte** (16/10) : le compte en a trois dans l'app (Académie principal, Bureau Dakar, Bureau Thiès). **Chaque logement a sa propre clé** : une clé ne voit que son logement. Les bureaux n'étaient plus collectés depuis juin/juillet. **Depuis le 19/10, ils sont collectés comme deux sites distincts**, « Bureau CER2E Dakar » et « Bureau CER2E Thiès », avec chacun sa ligne dans `shelly_accounts`. Les appareils de Dakar (Général SENELEC, Yacouba, Bakary, Samba…) sont ceux du Shelly EM corrigé le 19/10 (§ 2).
+- **Bureau Dakar, 26/10** : « Télé » → « 2) FONTAINE A EAU », « Woyofal » → « 3) Home assistant », « Ventilo » → « Prise Bureau » sont de **simples corrections de nom** (même appareil, confirmé par Maurice). Nouvelle prise `543204b91840` « Ventilateur_2 » depuis le 26/10 vers 14:30 UTC : c'est l'ancien « Climatiseur_Salon » de la mission Prestation (18→27/05).
 
 ---
 
@@ -146,7 +154,6 @@ La collecte lit **5 sites** (une clé Shelly par site). La table `shelly_account
 | Production PV Building communal ÷ 3 depuis le 20/08 | À vérifier sur site (onduleur, strings) |
 | Injection absente sur M1 Building communal | Configuration Pro 3EM / rapport du TC à vérifier |
 | Rôles des appareils des bureaux Dakar et Thiès | 5 appareils de Dakar sans rôle (constat du 26/10) |
-| 3 appareils de Dakar au libellé incertain | « Télé », « Woyofal », « Prise Bureau » : ce qu'ils mesurent n'est pas connu (26/10). Leurs données sont comptées, seulement signalées |
 | Station Donsin muette la nuit | Cause à confirmer (batterie, support Shelly) |
 | Pays et distributeur par site | À ajouter avec le moteur tarifaire |
 | Énergie non distribuée | À faire avec le manager |

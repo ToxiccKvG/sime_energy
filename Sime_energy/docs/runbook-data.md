@@ -32,6 +32,7 @@ Pièges d'accès :
 - Le `.env` local contient la clé **anon** sous le nom `SUPABASE_SERVICE_ROLE_KEY` (nom trompeur). Depuis la migration du 2026-09-14, l'accès anon à `shelly_cl`, aux agrégats et à `fn_energy_*` est **fermé** : les anciens scripts (`check_supabase.py`, etc.) échouent avec `permission denied`.
 - La sortie JSON du CLI est précédée d'une ligne de texte (« Initialising login role… ») : couper avant le premier `{`.
 - Les comptes Shelly (clé d'API + serveur) sont dans la table `shelly_accounts`, **source de vérité**. Écriture réservée aux admins (migration du 2026-09-25).
+- `shelly_accounts.appareils_inclus` (26/10) : liste blanche de `device_id` pour ne collecter qu'une partie d'un compte (ex. Prestation CER2E = pièce SENELEC). Vide = tout le compte.
 
 ## 3. Routine quotidienne (5 minutes)
 
@@ -81,7 +82,7 @@ Signature : appareils secteur muets pendant que les capteurs à pile émettent ;
 | `shelly_cl_journalier` | Vue journalière | lourde sans filtre de date (timeout) |
 | `shelly_device_roles` | `device_id` → rôle | table de référence |
 | `shelly_device_types`, `shelly_device_channels` | Types et canaux configurables | self-service (phase B de nettoyage du code dur restante) |
-| `shelly_accounts` | 3 comptes Shelly Cloud | source de vérité |
+| `shelly_accounts` | 6 comptes Shelly Cloud (`appareils_inclus` = collecte partielle) | source de vérité |
 | `fn_energy_by_device / by_day / profile / repartition` | Calcul des kWh | contourner le plafond de 1 000 lignes de PostgREST |
 | `site_absences` | Absences déclarées d'un site (`site`, `start_at`, `end_at` NULL = en cours, `note`) | Lue par la routine et la détection des coupures : un appareil muet pendant une absence n'est pas une panne |
 | `iot_files`, `measurement_files` | Fichiers importés par utilisateur (+ buckets) | |

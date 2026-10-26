@@ -11,7 +11,7 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-interface Account { site: string; auth_key: string; server: string; }
+interface Account { site: string; auth_key: string; server: string; appareils_inclus?: string[] | null; }
 type DeviceFamily = "ENERGIE_3PH" | "ENERGIE_2PH" | "ENERGIE_1PH" | "LUMIERE" | "CAPTEUR_ENV" | "ETAT" | "INCONNU";
 type Meta = { name: string; room: string | null; type: string; family: DeviceFamily; };
 
@@ -151,9 +151,9 @@ const ID_FALLBACK: Record<string, { type: string; name: string; family: DeviceFa
   "206ef102b9c4":{type:"S4PL-00416EU",name:"1) Box Wifi",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34987a68c520":{type:"SPSW-104PE16EU",name:"1) Prise 1",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34987a68c520_1":{type:"SPSW-104PE16EU",name:"2) Prise 2",family:"ENERGIE_1PH",site:"Académie CER2E"},
-  "206ef102b9c4_1":{type:"S4PL-00416EU",name:"2) Télé",family:"ENERGIE_1PH",site:"Académie CER2E"},
+  "206ef102b9c4_1":{type:"S4PL-00416EU",name:"2) FONTAINE A EAU",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34987a68c520_2":{type:"SPSW-104PE16EU",name:"3) Prise 3",family:"ENERGIE_1PH",site:"Académie CER2E"},
-  "206ef102b9c4_2":{type:"S4PL-00416EU",name:"3) Woyofal",family:"ENERGIE_1PH",site:"Académie CER2E"},
+  "206ef102b9c4_2":{type:"S4PL-00416EU",name:"3) Home assistant",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "206ef102b9c4_3":{type:"S4PL-00416EU",name:"4) Caméra",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34987a68c520_3":{type:"SPSW-104PE16EU",name:"4) Prise 4",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "08f9e0ea7d94":{type:"SPEM-003CEBEU",name:"Cafétéria_TD RDC",family:"ENERGIE_3PH",site:"Académie CER2E"},
@@ -167,14 +167,14 @@ const ID_FALLBACK: Record<string, { type: string; name: string; family: DeviceFa
   "08f9e0e8d774":{type:"SPEM-003CEBEU400",name:"M1_SENELEC",family:"ENERGIE_3PH",site:"Académie CER2E"},
   "483fdac3b59d":{type:"SHEM-3",name:"M2_SELECTEUR PV/SENELEC",family:"ENERGIE_3PH",site:"Académie CER2E"},
   "483fdac3d79c":{type:"SHEM-3",name:"M3_CHARGE_CONSOMMATION",family:"ENERGIE_3PH",site:"Académie CER2E"},
-  "08f9e0e4d080":{type:"SPEM-002CEBEU50",name:"M4_Groupe électrogène",family:"ENERGIE_2PH",site:"Académie CER2E"},
-  "08f9e0e4d080_1":{type:"SPEM-002CEBEU50",name:"M4_Groupe électrogène (canal 2)",family:"ENERGIE_2PH",site:"Académie CER2E"},
+  "08f9e0e4d080":{type:"SPEM-002CEBEU50",name:"SENELEC Mme Boussara",family:"ENERGIE_2PH",site:"Prestation CER2E"},
+  "08f9e0e4d080_1":{type:"SPEM-002CEBEU50",name:"SENELEC Mme Boussara (canal 2)",family:"ENERGIE_2PH",site:"Prestation CER2E"},
   "8cbfea9705f4":{type:"S3PL-00112EU",name:"PC INFORMATIQUE",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "08f9e047b1b2":{type:"SHEM-3",name:"PV_BUILDING COMMUNAL",family:"ENERGIE_3PH",site:"Académie CER2E"},
   "ecda3bc06554":{type:"S3SW-001P8EU",name:"Simple Allumage",family:"ETAT",site:"Académie CER2E"},
   "08f9e0e82db0":{type:"SPEM-003CEBEU",name:"TGBT_EPT Thiès",family:"ENERGIE_3PH",site:"Académie CER2E"},
   "c8c9a325a225":{type:"SHDM-2",name:"Variateur",family:"LUMIERE",site:"Académie CER2E"},
-  "543204ba4b18":{type:"SNPM-001PCEU16",name:"Ventilo à partir du 04/12/2025",family:"ENERGIE_1PH",site:"Académie CER2E"},
+  "543204ba4b18":{type:"SNPM-001PCEU16",name:"Prise Bureau",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34b7da8a47a0":{type:"S3PM-001PCEU16",name:"Éclairage Disjoncteur 1",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34b7da8a4aa0":{type:"S3PM-001PCEU16",name:"Éclairage Disjoncteur 2",family:"ENERGIE_1PH",site:"Académie CER2E"},
   // Compte 3 — Donsin (PV), devices déplacés depuis Académie CER2E le 2026-07-09
@@ -629,8 +629,12 @@ async function pollAccount(
   const rows: Record<string,unknown>[]=[];
   const processed=new Set<string>();
 
+  // Collecte partielle : seuls les appareils de la liste blanche (NULL = tout le compte).
+  const inclus=account.appareils_inclus?.length ? new Set(account.appareils_inclus) : null;
+
   for (const [deviceId,status] of Object.entries(allStatus)) {
     if (typeof status!=="object"||!status) continue;
+    if (inclus && !inclus.has(deviceId)) continue;
     // Objets VIRTUELS du cloud (thermostat, scène, groupe…) : présents dans
     // all_status mais absents de device/list, sans état physique. Exemple :
     // 1720017229409 = thermostat désactivé de Ma Maison, 5 mois de lignes
@@ -643,6 +647,7 @@ async function pollAccount(
 
   for (const [virtualId,chan] of Object.entries(channels)) {
     if (processed.has(virtualId)) continue;
+    if (inclus && !inclus.has(chan.parent)) continue;
     const parentStatus=allStatus[chan.parent] as Record<string,unknown>|undefined;
     if (!parentStatus) continue;
     const meta=resolveMeta(virtualId,apiData,dbCache,channels,exact,prefix);
@@ -691,14 +696,15 @@ async function loadAccounts(): Promise<Account[]> {
   // Priorité : table shelly_accounts (gérée depuis la plateforme)
   const { data, error } = await supabase
     .from("shelly_accounts")
-    .select("site, auth_key, server_url")
+    .select("site, auth_key, server_url, appareils_inclus")
     .eq("actif", true);
 
   if (!error && data && data.length > 0) {
-    return data.map((r: { site: string; auth_key: string; server_url: string }) => ({
+    return data.map((r: { site: string; auth_key: string; server_url: string; appareils_inclus: string[] | null }) => ({
       site: r.site,
       auth_key: r.auth_key,
       server: r.server_url,
+      appareils_inclus: r.appareils_inclus,
     }));
   }
 
