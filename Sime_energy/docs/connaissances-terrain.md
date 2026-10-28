@@ -15,7 +15,7 @@
 
 ### Comptes Shelly Cloud
 
-La collecte lit **6 sites** (une clé Shelly par site). La table `shelly_accounts` est la source de vérité (voir § 3.1).
+La collecte lit **7 sites** (une clé Shelly par site, sauf le compte Prestation partagé entre deux sites). La table `shelly_accounts` est la source de vérité (voir § 3.1).
 
 | Site | Pays / distributeur | Compte | Serveur |
 |---|---|---|---|
@@ -25,6 +25,7 @@ La collecte lit **6 sites** (une clé Shelly par site). La table `shelly_account
 | Bureau CER2E Thiès | Sénégal / SENELEC | clé du logement Thiès, collecté depuis le 19/10 | shelly-299-eu |
 | Donsin | Burkina Faso / **SONABEL** | compte dédié Donsin | shelly-271-eu |
 | Prestation CER2E | Sénégal / SENELEC | prestation@cer2e.com, **pièce SENELEC seulement**, collecté depuis le 26/10 | shelly-98-eu |
+| Mosquée Sacré Cœur | Sénégal / SENELEC | prestation@cer2e.com (même clé), **pièce « Mosquée sacré cœur » seulement**, collecté depuis le 28/10 | shelly-98-eu |
 
 - Les mots de passe ne sont jamais écrits dans le dépôt. Ils sont gérés par le manager.
 - **Collecte partielle d'un compte** (26/10) : la colonne `shelly_accounts.appareils_inclus` (liste de `device_id`) limite la collecte à ces appareils ; leurs canaux `_1`, `_2`… suivent. Vide = tout le compte.
@@ -44,6 +45,13 @@ La collecte lit **6 sites** (une clé Shelly par site). La table `shelly_account
 - Compte réactivé le 26/10 (suspendu depuis fin mai). Le logement a 11 appareils (prises, clim, TV…), mais **seule la pièce SENELEC est collectée** : le Shelly EM `08f9e0e4d080`, arrivée SENELEC de Mme Boussara (rôle `M1_RESEAU`). Pince 2 (`_1`) à 0 Wh depuis l'installation.
 - **C'est l'ancien « M4_Groupe électrogène » de l'Académie** (relevés du 16/04 au 01/09), réinstallé ici : premier relevé du cloud le **30/09 à 12 h UTC**. Les deux affectations sont dans `shelly_device_periodes`.
 - **Du 30/09 au 25/10, il n'existe que des totaux horaires** (API cloud `v2/statistics/power-consumption/em-1p`, plage ≤ 2 jours pour avoir l'heure), exportés dans `Documents/CER2E-SIME/IOT/Prestation_SENELEC/`. Relevés minute en base à partir du 26/10 15:38 UTC. L'API renvoie certains jours en double au pas journalier : recalculer le journalier depuis l'horaire.
+
+### Mosquée Sacré Cœur (28/10)
+
+- Pièce « Mosquée sacré cœur » du compte Prestation, collectée comme **site à part** : une 2e ligne `shelly_accounts` (même clé) avec `appareils_inclus` = 5 compteurs. Relevés minute depuis le **28/10 13:55 UTC**. La pièce « Shelly disponible » du même compte = stock, non collecté.
+- Compteurs : `08f9e047b1b2` EM3-01 (arrivée générale RDC+R1), `483fdac3d79c` EM3-02 (RDC+morgue), `34945475f173` EM3-04 (R1), `841fe890f0d0` Pro 3EM (morgue), `8c4f00dba0c4` Pro EM (canal 1 sono-montre-TV, canal 2 `_1` éclairage extérieur).
+- **Rôles proposés, non confirmés** : EM3-01 = `M1_RESEAU`, le reste = `DEPART`. Premier relevé : EM3-01 (3,43 kW) ≈ EM3-02 + EM3-04 (3,45 kW), donc la morgue et le Pro EM sont probablement en aval de l'un des deux. Câblage à confirmer sur place.
+- `08f9e047b1b2` = **ex « PV_BUILDING COMMUNAL »** et `483fdac3d79c` = **ex « M3_CHARGE_CONSOMMATION »** de l'Académie. Revus le 27/10 vers 16 h–17 h encore sous le compte Académie (quelques lignes laissées telles quelles), puis passés sur le compte Prestation. Retraits clos, périodes dans `shelly_device_periodes`.
 
 ### Donsin (Burkina Faso)
 
