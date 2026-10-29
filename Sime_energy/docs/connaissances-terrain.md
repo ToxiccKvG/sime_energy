@@ -15,7 +15,7 @@
 
 ### Comptes Shelly Cloud
 
-La collecte lit **7 sites** (une clé Shelly par site, sauf le compte Prestation partagé entre deux sites). La table `shelly_accounts` est la source de vérité (voir § 3.1).
+La collecte lit **9 sites** (une clé Shelly par site, sauf le compte Prestation partagé entre deux sites). La table `shelly_accounts` est la source de vérité (voir § 3.1).
 
 | Site | Pays / distributeur | Compte | Serveur |
 |---|---|---|---|
@@ -26,6 +26,8 @@ La collecte lit **7 sites** (une clé Shelly par site, sauf le compte Prestation
 | Donsin | Burkina Faso / **SONABEL** | compte dédié Donsin | shelly-271-eu |
 | Prestation CER2E | Sénégal / SENELEC | prestation@cer2e.com, **pièce SENELEC seulement**, collecté depuis le 26/10 | shelly-98-eu |
 | Mosquée Sacré Cœur | Sénégal / SENELEC | prestation@cer2e.com (même clé), **pièce « Mosquée sacré cœur » seulement**, collecté depuis le 28/10 | shelly-98-eu |
+| Boussoura | Sénégal / SENELEC | compte dédié de Mme Boussoura, tout le compte, collecté depuis le 29/10 | shelly-242-eu |
+| Babs Ndiaye | Sénégal / SENELEC | compte dédié de Babs Ndiaye, tout le compte, collecté depuis le 29/10 | shelly-188-eu |
 
 - Les mots de passe ne sont jamais écrits dans le dépôt. Ils sont gérés par le manager.
 - **Collecte partielle d'un compte** (26/10) : la colonne `shelly_accounts.appareils_inclus` (liste de `device_id`) limite la collecte à ces appareils ; leurs canaux `_1`, `_2`… suivent. Vide = tout le compte.
@@ -52,6 +54,16 @@ La collecte lit **7 sites** (une clé Shelly par site, sauf le compte Prestation
 - Compteurs : `08f9e047b1b2` EM3-01 (arrivée générale RDC+R1), `483fdac3d79c` EM3-02 (RDC+morgue), `34945475f173` EM3-04 (R1), `841fe890f0d0` Pro 3EM (morgue), `8c4f00dba0c4` Pro EM (canal 1 sono-montre-TV, canal 2 `_1` éclairage extérieur).
 - **Rôles proposés, non confirmés** : EM3-01 = `M1_RESEAU`, le reste = `DEPART`. Premier relevé : EM3-01 (3,43 kW) ≈ EM3-02 + EM3-04 (3,45 kW), donc la morgue et le Pro EM sont probablement en aval de l'un des deux. Câblage à confirmer sur place.
 - `08f9e047b1b2` = **ex « PV_BUILDING COMMUNAL »** et `483fdac3d79c` = **ex « M3_CHARGE_CONSOMMATION »** de l'Académie. Revus le 27/10 vers 16 h–17 h encore sous le compte Académie (quelques lignes laissées telles quelles), puis passés sur le compte Prestation. Retraits clos, périodes dans `shelly_device_periodes`.
+
+### Boussoura et Babs Ndiaye (29/10)
+
+- Deux comptes Shelly dédiés, **collectés en entier** (`appareils_inclus` vide). Relevés minute depuis le **29/10 vers 13 h 30 UTC**.
+- **Boussoura** (12 voies) : `dcb4d9ce46ec` GENERAL SENELEC (Shelly EM Gen3, pince 2 `_1` sans nom ni pièce), éclairages salon et chambre, clims salon et chambre, chauffe-eau, réfrigérateur, M1 et M2 de la buanderie (sans précision), prise buanderie, capteur de porte d'entrée.
+- **La ligne « Prestation CER2E » est gardée** (décision du 29/10) : le Shelly EM `08f9e0e4d080` de la pièce SENELEC reste collecté à côté du compte dédié.
+- **Babs Ndiaye** (6 voies) : `6825ddd2a69c` SENELEC (Pro 3EM 63 A), Pro 4PM `c8f09e83ea14` (clims chambre visiteur, chambre parent, salon + une voie sans nom), chauffe-eau `a0dd6ca9bacc`. **Au 29/10, seul le SENELEC est en ligne.**
+- **Rôles proposés, non confirmés** : compteur général = `M1_RESEAU`, le reste = `DEPART`, voies sans nom et porte = `AUTRE`.
+- Le Pro 1PM UL (`SPSW-201PE15UL`) a été ajouté à `shelly_device_types` : il n'était pas reconnu (famille INCONNU).
+- **Gotcha à l'ajout d'un compte** : le poller ne relit noms et types qu'à hh:x0. Les premières minutes, toutes les lignes du nouveau site sont `INCONNU` et sans mesure : elles ont été supprimées (13:27→13:29).
 
 ### Donsin (Burkina Faso)
 
