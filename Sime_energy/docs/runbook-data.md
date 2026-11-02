@@ -82,7 +82,7 @@ Signature : appareils secteur muets pendant que les capteurs à pile émettent ;
 | `shelly_cl_journalier` | Vue journalière | lourde sans filtre de date (timeout) |
 | `shelly_device_roles` | `device_id` → rôle | table de référence |
 | `shelly_device_types`, `shelly_device_channels` | Types et canaux configurables | self-service (phase B de nettoyage du code dur restante) |
-| `shelly_accounts` | 8 sites de collecte Shelly Cloud actifs (`appareils_inclus` = collecte partielle) | source de vérité |
+| `shelly_accounts` | 9 sites de collecte Shelly Cloud (`appareils_inclus` = collecte partielle) | source de vérité |
 | `fn_energy_by_device / by_day / profile / repartition` | Calcul des kWh | contourner le plafond de 1 000 lignes de PostgREST |
 | `site_absences` | Absences déclarées d'un site (`site`, `start_at`, `end_at` NULL = en cours, `note`) | Lue par la routine et la détection des coupures : un appareil muet pendant une absence n'est pas une panne |
 | `iot_files`, `measurement_files` | Fichiers importés par utilisateur (+ buckets) | |
