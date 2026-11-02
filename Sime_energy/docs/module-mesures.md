@@ -57,6 +57,24 @@ valeur par défaut aux fichiers non reconnus.
 > Table `custom_sensors` : colonnes `quantity_kind`, `time_col`, `columns_signature`
 > (migrations `20260917_custom_sensors_*`).
 
+> **Plusieurs séries dans un fichier (`series_col`, 02/11/2026)** : un export de table
+> (`shelly_cl`, portail multi-onduleurs…) range une ligne par horodatage **et** par
+> appareil. Lu comme une seule série, les valeurs de tous les appareils se suivaient dans
+> une même courbe (moyenne, maximum, énergie faux, sans message). Le capteur porte la
+> colonne d'appartenance `series_col` (identifiant de préférence, les noms changent) et
+> `series_label_col` (nom affiché, le plus récent gardé) ; `_process_series` découpe le
+> fichier **avant tout calcul** en un payload complet par série. Dans chaque série, les
+> colonnes supplémentaires vides pour cet appareil et celles qui l'identifient sont
+> retirées ; une série sans aucune valeur est écartée et listée (`skipped_series`).
+> **Garde-fou** (`_refuse_mixed_series`) : sans `series_col`, si ≥ 20 % des lignes
+> partagent leur horodatage et qu'une colonne rend chaque couple (horodatage, colonne)
+> unique (`series_candidates` : 2 à 500 valeurs, répétées, ni heure seule ni décimale),
+> le fichier est refusé avec la colonne à indiquer. Sans colonne distinctive, comportement
+> inchangé. Non-régression vérifiée sur 20 fichiers réels à une série (Shelly Ma Maison,
+> exports Shelly Cloud, loggers H&T et sonomètres Donsin, station météo) ; export
+> Ma Maison de 18 507 lignes / 29 appareils découpé en 2,6 s. Migration
+> `20261102_custom_sensors_series`.
+
 ### 3.1 Registre et pipeline (`app/core/sensors.py`)
 
 ```
@@ -69,6 +87,7 @@ _build_measurements()  ──►  toutes les lignes valides (timestamp et valeur
                             valeurs négatives conservées sauf keep_negative=False
    ▼
 JSON : measurements, sensor_type, metric_label, unit, quantity_kind, processing_info
+       (capteur à series_col : { series: [ce JSON, un par série], processing_info })
 ```
 
 `SENSOR_REGISTRY[key] = { label, input, parser, value_col, unit, metric_label,
@@ -117,7 +136,7 @@ réels ne sont pas affectés.
 |---|---|
 | `components/mesures/MeasurementWorkflow.tsx` | Onglets, alias, période partagée par relevé — état lu/écrit dans `services/measurementSession.ts` (survit à un passage par IOT ou un audit) |
 | `components/mesures/MeasurementUploadStep.tsx` | Dépôt multi-fichiers **et dossiers** (`lib/folder-import.ts`), capteur par fichier deviné par le nom ou par l'**empreinte des colonnes** (`findSensorBySignature`, lecture des seuls en-têtes en arrière-plan), liste « Relevés chargés », capteurs personnalisés |
-| `components/mesures/CustomSensorMapper.tsx`, `CustomSensorEditPanel.tsx` | Création / édition d'un capteur personnalisé : **pré-remplissage** (`suggestMapping`), colonne heure séparée (`time_col`), **aperçu des dates interprétées** (`previewTimestamps`, `inferDayFirst`) avec choix jour-mois / mois-jour qui écrit `timestamp_format`, colonnes supplémentaires proposées |
+| `components/mesures/CustomSensorMapper.tsx`, `CustomSensorEditPanel.tsx` | Création / édition d'un capteur personnalisé : **pré-remplissage** (`suggestMapping`), colonne heure séparée (`time_col`), **« Une série par » / nom affiché** (`series_col`, `series_label_col`, détectés par `suggestSeries`), **aperçu des dates interprétées** (`previewTimestamps`, `inferDayFirst`) avec choix jour-mois / mois-jour qui écrit `timestamp_format`, colonnes supplémentaires proposées |
 | `components/mesures/MeasurementAnalysis.tsx` | KPIs, vue par jour, stats par colonne, table, export CSV, rapport PDF/Word |
 | `components/mesures/MeasurementCharts.tsx` | Courbe multi-axes, distribution, profil heure × jour, cumul par période, drill-down, export PNG |
 | `components/mesures/AnalysisModelsPanel.tsx` | Onglet Modèles (affichage seulement) |
@@ -130,7 +149,7 @@ réels ne sont pas affectés.
 | `services/analysisModels/*` | Modèles d'analyse (§ 5) |
 | `lib/model-comparison.ts` | Alignement et comparaison de deux relevés (§ 6) |
 | `lib/sensor-comparison.ts` | Familles d'unités (W/VA/var, Wh/VAh/varh), conversions, comparaison maître/esclaves |
-| `lib/custom-sensor-service.ts` | CRUD `custom_sensors`, `guessQuantityKind()`, `columnsSignature()`, `suggestMapping()`, `inferDayFirst()`, `previewTimestamps()` |
+| `lib/custom-sensor-service.ts` | CRUD `custom_sensors`, `guessQuantityKind()`, `columnsSignature()`, `suggestMapping()`, `suggestSeries()` (fichier long → « Une série par », mêmes règles que le backend), `inferDayFirst()`, `previewTimestamps()` |
 | `lib/folder-import.ts` | Import de dossiers (input `webkitdirectory` + `webkitGetAsEntry` récursif), filtre `isImportable` (extensions + exclusion `._*`, `~$*`, `.DS_Store`) — partagé avec IOT › Fichiers |
 | `lib/excel-utils.ts` | `parseExcelBuffer` : xlsx (ExcelJS), CSV/TSV (préambule sauté, `meta` = paires clé/valeur du préambule), refus explicite du `.xls` binaire |
 | `lib/chart-export.ts` | Filtre html2canvas (exclut infobulle, curseur, points actifs, `data-no-export`) |

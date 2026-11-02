@@ -11,12 +11,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  FileSpreadsheet, Upload, Plus, Trash2, Save, Zap, AlertCircle, Loader2, Sparkles, CalendarClock,
+  FileSpreadsheet, Upload, Plus, Trash2, Save, Zap, AlertCircle, Loader2, Sparkles, CalendarClock, Layers,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   saveCustomSensor, guessQuantityKind, suggestMapping, previewTimestamps, columnsSignature, allExtraCols, triageExtraCols, isNumericColumn,
-  previewTableViaBackend,
+  previewTableViaBackend, suggestSeries,
   type CustomSensor, type CustomSensorInput, type ExtraCol, type QuantityKind,
 } from '@/lib/custom-sensor-service';
 import { useOrganization } from '@/context/OrganizationContext';
@@ -45,6 +45,7 @@ interface FileColumns {
 
 const EMPTY_EXTRA: ExtraCol = { label: '', col: '' };
 const NO_TIME_COL = '__none__';
+const NO_SERIES = '__single__';
 
 type DateOrder = 'auto' | 'dmy' | 'mdy';
 
@@ -104,6 +105,10 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
   // déduit de l'unité tapée — évite qu'une puissance reste par défaut sur
   // "energy" (sommée) au lieu d'être intégrée dans le temps.
   const [quantityKindTouched, setQuantityKindTouched] = useState(false);
+  // Fichier « long » (une ligne par horodatage ET par appareil) : colonne
+  // d'appartenance → le backend découpe en une série par valeur.
+  const [seriesCol, setSeriesCol] = useState('');
+  const [seriesLabelCol, setSeriesLabelCol] = useState('');
 
   const handleUnitChange = (v: string) => {
     setUnit(v);
@@ -153,7 +158,11 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
       setValueCol(sug.valueCol);
       setUnit(sug.unit);
       setMetricLabel(sug.metricLabel);
-      setExtraCols(sug.extraCols);
+      const series = suggestSeries(columns, sample, sug.timestampCol, sug.timeCol, sug.valueCol);
+      setSeriesCol(series?.col ?? '');
+      setSeriesLabelCol(series?.labelCol ?? '');
+      // Les colonnes qui identifient la série sont constantes dans chaque relevé
+      setExtraCols(series ? sug.extraCols.filter((e) => e.col !== series.col && e.col !== series.labelCol) : sug.extraCols);
       setTimestampFormat('');
       setDateOrder('auto');
       if (!quantityKindTouched) setQuantityKind(guessQuantityKind(sug.unit));
@@ -170,6 +179,17 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
     const forced = dateOrder === 'dmy' ? true : dateOrder === 'mdy' ? false : null;
     return previewTimestamps(fileData.sample, timestampCol, timeCol, forced);
   }, [fileData, timestampCol, timeCol, dateOrder]);
+
+  // Détection recalculée si l'utilisateur change l'horodatage ou la grandeur
+  const seriesHint = useMemo(
+    () => (fileData ? suggestSeries(fileData.columns, fileData.sample, timestampCol, timeCol, valueCol) : null),
+    [fileData, timestampCol, timeCol, valueCol],
+  );
+  const seriesCount = useMemo(() => {
+    if (!fileData || !seriesCol) return 0;
+    return new Set(fileData.sample.map((r) => r[seriesCol]).filter((v) => v !== null && v !== undefined && String(v).trim() !== '').map(String)).size;
+  }, [fileData, seriesCol]);
+  const ownCols = [timestampCol, timeCol, valueCol, seriesCol, seriesLabelCol];
 
   const firstTsText = useMemo(() => {
     if (!fileData || !timestampCol) return '';
@@ -215,6 +235,8 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
       extra_cols: extraCols.filter((e) => e.col && e.label),
       keep_negative: keepNegative,
       quantity_kind: quantityKind,
+      series_col: seriesCol || null,
+      series_label_col: seriesCol && seriesLabelCol ? seriesLabelCol : null,
     };
   };
 
@@ -250,7 +272,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
       // Reset
       setFileData(null); setName(''); setTimestampCol(''); setTimeCol(''); setTimestampFormat(''); setDateOrder('auto');
       setValueCol(''); setUnit(''); setMetricLabel(''); setExtraCols([]);
-      setQuantityKind('other'); setQuantityKindTouched(false);
+      setQuantityKind('other'); setQuantityKindTouched(false); setSeriesCol(''); setSeriesLabelCol('');
     } catch (err) {
       toast({ title: 'Erreur de sauvegarde', description: String(err), variant: 'destructive' });
     } finally {
@@ -393,6 +415,53 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
             </div>
           )}
 
+          {/* Plusieurs appareils dans un même fichier : une série par valeur */}
+          <div className={`rounded-lg border px-3 py-3 space-y-3 ${seriesHint && !seriesCol ? 'border-amber-500/40 bg-amber-500/10' : 'border-white/10 bg-white/5'}`}>
+            <p className="text-xs text-slate-300 flex items-center gap-1.5">
+              <Layers className="h-3.5 w-3.5 text-blue-400" />
+              {seriesCol
+                ? <span>Une série par valeur de « {seriesCol} » : <span className="text-white">{seriesCount} série(s)</span>{fileData && fileData.sample.length < fileData.rowCount ? ' dans l\'échantillon' : ''} — un relevé par appareil, jamais mélangés.</span>
+                : seriesHint
+                  ? <span className="text-amber-300 flex items-center gap-1"><AlertCircle className="h-3 w-3" /> {Math.round(seriesHint.repeatedShare * 100)} % des lignes partagent leur horodatage : ce fichier contient sans doute plusieurs appareils (colonne « {seriesHint.col} », {seriesHint.count} valeurs). Sans « Une série par », il sera refusé.</span>
+                  : <span>Une seule série : chaque horodatage n'apparaît qu'une fois.</span>}
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Une série par" hint="Fichier avec une ligne par horodatage ET par appareil (ex. export d'une table) : la colonne qui dit à qui appartient la valeur. Préférez un identifiant, les noms peuvent changer.">
+                <Select value={seriesCol || NO_SERIES} onValueChange={(v) => {
+                  const col = v === NO_SERIES ? '' : v;
+                  setSeriesCol(col);
+                  if (!col) setSeriesLabelCol('');
+                  else setExtraCols((p) => p.filter((e) => e.col !== col));
+                }}>
+                  <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent className="bg-[#1a1d2e] border-white/20 max-h-60">
+                    <SelectItem value={NO_SERIES} className="text-slate-400 focus:bg-white/10 text-sm">— une seule série —</SelectItem>
+                    {cols.filter((c) => c !== timestampCol && c !== timeCol && c !== valueCol).map((c) => (
+                      <SelectItem key={c} value={c} className="text-slate-200 focus:bg-white/10 text-sm font-mono">{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              {seriesCol && (
+                <Field label="Nom affiché de chaque série" hint="Le nom le plus récent de chaque appareil est gardé ; sans colonne, la valeur ci-contre sert de nom.">
+                  <Select value={seriesLabelCol || NO_SERIES} onValueChange={(v) => {
+                    const col = v === NO_SERIES ? '' : v;
+                    setSeriesLabelCol(col);
+                    if (col) setExtraCols((p) => p.filter((e) => e.col !== col));
+                  }}>
+                    <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent className="bg-[#1a1d2e] border-white/20 max-h-60">
+                      <SelectItem value={NO_SERIES} className="text-slate-400 focus:bg-white/10 text-sm">— la valeur de « {seriesCol} » —</SelectItem>
+                      {cols.filter((c) => c !== seriesCol && c !== timestampCol && c !== timeCol && c !== valueCol).map((c) => (
+                        <SelectItem key={c} value={c} className="text-slate-200 focus:bg-white/10 text-sm font-mono">{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Format (optionnel, rempli par le choix d'ordre) */}
             <Field label="Format timestamp" hint="Laisser vide pour détection auto — rempli automatiquement par le choix d'ordre ci-dessus">
@@ -455,7 +524,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
               <label className="text-sm font-medium text-slate-300">
                 Colonnes supplémentaires
                 {fileData && (() => {
-                  const t = triageExtraCols(cols, fileData.sample, [timestampCol, timeCol, valueCol]);
+                  const t = triageExtraCols(cols, fileData.sample, ownCols);
                   return (
                     <span className="text-slate-500 font-normal ml-1.5">
                       {extraCols.filter((e) => e.col).length} / {t.proposed.length}
@@ -469,7 +538,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
                 {/* Tout prendre d'un coup, texte compris : c'est le défaut au dépôt du fichier */}
                 <button type="button"
                   className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                  onClick={() => fileData && setExtraCols(allExtraCols(cols, fileData.sample, [timestampCol, timeCol, valueCol]))}>
+                  onClick={() => fileData && setExtraCols(allExtraCols(cols, fileData.sample, ownCols))}>
                   Toutes les colonnes
                 </button>
                 <button type="button"

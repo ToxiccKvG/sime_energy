@@ -402,7 +402,8 @@ async def process_measures(
 
     Pour un capteur personnalisé, passer sensor_type='CUSTOM' et sensor_config
     comme JSON stringifié (champs : timestamp_col, value_col, unit, metric_label,
-    extra_cols, keep_negative, timestamp_format optionnel).
+    extra_cols, keep_negative, timestamp_format optionnel, series_col et
+    series_label_col optionnels — réponse alors groupée sous `series`).
     """
     import json
     try:

@@ -74,6 +74,14 @@ export interface CustomSensor {
   keep_negative: boolean;
   /** Puissance instantanée (intégrée en énergie) / Énergie déjà cumulable (sommée) / Autre (pas de cumul). */
   quantity_kind?: QuantityKind;
+  /**
+   * Fichier « long » (une ligne par horodatage ET par appareil, ex. export de
+   * shelly_cl) : colonne qui dit à quelle série appartient chaque ligne. Le
+   * backend découpe le fichier en un relevé par valeur. NULL = une seule série.
+   */
+  series_col?: string | null;
+  /** Colonne du nom affiché de chaque série (le plus récent est gardé). */
+  series_label_col?: string | null;
   created_at: string;
 }
 
@@ -325,6 +333,81 @@ export function suggestMapping(
   const name = (metaName ?? titleLine ?? fileName.replace(/\.[^.]+$/, '')).trim();
 
   return { name, timestampCol, timeCol, valueCol, unit, metricLabel, extraCols };
+}
+
+// ============================================================
+// Format « long » : plusieurs séries dans un même fichier
+// ============================================================
+
+// Même règles que le backend (`series_candidates` dans sensors.py) : un
+// identifiant d'abord (stable), un nom ensuite (renommable en cours de campagne).
+const SERIES_ID_RE = /(^|_)id$|serial|s[ée]rie|canal|channel|voie|mac/i;
+const SERIES_NAME_RE = /device|appareil|name|nom|compteur|meter|sensor|capteur|onduleur|inverter/i;
+const LABEL_COL_RE = /name|nom|libell|label|d[ée]signation/i;
+const DECIMAL_RE = /^-?\d*[.,]\d+$/;
+
+export interface SeriesSuggestion {
+  /** Colonne d'appartenance proposée. */
+  col: string;
+  /** Colonne du nom affiché, si le fichier en a une. */
+  labelCol: string;
+  /** Nombre de séries trouvées dans l'échantillon. */
+  count: number;
+  /** Part des lignes dont l'horodatage se répète (0-1). */
+  repeatedShare: number;
+}
+
+const cellText = (v: unknown): string => (v instanceof Date ? v.toISOString() : v == null ? '' : String(v).trim());
+
+/**
+ * Détecte un fichier « long » : l'horodatage se répète sur au moins 20 % des
+ * lignes et une colonne rend chaque couple (horodatage, colonne) unique. Sert
+ * à proposer « Une série par » à la création du capteur ; le backend applique
+ * la même règle pour refuser un fichier multi-séries lu comme une seule série.
+ */
+export function suggestSeries(
+  columns: string[],
+  sample: Record<string, unknown>[],
+  timestampCol: string,
+  timeCol: string,
+  valueCol: string,
+): SeriesSuggestion | null {
+  if (!timestampCol || sample.length < 4) return null;
+  const stamps = sample.map(r => `${cellText(r[timestampCol])} ${timeCol ? cellText(r[timeCol]) : ''}`.trim());
+  const counts = new Map<string, number>();
+  for (const s of stamps) if (s) counts.set(s, (counts.get(s) ?? 0) + 1);
+  const filled = stamps.filter(Boolean).length;
+  const repeated = stamps.filter(s => s && (counts.get(s) ?? 0) > 1).length;
+  const repeatedShare = filled ? repeated / filled : 0;
+  if (repeatedShare < 0.2) return null;
+
+  const found: { col: string; count: number }[] = [];
+  for (const col of columns) {
+    if ([timestampCol, timeCol, valueCol].includes(col)) continue;
+    const keys = sample.map(r => cellText(r[col]));
+    const filledKeys = keys.filter(Boolean);
+    if (filledKeys.length === 0) continue;
+    const head = filledKeys.slice(0, 200);
+    // Heure seule ou mesure décimale : jamais une série
+    if (head.filter(k => TIME_ONLY_RE.test(k)).length > 0.8 * head.length) continue;
+    if (head.filter(k => DECIMAL_RE.test(k)).length > 0.5 * head.length) continue;
+    const distinct = new Set(filledKeys).size;
+    if (distinct < 2 || distinct > Math.min(500, filled / 2)) continue;
+    const pairs = new Set<string>(); let dup = 0; let n = 0;
+    stamps.forEach((s, i) => {
+      if (!s || !keys[i]) return;
+      n++;
+      const p = `${s}\u0000${keys[i]}`;
+      if (pairs.has(p)) dup++; else pairs.add(p);
+    });
+    if (n === 0 || dup / n > 0.02) continue;
+    found.push({ col, count: distinct });
+  }
+  if (found.length === 0) return null;
+  const rank = (c: string) => (SERIES_ID_RE.test(c) ? 0 : SERIES_NAME_RE.test(c) ? 1 : 2);
+  const best = [...found].sort((a, b) => rank(a.col) - rank(b.col))[0];
+  const labelCol = columns.find(c => c !== best.col && LABEL_COL_RE.test(c) && !isNumericColumn(sample, c)) ?? '';
+  return { col: best.col, labelCol, count: best.count, repeatedShare };
 }
 
 /**

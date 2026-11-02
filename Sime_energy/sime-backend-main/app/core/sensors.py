@@ -14,6 +14,10 @@ contrat unique consommé par le frontend (`/process-file/measures`) :
         "processing_info": {original_rows, valid_measurements, metadata}
     }
 
+Capteur personnalisé à plusieurs séries (`series_col`, format « long ») :
+`{"series": [<payload ci-dessus>, …], "processing_info": {…}}`, un payload
+par série (voir `_process_series`).
+
 Ce module ne calcule volontairement aucune statistique (moyenne, écart-type,
 percentiles, interprétation...) : le frontend reçoit l'intégralité des mesures
 et calcule lui-même ces indicateurs (voir `src/services/measurementStats.ts`),
@@ -806,12 +810,18 @@ def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
         timestamp_format : format strptime optionnel (ex. "%d/%m/%Y %H:%M")
         value_col        : colonne de la grandeur principale
         extra_cols       : liste de {label, col} pour les colonnes supplémentaires
+        series_col       : colonne qui dit à quelle série appartient chaque ligne
+                           (format « long » : une ligne par horodatage ET par
+                           appareil, ex. export de shelly_cl). Optionnel.
+        series_label_col : colonne du nom affiché de la série (optionnel)
     """
     raw, _ = read_any_table(contents)
 
     ts_col = config["timestamp_col"]
     time_col = config.get("time_col") or None
     val_col = config["value_col"]
+    series_col = config.get("series_col") or None
+    series_label_col = config.get("series_label_col") or None
 
     if ts_col not in raw.columns:
         raise ValueError(
@@ -828,6 +838,12 @@ def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
             f"Colonne valeur « {val_col} » introuvable. "
             f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
         )
+    for col, role in ((series_col, "série"), (series_label_col, "nom de série")):
+        if col and col not in raw.columns:
+            raise ValueError(
+                f"Colonne {role} « {col} » introuvable. "
+                f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
+            )
 
     df = pd.DataFrame()
     ts_text = raw[ts_col].astype(str).str.strip()
@@ -843,7 +859,126 @@ def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
         if col and col in raw.columns:
             df[col] = _numeric_or_text(raw[col])
 
+    if series_col:
+        # Noms internes : la même colonne peut aussi être une colonne supplémentaire.
+        df[SERIES_KEY] = raw[series_col].map(_series_text)
+        if series_label_col:
+            df[SERIES_LABEL] = raw[series_label_col].map(_series_text)
+    else:
+        _refuse_mixed_series(raw, df["timestamp"], exclude={ts_col, time_col, val_col})
+
     return df
+
+
+# ---------------------------------------------------------------------------
+# Format « long » : plusieurs séries dans un même fichier
+# ---------------------------------------------------------------------------
+#
+# Un export de table (shelly_cl, portails multi-onduleurs…) range une ligne
+# par horodatage ET par appareil, avec une colonne qui dit à qui appartient la
+# valeur. Lu comme une seule série, les puissances de tous les appareils se
+# suivent dans une même courbe et faussent moyennes, maxima et énergie, sans
+# aucun message. Le capteur personnalisé porte donc la colonne d'appartenance
+# (`series_col`) et le fichier est découpé en une série par valeur AVANT tout
+# calcul ; sans elle, un fichier visiblement multi-séries est refusé.
+
+SERIES_KEY = "__series_key"
+SERIES_LABEL = "__series_label"
+
+# Noms de colonnes qui identifient une série : un identifiant d'abord (stable),
+# un nom ensuite (un appareil peut être renommé en cours de campagne).
+_SERIES_ID_RE = re.compile(r"(^|_)id$|serial|s[ée]rie|canal|channel|voie|mac", re.I)
+_SERIES_NAME_RE = re.compile(r"device|appareil|name|nom|compteur|meter|sensor|capteur|onduleur|inverter", re.I)
+# Part minimale des lignes dont l'horodatage est répété pour soupçonner un format long.
+_MIXED_MIN_SHARE = 0.2
+
+
+def _series_text(v: Any) -> Optional[str]:
+    """Valeur de série en texte stable : 12.0 (lu d'Excel) → « 12 », vide → None."""
+    if isinstance(v, float) and not pd.isna(v) and v.is_integer():
+        v = int(v)
+    text = _cell_text(v)
+    return text or None
+
+
+_TIME_ONLY_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
+_DECIMAL_RE = re.compile(r"^-?\d*[.,]\d+$")
+
+
+def _not_a_series_key(values: pd.Series) -> bool:
+    """Heure seule (colonne TIME d'un logger dont l'heure n'a pas été déclarée)
+    ou mesure décimale : jamais une série, même si elle distingue les lignes."""
+    sample = values.head(200)
+    if sample.empty:
+        return True
+    if sample.str.match(_TIME_ONLY_RE).mean() > 0.8:
+        return True
+    return sample.str.match(_DECIMAL_RE).mean() > 0.5
+
+
+def series_candidates(raw: pd.DataFrame, timestamps: pd.Series, exclude: set) -> List[str]:
+    """Colonnes qui rendent l'horodatage unique : (horodatage, colonne) ne se
+    répète presque jamais alors que l'horodatage seul se répète. Identifiants
+    en tête, puis noms d'appareil, puis le reste."""
+    ts = timestamps.reset_index(drop=True)
+    valid = ts.notna()
+    if valid.sum() == 0:
+        return []
+    found: List[str] = []
+    for col in raw.columns:
+        if col in exclude:
+            continue
+        key = raw[col].reset_index(drop=True).map(_series_text)
+        if _not_a_series_key(key[valid].dropna()):
+            continue
+        n_keys = key[valid].nunique()
+        # Une série revient sur plusieurs lignes : une colonne quasi unique par
+        # ligne (id de ligne, horodatage de mesure…) n'en est pas une.
+        if not 2 <= n_keys <= min(500, valid.sum() / 2):
+            continue
+        pairs = pd.DataFrame({"t": ts[valid], "k": key[valid]}).dropna()
+        if pairs.empty or pairs.duplicated().mean() > 0.02:
+            continue
+        found.append(col)
+    def rank(c: str) -> int:
+        if _SERIES_ID_RE.search(str(c)):
+            return 0
+        return 1 if _SERIES_NAME_RE.search(str(c)) else 2
+    return sorted(found, key=lambda c: (rank(c), found.index(c)))
+
+
+def _refuse_mixed_series(raw: pd.DataFrame, timestamps: pd.Series, exclude: set) -> None:
+    """Refuse un fichier où plusieurs lignes partagent le même horodatage ET où
+    une colonne les distingue : ce sont plusieurs séries, les lire comme une
+    seule mélangerait les valeurs. Sans colonne distinctive, rien ne permet de
+    séparer : on laisse passer (comportement inchangé)."""
+    ts = timestamps.dropna()
+    if ts.empty:
+        return
+    share = ts.duplicated(keep=False).mean()
+    if share < _MIXED_MIN_SHARE:
+        return
+    candidates = series_candidates(raw, timestamps, exclude)
+    if not candidates:
+        return
+    best = candidates[0]
+    n = raw[best].map(_series_text).nunique()
+    raise ValueError(
+        f"Ce fichier contient plusieurs séries : {round(share * 100)} % des lignes partagent leur "
+        f"horodatage, et la colonne « {best} » les distingue ({n} valeurs). Les lire comme une seule "
+        f"série mélangerait les valeurs. Modifiez le capteur et indiquez « {best} » dans "
+        f"« Une série par »."
+    )
+
+
+def _series_label(group: pd.DataFrame, key: str) -> str:
+    """Nom affiché : le plus récent du groupe (un appareil peut être renommé
+    en cours de campagne — on garde son nom actuel), sinon la clé."""
+    if SERIES_LABEL in group.columns:
+        names = group.sort_values("timestamp")[SERIES_LABEL].dropna()
+        if not names.empty:
+            return str(names.iloc[-1])
+    return key
 
 
 def _numeric_or_text(series: pd.Series) -> pd.Series:
@@ -895,6 +1030,70 @@ def preview_table(contents: bytes, max_rows: int = 5000) -> Dict[str, Any]:
     return {"columns": [str(c) for c in df.columns], "preamble": preamble, "row_count": n, "rows": rows}
 
 
+def _process_series(
+    df: pd.DataFrame,
+    config: Dict[str, Any],
+    value_col: str,
+    extra_cols: Dict[str, str],
+    keep_negative: bool,
+) -> Dict[str, Any]:
+    """Capteur à `series_col` : un payload complet par série (même grandeur,
+    même unité, mêmes colonnes que le capteur), regroupés sous `series`."""
+    sensor_name = config.get("name", "Capteur personnalisé")
+    own_cols = {config.get("series_col"), config.get("series_label_col")}
+    without_key = int(df[SERIES_KEY].isna().sum())
+
+    series: List[Dict[str, Any]] = []
+    skipped: List[str] = []
+    for key, group in df[df[SERIES_KEY].notna()].groupby(SERIES_KEY, sort=False):
+        label = _series_label(group, key)
+        # Colonnes propres à la série seulement : celles qui l'identifient sont
+        # constantes, et une colonne vide pour cet appareil (P b, P c d'un
+        # monophasé) ne ferait qu'encombrer le tableau.
+        cols = {
+            lab: col for lab, col in extra_cols.items()
+            if col not in own_cols and col in group.columns and group[col].notna().any()
+        }
+        measurements = _build_measurements(group, value_col=value_col, extra_cols=cols, keep_negative=keep_negative)
+        if not measurements:
+            skipped.append(label)
+            continue
+        stamps = pd.Series([m["timestamp"] for m in measurements])
+        series.append({
+            "measurements": measurements,
+            "sensor_type": "CUSTOM",
+            "metric_label": config.get("metric_label", "Valeur"),
+            "unit": config.get("unit", ""),
+            "quantity_kind": config.get("quantity_kind", "energy"),
+            "series_key": key,
+            "series_label": label,
+            "processing_info": {
+                "original_rows": len(group),
+                "valid_measurements": len(measurements),
+                "sensor_label": sensor_name,
+                "series_key": key,
+                "series_label": label,
+                "duplicate_timestamps": int(stamps.duplicated().sum()),
+            },
+        })
+
+    if not series:
+        raise ValueError("Aucune mesure exploitable après nettoyage des données (aucune série n'a de valeur)")
+    series.sort(key=lambda s: s["series_label"].lower())
+
+    return {
+        "series": series,
+        "sensor_type": "CUSTOM",
+        "processing_info": {
+            "original_rows": len(df),
+            "series_count": len(series),
+            "skipped_series": skipped,
+            "rows_without_series": without_key,
+            "sensor_label": sensor_name,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Point d'entrée unique
 # ---------------------------------------------------------------------------
@@ -908,7 +1107,11 @@ def process_measurement_file(
 
     Pour un capteur personnalisé, passer `sensor_type='CUSTOM'` et fournir
     `custom_config` avec les clés : timestamp_col, value_col, unit, metric_label,
-    extra_cols (liste), keep_negative, timestamp_format (optionnel).
+    extra_cols (liste), keep_negative, timestamp_format (optionnel),
+    series_col / series_label_col (optionnels).
+
+    Avec `series_col`, la réponse est `{"series": [payload, …], "processing_info"}` :
+    un payload complet par série, au lieu d'un seul.
     """
     if sensor_type == "CUSTOM":
         if not custom_config:
@@ -929,6 +1132,9 @@ def process_measurement_file(
             raise ValueError(
                 f"Colonne « {value_col} » introuvable ou fichier vide après parsing."
             )
+
+        if SERIES_KEY in df.columns:
+            return _process_series(df, custom_config, value_col, extra_cols, keep_negative)
 
         original_rows = len(df)
         measurements = _build_measurements(

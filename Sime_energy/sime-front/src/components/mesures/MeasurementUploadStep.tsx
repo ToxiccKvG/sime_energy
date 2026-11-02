@@ -184,13 +184,16 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, load
     setUploading(true);
     const results: MeasurementData[] = [];
     let errors = 0;
+    let filesOk = 0;
 
     for (const entry of pending) {
       const resolved = resolveSensor(entrySensor(entry))!;
       patchStatus(entry.file.name, { status: 'loading' });
       try {
+        // Un fichier « long » donne un relevé par série (capteur à series_col)
         const data = await uploadMeasurementFile(entry.file, resolved.type, resolved.config);
-        results.push(data);
+        results.push(...data);
+        filesOk++;
         patchStatus(entry.file.name, { status: 'success' });
       } catch (err) {
         errors++;
@@ -201,7 +204,12 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, load
     setUploading(false);
 
     if (results.length > 0) {
-      toast({ title: 'Mesures traitées', description: `${results.length} fichier(s) traité(s) avec succès` });
+      toast({
+        title: 'Mesures traitées',
+        description: results.length > filesOk
+          ? `${filesOk} fichier(s) traité(s) — ${results.length} relevés (une série par appareil)`
+          : `${filesOk} fichier(s) traité(s) avec succès`,
+      });
       onFilesUploaded(results);
       setEntries((prev) => prev.filter((e) => e.status !== 'success'));
       setSensorType('');
@@ -214,7 +222,7 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, load
   // Appelé par le mapper : analyser directement sans sauvegarder
   const handleMapperAnalyze = async (file: File, config: CustomSensorInput) => {
     const data = await uploadMeasurementFile(file, 'CUSTOM', config);
-    onFilesUploaded([data]);
+    onFilesUploaded(data);
     setShowMapper(false);
   };
 
@@ -299,7 +307,7 @@ export function MeasurementUploadStep({ onFilesUploaded, isLoading = false, load
               <div key={c.id} className="flex items-center gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/5">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-white truncate">{c.name}</p>
-                  <p className="text-xs text-slate-500">{c.metric_label} · {c.unit}</p>
+                  <p className="text-xs text-slate-500">{c.metric_label} · {c.unit}{c.series_col ? ` · une série par « ${c.series_col} »` : ''}</p>
                 </div>
                 <button className="text-slate-400 hover:text-blue-400 transition-colors shrink-0"
                   onClick={() => setEditingSensor(c)} title="Modifier">

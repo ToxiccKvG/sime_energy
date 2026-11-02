@@ -58,13 +58,18 @@ export interface EnergyLabelAnalysis {
 const API_URL = import.meta.env.VITE_API_URL;
 
 /**
- * Upload et traite un fichier de mesure (CSV, XLSX, XLS)
+ * Upload et traite un fichier de mesure (CSV, XLSX, XLS).
+ *
+ * Renvoie un relevé par série : un seul en général, plusieurs pour un capteur
+ * personnalisé à `series_col` (fichier « long », ex. export de shelly_cl avec
+ * une ligne par appareil et par horodatage). Chaque série devient un relevé à
+ * part, nommé d'après l'appareil — jamais une courbe qui mélange les appareils.
  */
 export async function uploadMeasurementFile(
   file: File,
   sensorType: string = "",
   sensorConfig?: object,
-): Promise<MeasurementData> {
+): Promise<MeasurementData[]> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("sensor_type", sensorType || "CUSTOM");
@@ -91,18 +96,25 @@ export async function uploadMeasurementFile(
     throw new Error(detail);
   }
 
-  const data: MeasurementData = await response.json();
-  data.file_name = file.name;
-  try {
-    data.kpis = computeMeasurementKpis(data.measurements ?? [], {
-      unit: data.unit ?? '',
-      metricLabel: data.metric_label ?? 'Valeur',
-      quantityKind: data.quantity_kind ?? 'energy',
-    });
-  } catch (e) {
-    console.warn('Impossible de calculer les statistiques du fichier :', e);
+  const body: MeasurementData & { series?: (MeasurementData & { series_label?: string })[] } = await response.json();
+  // Une série par appareil : nommée d'après lui (alias renommable), le fichier
+  // d'origine reste visible à côté dans la liste des relevés.
+  const parts: MeasurementData[] = body.series
+    ? body.series.map(({ series_label, ...s }) => ({ ...s, alias: series_label }))
+    : [body];
+  for (const data of parts) {
+    data.file_name = file.name;
+    try {
+      data.kpis = computeMeasurementKpis(data.measurements ?? [], {
+        unit: data.unit ?? '',
+        metricLabel: data.metric_label ?? 'Valeur',
+        quantityKind: data.quantity_kind ?? 'energy',
+      });
+    } catch (e) {
+      console.warn('Impossible de calculer les statistiques du fichier :', e);
+    }
   }
-  return data;
+  return parts;
 }
 
 /**

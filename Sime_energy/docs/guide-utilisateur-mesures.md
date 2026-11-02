@@ -62,6 +62,17 @@ liste dit combien, et « Ajouter » permet d'en reprendre une. Les boutons **Tou
 colonnes** / **Aucune** évitent de les cocher une à une. Vérifiez, corrigez, puis
 **Analyser maintenant** ou **Sauvegarder le capteur**.
 
+**Plusieurs appareils dans un même fichier.** Certains exports (table de la collecte
+IoT, portail à plusieurs onduleurs…) ont une ligne par horodatage **et par appareil**,
+avec une colonne qui dit à qui appartient la valeur (`device_id`, `name`…). Le formulaire
+le détecte et remplit **Une série par** (de préférence l'identifiant : les noms peuvent
+changer) et **Nom affiché de chaque série**. Au traitement, le fichier donne **un relevé
+par appareil**, nommé d'après lui (renommable), le fichier d'origine restant indiqué à
+côté. Les capteurs sans la grandeur choisie (ex. capteurs de porte dans un export de
+puissance) sont écartés. Si un capteur sans « Une série par » reçoit un tel fichier, le
+traitement est **refusé** avec la colonne à indiquer : modifiez le capteur (crayon)
+plutôt que d'obtenir une courbe qui mélange les appareils.
+
 L'encadré **Dates interprétées** montre le premier et le dernier relevé, le pas et le
 nombre de lignes tels qu'ils seront lus. C'est là qu'on repère une date lue à l'envers :
 `09-05-2026` peut être le 5 septembre (mois-jour, exports américains) ou le 9 mai

@@ -40,6 +40,8 @@ export function CustomSensorEditPanel({ sensor, onSaved, onCancel }: CustomSenso
   const [extraCols, setExtraCols] = useState<ExtraCol[]>(sensor.extra_cols ?? []);
   const [keepNegative, setKeepNegative] = useState(sensor.keep_negative);
   const [quantityKind, setQuantityKind] = useState<QuantityKind>(sensor.quantity_kind ?? 'energy');
+  const [seriesCol, setSeriesCol] = useState(sensor.series_col ?? '');
+  const [seriesLabelCol, setSeriesLabelCol] = useState(sensor.series_label_col ?? '');
   // Si le capteur a déjà un type de grandeur explicite, on ne le réécrase pas
   // silencieusement en changeant l'unité — seuls les capteurs legacy (créés avant
   // ce champ) profitent de la suggestion automatique.
@@ -68,6 +70,8 @@ export function CustomSensorEditPanel({ sensor, onSaved, onCancel }: CustomSenso
         extra_cols: extraCols.filter((e) => e.col && e.label),
         keep_negative: keepNegative,
         quantity_kind: quantityKind,
+        series_col: seriesCol.trim() || null,
+        series_label_col: seriesCol.trim() && seriesLabelCol.trim() ? seriesLabelCol.trim() : null,
       });
       toast({ title: 'Capteur mis à jour', description: `« ${saved.name} » a été modifié` });
       onSaved(saved);
@@ -129,6 +133,16 @@ export function CustomSensorEditPanel({ sensor, onSaved, onCancel }: CustomSenso
               className="w-4 h-4 accent-blue-500" />
             <span className="text-slate-300 text-sm">Conserver (injection réseau, retour…)</span>
           </label>
+        </Field>
+
+        <Field label="Une série par" hint="Fichier avec une ligne par horodatage ET par appareil : colonne qui identifie l'appareil (ex. device_id). Vide = une seule série.">
+          <Input value={seriesCol} onChange={(e) => setSeriesCol(e.target.value)} placeholder="ex: device_id"
+            className="bg-white/5 border-white/20 text-white font-mono text-sm" />
+        </Field>
+
+        <Field label="Nom affiché de chaque série" hint="Optionnel (ex. name) : le nom le plus récent de chaque appareil est gardé.">
+          <Input value={seriesLabelCol} onChange={(e) => setSeriesLabelCol(e.target.value)} placeholder="ex: name" disabled={!seriesCol.trim()}
+            className="bg-white/5 border-white/20 text-white font-mono text-sm disabled:opacity-50" />
         </Field>
 
         <Field label="Type de grandeur" hint={QUANTITY_KIND_OPTIONS.find((o) => o.value === quantityKind)?.hint}>
