@@ -15,7 +15,7 @@
 
 ### Comptes Shelly Cloud
 
-La collecte lit **9 sites** (une clé Shelly par site, sauf le compte Prestation partagé entre deux sites). La table `shelly_accounts` est la source de vérité (voir § 3.1).
+La collecte lit **8 sites** (une clé Shelly par site ; la clé Prestation ne sert plus qu'à la Mosquée depuis le 02/11). La table `shelly_accounts` est la source de vérité (voir § 3.1).
 
 | Site | Pays / distributeur | Compte | Serveur |
 |---|---|---|---|
@@ -24,7 +24,7 @@ La collecte lit **9 sites** (une clé Shelly par site, sauf le compte Prestation
 | Bureau CER2E Dakar | Sénégal / SENELEC | clé du logement Dakar, collecté depuis le 19/10 | shelly-299-eu |
 | Bureau CER2E Thiès | Sénégal / SENELEC | clé du logement Thiès, collecté depuis le 19/10 | shelly-299-eu |
 | Donsin | Burkina Faso / **SONABEL** | compte dédié Donsin | shelly-271-eu |
-| Prestation CER2E | Sénégal / SENELEC | prestation@cer2e.com, **pièce SENELEC seulement**, collecté depuis le 26/10 | shelly-98-eu |
+| ~~Prestation CER2E~~ | Sénégal / SENELEC | prestation@cer2e.com, pièce SENELEC seulement, collecté du 26/10 au **02/11** (ligne désactivée : compteur passé sous Boussoura) | shelly-98-eu |
 | Mosquée Sacré Cœur | Sénégal / SENELEC | prestation@cer2e.com (même clé), **pièce « Mosquée sacré cœur » seulement**, collecté depuis le 28/10 | shelly-98-eu |
 | Boussoura | Sénégal / SENELEC | compte dédié de Mme Boussoura, tout le compte, collecté depuis le 29/10 | shelly-242-eu |
 | Babs Ndiaye | Sénégal / SENELEC | compte dédié de Babs Ndiaye, tout le compte, collecté depuis le 29/10 | shelly-188-eu |
@@ -59,7 +59,8 @@ La collecte lit **9 sites** (une clé Shelly par site, sauf le compte Prestation
 
 - Deux comptes Shelly dédiés, **collectés en entier** (`appareils_inclus` vide). Relevés minute depuis le **29/10 vers 13 h 30 UTC**.
 - **Boussoura** (12 voies) : `dcb4d9ce46ec` GENERAL SENELEC (Shelly EM Gen3, pince 2 `_1` sans nom ni pièce), éclairages salon et chambre, clims salon et chambre, chauffe-eau, réfrigérateur, M1 et M2 de la buanderie (sans précision), prise buanderie, capteur de porte d'entrée.
-- **La ligne « Prestation CER2E » est gardée** (décision du 29/10) : le Shelly EM `08f9e0e4d080` de la pièce SENELEC reste collecté à côté du compte dédié.
+- **Le Shelly EM `08f9e0e4d080` (SENELEC de Mme Boussara) est collecté sous Boussoura depuis le 02/11 09:45 UTC.** Il a été partagé depuis le compte Prestation dans le compte Boussoura le 01/11 vers 07:28 (nom de l'app « … from prestation@cer2e.com ») : il était alors lu deux fois. La ligne « Prestation CER2E » est désactivée, les copies Boussoura antérieures sont supprimées (sauvegarde `backup.boussoura_doublon_prestation_20261102`), l'historique reste sous Prestation CER2E. Boussoura a donc **deux `M1_RESEAU`** (GENERAL SENELEC et celui-ci) : câblage à confirmer.
+- **Un appareil partagé depuis un autre compte apparaît dans all_status des deux comptes** : à surveiller quand un compte est collecté en entier.
 - **Babs Ndiaye** (6 voies) : `6825ddd2a69c` SENELEC (Pro 3EM 63 A), Pro 4PM `c8f09e83ea14` (clims chambre visiteur, chambre parent, salon + une voie sans nom), chauffe-eau `a0dd6ca9bacc`. **Au 29/10, seul le SENELEC est en ligne.**
 - **Rôles proposés, non confirmés** : compteur général = `M1_RESEAU`, le reste = `DEPART`, voies sans nom et porte = `AUTRE`.
 - Le Pro 1PM UL (`SPSW-201PE15UL`) a été ajouté à `shelly_device_types` : il n'était pas reconnu (famille INCONNU).
