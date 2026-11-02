@@ -177,8 +177,12 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
   const tsPreview = useMemo(() => {
     if (!fileData || !timestampCol) return null;
     const forced = dateOrder === 'dmy' ? true : dateOrder === 'mdy' ? false : null;
-    return previewTimestamps(fileData.sample, timestampCol, timeCol, forced);
-  }, [fileData, timestampCol, timeCol, dateOrder]);
+    // Fichier à plusieurs séries : chaque horodatage revient une fois par
+    // appareil, le pas médian serait 0 s. On le mesure sur la 1re série.
+    const firstKey = seriesCol ? fileData.sample.find((r) => r[seriesCol] != null)?.[seriesCol] : undefined;
+    const rows = firstKey === undefined ? fileData.sample : fileData.sample.filter((r) => r[seriesCol] === firstKey);
+    return previewTimestamps(rows, timestampCol, timeCol, forced);
+  }, [fileData, timestampCol, timeCol, dateOrder, seriesCol]);
 
   // Détection recalculée si l'utilisateur change l'horodatage ou la grandeur
   const seriesHint = useMemo(
@@ -389,7 +393,7 @@ export function CustomSensorMapper({ onAnalyze, onSaved }: CustomSensorMapperPro
                   <>
                     <span>du <span className="text-white">{fmtDate(tsPreview.first)}</span> au <span className="text-white">{fmtDate(tsPreview.last)}</span></span>
                     {tsPreview.stepSeconds != null && <span>pas <span className="text-white">{fmtStep(tsPreview.stepSeconds)}</span></span>}
-                    <span>{tsPreview.total - tsPreview.invalid} relevé(s){fileData && fileData.sample.length < fileData.rowCount ? ' (échantillon)' : ''}</span>
+                    <span>{tsPreview.total - tsPreview.invalid} relevé(s){seriesCol ? ' par série (1re série)' : ''}{fileData && fileData.sample.length < fileData.rowCount ? ' (échantillon)' : ''}</span>
                     {tsPreview.invalid > 0 && <span className="text-amber-400">{tsPreview.invalid} illisible(s)</span>}
                   </>
                 ) : (

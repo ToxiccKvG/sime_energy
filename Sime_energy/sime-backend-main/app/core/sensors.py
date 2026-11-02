@@ -901,18 +901,21 @@ def _series_text(v: Any) -> Optional[str]:
     return text or None
 
 
-_TIME_ONLY_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
+_TIME_ONLY_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2}([.,]\d+)?)?$")
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
 _DECIMAL_RE = re.compile(r"^-?\d*[.,]\d+$")
 
 
 def _not_a_series_key(values: pd.Series) -> bool:
-    """Heure seule (colonne TIME d'un logger dont l'heure n'a pas été déclarée)
-    ou mesure décimale : jamais une série, même si elle distingue les lignes."""
+    """Partie de la date (heure seule d'un logger DATE / TIME, année d'un récap
+    Mois / Année, date) ou mesure décimale : jamais une série, même si elle
+    distingue les lignes — elle complète l'horodatage."""
     sample = values.head(200)
     if sample.empty:
         return True
-    if sample.str.match(_TIME_ONLY_RE).mean() > 0.8:
-        return True
+    for pattern in (_TIME_ONLY_RE, _YEAR_RE, _DATE_RE):
+        if sample.str.match(pattern).mean() > 0.8:
+            return True
     return sample.str.match(_DECIMAL_RE).mean() > 0.5
 
 

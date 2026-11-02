@@ -345,6 +345,8 @@ const SERIES_ID_RE = /(^|_)id$|serial|s[ée]rie|canal|channel|voie|mac/i;
 const SERIES_NAME_RE = /device|appareil|name|nom|compteur|meter|sensor|capteur|onduleur|inverter/i;
 const LABEL_COL_RE = /name|nom|libell|label|d[ée]signation/i;
 const DECIMAL_RE = /^-?\d*[.,]\d+$/;
+// Parties de la date : heure seule (fractions de seconde comprises), année, date
+const DATE_PART_RES = [/^\d{1,2}:\d{2}(:\d{2}([.,]\d+)?)?$/, /^(19|20)\d{2}$/, DATE_RE];
 
 export interface SeriesSuggestion {
   /** Colonne d'appartenance proposée. */
@@ -388,8 +390,8 @@ export function suggestSeries(
     const filledKeys = keys.filter(Boolean);
     if (filledKeys.length === 0) continue;
     const head = filledKeys.slice(0, 200);
-    // Heure seule ou mesure décimale : jamais une série
-    if (head.filter(k => TIME_ONLY_RE.test(k)).length > 0.8 * head.length) continue;
+    // Partie de la date (elle complète l'horodatage) ou mesure décimale : jamais une série
+    if (DATE_PART_RES.some(re => head.filter(k => re.test(k)).length > 0.8 * head.length)) continue;
     if (head.filter(k => DECIMAL_RE.test(k)).length > 0.5 * head.length) continue;
     const distinct = new Set(filledKeys).size;
     if (distinct < 2 || distinct > Math.min(500, filled / 2)) continue;

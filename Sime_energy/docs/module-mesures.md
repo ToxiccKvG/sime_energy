@@ -68,7 +68,8 @@ valeur par défaut aux fichiers non reconnus.
 > retirées ; une série sans aucune valeur est écartée et listée (`skipped_series`).
 > **Garde-fou** (`_refuse_mixed_series`) : sans `series_col`, si ≥ 20 % des lignes
 > partagent leur horodatage et qu'une colonne rend chaque couple (horodatage, colonne)
-> unique (`series_candidates` : 2 à 500 valeurs, répétées, ni heure seule ni décimale),
+> unique (`series_candidates` : 2 à 500 valeurs, répétées, ni partie de la date — heure,
+> année, date — ni décimale),
 > le fichier est refusé avec la colonne à indiquer. Sans colonne distinctive, comportement
 > inchangé. Non-régression vérifiée sur 20 fichiers réels à une série (Shelly Ma Maison,
 > exports Shelly Cloud, loggers H&T et sonomètres Donsin, station météo) ; export
