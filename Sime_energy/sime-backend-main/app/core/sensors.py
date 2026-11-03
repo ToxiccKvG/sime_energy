@@ -38,6 +38,7 @@ dans `SENSOR_REGISTRY`.
 import csv
 import io
 import logging
+import math
 import re
 from typing import Any, Callable, Dict, List, Optional
 
@@ -90,11 +91,18 @@ def _best_timestamp(df: pd.DataFrame, fmt: str, *keywords: str) -> pd.Series:
 
 
 def _to_float(value: Any) -> Optional[float]:
-    """Convertit en float arrondi (3 décimales) ou None si invalide/manquant."""
+    """Convertit en float ou None si invalide/manquant/infini.
+
+    Pas d'arrondi métier : jusqu'au 03/11/2026 la valeur était arrondie à
+    3 décimales, ce qui faussait les petites valeurs (relevés horaires en kWh
+    de quelques millièmes : Woyofal 0,029 kWh au lieu de 0,025, +17 %).
+    L'affichage formate lui-même (formatQuantity côté front) ; on ne retire
+    ici que le bruit de conversion binaire (9 décimales)."""
     try:
         if value is None or pd.isna(value):
             return None
-        return round(float(value), 3)
+        f = float(value)
+        return round(f, 9) if math.isfinite(f) else None
     except (ValueError, TypeError):
         return None
 

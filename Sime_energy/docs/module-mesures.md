@@ -85,7 +85,9 @@ fichier (bytes) + sensor_type [+ sensor_config JSON si CUSTOM]
 parser du registre  ──►  DataFrame normalisé : timestamp + value_col + colonnes secondaires
    ▼
 _build_measurements()  ──►  toutes les lignes valides (timestamp et valeur non nuls),
-                            valeurs négatives conservées sauf keep_negative=False
+                            valeurs négatives conservées sauf keep_negative=False,
+                            valeurs NON arrondies (depuis le 03/11/2026 ; avant :
+                            3 décimales, fausses sur les petites valeurs en kWh)
    ▼
 JSON : measurements, sensor_type, metric_label, unit, quantity_kind, processing_info
        (capteur à series_col : { series: [ce JSON, un par série], processing_info })
