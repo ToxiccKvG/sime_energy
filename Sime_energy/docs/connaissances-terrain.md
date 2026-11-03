@@ -92,6 +92,7 @@ La collecte lit **9 sites** (une clé Shelly par site, sauf le compte Prestation
   - M4 groupe électrogène (2 canaux), Cafétéria_TD RDC, Charges_TD niveau 2 ;
   - FOUTA POIDS LOURDS (M1, M2, M4, depuis le 31/07-01/08) : ils seront réutilisés ailleurs. S'ils réapparaissent, vérifier d'abord sur quel site ils ont été réaffectés ;
   - au 16/10, 42 appareils de l'Académie sont déclarés « déconnecté volontairement » (`shelly_device_retraits`).
+  - **03/11 : 20 de ces retraits clos** parce que les appareils transmettent ailleurs : 19 appareils des bureaux Dakar et Thiès (collectés via leurs propres clés depuis le 19/10, retraits clos au 19/10 09:00) et `483fdac3b59d`, devenu l'Ancien bâtiment de la Mosquée (clos au 28/10 15:10). **Règle** : quand un appareil retiré réapparaît sur un autre site, clore son retrait à son premier relevé sur ce site.
 - **PV_BUILDING COMMUNAL** :
   - pince de courant (TC) montée à l'envers (`sens_inverse = true`) : la production apparaît en soutirage ;
   - **incident sur la centrale depuis le 20/08** : la production tombe à environ un tiers (≈ 45 kWh/j au lieu de ≈ 150). Le constat date du 19/10 et la fin de l'incident est inconnue. Ne jamais supprimer ces données : elles sont marquées « Incident ».
