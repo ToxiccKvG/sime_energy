@@ -105,6 +105,9 @@ Signature : appareils secteur muets pendant que les capteurs à pile émettent ;
 10. **Capteur déplacé = un `device_id`, plusieurs appareils réels.** Table `shelly_device_periodes` (du/au, site, libellé, statut `confirme` / `incertain`) : seuls les capteurs ayant changé d'appareil y figurent (prises de la mission « Prestation CER2E » 18→27/05 réinstallées à l'Académie ou à Ma Maison, `441d6475d44c` Compteur 2 Académie → Arrivée générale Donsin, PC1/PC2 Donsin…). IOT › Analyse le signale au chargement et propose de commencer à l'affectation actuelle. Quand on déplace un capteur : ajouter une ligne (et fermer la précédente avec `au`). Ne relèvent PAS de cette table : les simples renommages, le site « Ma Maison » posé une heure le 20/04 sur 15 appareils de l'Académie, et les appareils de Donsin notés « Académie » du 06 au 09/07 (avant la migration du compte).
 11. **Double collecte du 26/05 au 17/06/2026** : deux collectes écrivaient la même mesure sous deux noms différents (une ligne par minute + une toutes les 10 min, probablement l'ancienne fonction `swift-processor`). Les valeurs sont justes ; dédoublonner sur `measured_at` (règle 1) ; ne pas se fier au `name` des lignes sur cette période. Les capteurs dont l'appareil réel est inconnu sont marqués `incertain` dans `shelly_device_periodes`.
 
+- **Énergie horaire** (`wh_conso`, `wh_inj`, depuis le 2026-11-04) : somme des hausses du compteur, relevé après relevé (`fn_energie_compteur`). Une baisse de plus de 50 % est une remise à zéro. Après plus d'une heure sans mesure, la hausse n'est pas comptée : on ne sait pas quand elle a eu lieu. Sur une période avec de longs trous, le total reste donc sous le compteur ; les heures mesurées l'indiquent.
+- **Arbre des circuits** (`shelly_device_roles.parent_device_id`) : un circuit imbriqué n'est jamais additionné à son parent. Sans arbre déclaré, un site reste à plat. Déclaré pour la Mosquée seulement ; se règle dans Rôle des appareils (« Alimenté par »), sur les rôles confirmés.
+
 ## 6. Dépannage
 
 | Symptôme | Où regarder |
@@ -125,6 +128,15 @@ Signature : appareils secteur muets pendant que les capteurs à pile émettent ;
 - Restaurer un mois : décompresser le CSV.gz et le recharger dans la table (colonnes = en-tête du fichier ; cellule vide = NULL).
 - Capacité : base 3,46 Go (1er oct. 2026), seuil de 8 Go repoussé à mi-2028 ; la vraie question est la **rétention du brut**. Dédoublonner à l'ingestion réduirait le volume.
 - Contrôle : `select pg_size_pretty(pg_database_size(current_database()));`
+
+**Reprise de l'énergie horaire (2026-11-04)** : `SHELLY_GCP_00/scripts/reprise_energie_horaire.sh` a recalculé tout l'historique par tranches de 10 jours (+2,3 % au total). Les valeurs précédentes sont dans `backup.shelly_cl_horaire_energie_20261104`. Retour arrière :
+
+```sql
+update shelly_cl_horaire h set wh_conso = b.wh_conso, wh_inj = b.wh_inj
+  from backup.shelly_cl_horaire_energie_20261104 b where b.id = h.id;
+```
+
+Le script ne se relance pas après une autre reprise sans renommer cette sauvegarde : elle garderait les valeurs d'avant la première.
 
 ## 8. Gouvernance
 
