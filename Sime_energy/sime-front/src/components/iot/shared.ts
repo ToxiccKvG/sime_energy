@@ -225,6 +225,7 @@ export interface ShellyRow {
   deviceId?: string;
   deviceFamily?: string;            // ENERGIE_1PH, LUMIERE…
   role?: string | null;             // shelly_device_roles : M1_RESEAU, DEPART…
+  departImbrique?: boolean;         // départ alimenté par un autre départ : déjà compté dans son parent
   nbHeures?: number;                // heures présentes ce jour dans la plage
   // Part de la journée en quarantaine (fn_qualite, règles d'action « quarantaine »).
   // Les champs kWh ci-dessus restent BRUTS ; le nettoyage soustrait s'il est activé.

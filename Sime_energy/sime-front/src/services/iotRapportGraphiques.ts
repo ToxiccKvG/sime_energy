@@ -192,3 +192,127 @@ export function graphiqueTypesJour(t: GraphiquesRapport['typesJour'], couleur: s
   ctx.fillText('Moyenne par type de jour (jours retenus)', m.g, 40);
   return c.toDataURL('image/png');
 }
+
+/** Courbes sur des catégories (heures, jours) : une ligne par série, interrompue si pas de valeur. */
+export function graphiqueCourbes(titre: string, categories: string[], series: { libelle: string; valeurs: (number | null)[]; couleur: string }[], unite: string): string | null {
+  const toutes = series.flatMap(s => s.valeurs).filter((v): v is number => v != null);
+  if (categories.length === 0 || toutes.length === 0) return null;
+  const L = 1800, H = 700;
+  const [c, ctx] = toile(L, H);
+  const m = { g: 110, d: 30, h: 90, b: 70 };
+  const lz = L - m.g - m.d, hz = H - m.h - m.b;
+  const { pas, haut } = graduation(Math.max(0, ...toutes));
+  const yDe = (v: number) => m.h + hz - (Math.max(0, v) / haut) * hz;
+  const xDe = (i: number) => m.g + (i + 0.5) * (lz / categories.length);
+  ctx.font = `22px ${POLICE}`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let v = 0; v <= haut + 1e-9; v += pas) {
+    ctx.strokeStyle = GRILLE; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(m.g, yDe(v)); ctx.lineTo(L - m.d, yDe(v)); ctx.stroke();
+    ctx.fillStyle = TEXTE;
+    ctx.fillText(nf(v, pas < 1 ? (pas < 0.1 ? 2 : 1) : 0), m.g - 12, yDe(v));
+  }
+  ctx.save();
+  ctx.translate(30, m.h + hz / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.fillText(unite, 0, 0);
+  ctx.restore();
+  for (const s of series) {
+    ctx.strokeStyle = s.couleur;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    let enCours = false;
+    s.valeurs.forEach((v, i) => {
+      if (v == null) { enCours = false; return; }
+      if (enCours) ctx.lineTo(xDe(i), yDe(v)); else ctx.moveTo(xDe(i), yDe(v));
+      enCours = true;
+    });
+    ctx.stroke();
+  }
+  ctx.fillStyle = TEXTE;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const pasX = [1, 2, 3, 4, 6, 7, 14, 30].find(p => p * (lz / categories.length) >= 80) ?? 30;
+  categories.forEach((k, i) => { if (i % pasX === 0) ctx.fillText(k, xDe(i), H - m.b + 12); });
+  ctx.font = `bold 28px ${POLICE}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#0f172a';
+  ctx.fillText(titre, m.g, 38);
+  legende(ctx, series.map(s => ({ libelle: s.libelle, couleur: s.couleur, forme: 'ligne' as const })), m.g, 68);
+  return c.toDataURL('image/png');
+}
+
+/** Barres horizontales classées, avec valeur et part. */
+export function graphiqueRepartition(titre: string, items: { libelle: string; kwh: number; part: number | null }[], couleur: string): string | null {
+  const liste = items.filter(x => x.kwh > 0).sort((a, b) => b.kwh - a.kwh).slice(0, 12);
+  if (liste.length === 0) return null;
+  const L = 1800, hl = 54, H = 90 + liste.length * hl + 20;
+  const [c, ctx] = toile(L, H);
+  const gauche = 660, droite = 300;
+  const max = liste[0].kwh;
+  ctx.font = `bold 28px ${POLICE}`;
+  ctx.fillStyle = '#0f172a';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(titre, 20, 38);
+  ctx.textBaseline = 'middle';
+  liste.forEach((x, i) => {
+    const y = 90 + i * hl;
+    ctx.font = `22px ${POLICE}`;
+    ctx.fillStyle = TEXTE;
+    ctx.textAlign = 'right';
+    const lib = x.libelle.length > 52 ? `${x.libelle.slice(0, 51)}…` : x.libelle;
+    ctx.fillText(lib, gauche - 16, y + hl / 2 - 4);
+    ctx.fillStyle = couleur;
+    ctx.fillRect(gauche, y + 6, ((L - gauche - droite) * x.kwh) / max, hl - 20);
+    ctx.fillStyle = '#0f172a';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${nf(x.kwh, 1)} kWh${x.part != null ? ` · ${nf(x.part * 100, 0)} %` : ''}`, gauche + ((L - gauche - droite) * x.kwh) / max + 12, y + hl / 2 - 4);
+  });
+  return c.toDataURL('image/png');
+}
+
+/** Carte de chaleur : heures en ordonnée, 0 h en bas ; dates en bas, espacées ; case vide = non mesuré. */
+export function graphiqueCarteChaleur(titre: string, carte: { jours: string[]; matrice: (number | null)[][] }, couleur: string): string | null {
+  const valeurs = carte.matrice.flat().filter((v): v is number => v != null);
+  if (carte.jours.length === 0 || valeurs.length === 0) return null;
+  const L = 1800, H = 760;
+  const [c, ctx] = toile(L, H);
+  const m = { g: 90, d: 30, h: 60, b: 50 };
+  const lc = (L - m.g - m.d) / carte.jours.length, hc = (H - m.h - m.b) / 24;
+  const max = Math.max(...valeurs);
+  const r = parseInt(couleur.slice(1, 3), 16), g = parseInt(couleur.slice(3, 5), 16), b = parseInt(couleur.slice(5, 7), 16);
+  for (let h = 0; h < 24; h++) {
+    const y = m.h + (23 - h) * hc;
+    carte.jours.forEach((_, i) => {
+      const v = carte.matrice[h][i];
+      if (v == null) return;
+      const part = max > 0 ? v / max : 0;
+      ctx.fillStyle = `rgb(${Math.round(255 + (r - 255) * part)},${Math.round(255 + (g - 255) * part)},${Math.round(255 + (b - 255) * part)})`;
+      ctx.fillRect(m.g + i * lc, y, Math.ceil(lc), Math.ceil(hc));
+    });
+    if (h % 3 === 0) {
+      ctx.font = `20px ${POLICE}`;
+      ctx.fillStyle = TEXTE;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${h} h`, m.g - 10, y + hc / 2);
+    }
+  }
+  ctx.strokeStyle = GRILLE;
+  ctx.strokeRect(m.g, m.h, L - m.g - m.d, H - m.h - m.b);
+  ctx.font = `20px ${POLICE}`;
+  ctx.fillStyle = TEXTE;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const pasX = [1, 2, 3, 7, 14, 30].find(p => p * lc >= 80) ?? 30;
+  carte.jours.forEach((j, i) => { if (i % pasX === 0) ctx.fillText(`${j.slice(8, 10)}/${j.slice(5, 7)}`, m.g + (i + 0.5) * lc, H - m.b + 10); });
+  ctx.font = `bold 28px ${POLICE}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#0f172a';
+  ctx.fillText(`${titre} (0 à ${nf(max, 2)} kWh par heure)`, m.g, 38);
+  return c.toDataURL('image/png');
+}

@@ -27,10 +27,12 @@ import { useIOT } from './IOTContext';
 import { ProfilChargeTab } from './ProfilChargeTab';
 import { METRIQUES, METRIQUES_ENV, colorForMetric, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, fmtFr, grandeursDisponibles, type MetricKey, type MetricGroup } from './analyse/communs';
 import { EnvCourbeView, EnvBandeView, EnvHeatmapView, EnvProfil24View, SignatureView } from './analyse/VuesEnvironnement';
-import { PerimetreBar, type PerimetreAnalyse } from './PerimetreBar';
+import { PerimetreBar, perimetreDepuisChargement, type PerimetreAnalyse } from './PerimetreBar';
+import { fetchDeviceRoles } from '@/lib/shelly-device-role-service';
+import { idsSerieSansDoubleCompte, type RoleCircuit } from '@/lib/iot-circuits';
 import { useQualiteMoteur, QualiteLigne } from './QualiteMoteurPanel';
 import { parseShellyRow, profilMiToShellyRow, calculerStats, detecterFormatShelly, parseShellySectionCSV } from '@/lib/iot-profil-engine';
-import { transformRowsToProfilMi, transformHoraireToProfilMi, type SupabaseExportOptions } from '@/lib/iot-supabase-service';
+import { transformRowsToProfilMi, transformHoraireToProfilMi, fetchSiteBilan, type SiteBilan, type SupabaseExportOptions } from '@/lib/iot-supabase-service';
 import { JOURS_SEMAINE, MOIS_FR, COLONNES_PROFIL_SHELLY } from './shared';
 import type { ShellyRow } from './shared';
 
@@ -475,9 +477,23 @@ function MultiSelectFilter({ label, icon, options, selected, onChange }: {
 // ============================================================
 // COMPOSANT PRINCIPAL
 // ============================================================
+// Un seul format partagé : toLocaleDateString en recrée un à chaque appel, soit
+// 10 s pour 46 000 relevés à la minute contre 0,2 s ici (même texte affiché)
+const FORMAT_JOUR_MOIS = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short' });
+
+/** Plage horaire appliquée chaque jour aux relevés chargés. */
+function lignesDansPlage(rows: ShellyRow[], p: PerimetreAnalyse | null): ShellyRow[] {
+  if (!p || (p.heureDebut === 0 && p.heureFin === 23)) return rows;
+  return rows.filter(r => {
+    const h = toDate(r.date).getHours();
+    return p.heureDebut <= p.heureFin ? h >= p.heureDebut && h <= p.heureFin : h >= p.heureDebut || h <= p.heureFin;
+  });
+}
+
 export function AnalyseTab() {
   const { state, setActiveTab, setShellyRows, setSelectedFile, ensureFileContent } = useIOT();
   const { shellyRows, joursFerier, selectedFileId, filesLoaded } = state;
+  const chargementPartage = state.chargementShelly !== null;
 
   // ---- Profil Mi actif ----
 
@@ -494,21 +510,19 @@ export function AnalyseTab() {
   const [fichierIllisible, setFichierIllisible] = useState<string | null>(null);
 
   // ---- Données Supabase chargées ----
-  const [supabaseRows, setSupabaseRows] = useState<ShellyRow[]>([]);
-  const [supabaseFileName, setSupabaseFileName] = useState<string>('');
-  const [supabaseChargement, setSupabaseChargement] = useState<SupabaseExportOptions | null>(null);
+  // L'onglet est démonté quand on le quitte : au retour (ou après une recette
+  // rouverte), les lignes partagées avec le Nettoyage reprennent leur place de
+  // données Shelly, avec leur périmètre. Sinon elles passeraient par le chemin
+  // « fichier » de la Courbe de charge, conçu pour bien moins de lignes.
+  const [chargementRepris] = useState(() => (!selectedFileId && shellyRows.length > 0 ? state.chargementShelly : null));
+  const [supabaseRows, setSupabaseRows] = useState<ShellyRow[]>(() => (chargementRepris ? shellyRows : []));
+  const [supabaseFileName, setSupabaseFileName] = useState<string>(chargementRepris ? 'Supabase — Tous appareils' : '');
+  const [supabaseChargement, setSupabaseChargement] = useState<SupabaseExportOptions | null>(chargementRepris);
   // Périmètre choisi dans la barre (site, appareils, période, plage horaire) :
   // partagé par toutes les vues, Courbe de charge comprise
-  const [perimetreAnalyse, setPerimetreAnalyse] = useState<PerimetreAnalyse | null>(null);
-  // Plage horaire appliquée chaque jour aux relevés chargés
-  const supabaseRowsPlage = useMemo(() => {
-    const p = perimetreAnalyse;
-    if (!p || (p.heureDebut === 0 && p.heureFin === 23)) return supabaseRows;
-    return supabaseRows.filter(r => {
-      const h = toDate(r.date).getHours();
-      return p.heureDebut <= p.heureFin ? h >= p.heureDebut && h <= p.heureFin : h >= p.heureDebut || h <= p.heureFin;
-    });
-  }, [supabaseRows, perimetreAnalyse]);
+  const [perimetreAnalyse, setPerimetreAnalyse] = useState<PerimetreAnalyse | null>(
+    () => (chargementRepris ? state.perimetreShelly ?? perimetreDepuisChargement(chargementRepris) : null));
+  const supabaseRowsPlage = useMemo(() => lignesDansPlage(supabaseRows, perimetreAnalyse), [supabaseRows, perimetreAnalyse]);
 
 
   // Source active: supabase > local > contexte
@@ -624,7 +638,7 @@ export function AnalyseTab() {
   }, [joursFerier]);
 
   // ---- Callback Supabase ----
-  const handleSupabaseData = useCallback((rows: Record<string, unknown>[], _colonnes: string[], options: SupabaseExportOptions) => {
+  const handleSupabaseData = useCallback((rows: Record<string, unknown>[], options: SupabaseExportOptions, perimetre: PerimetreAnalyse) => {
     if (rows.length === 0) return;
     // Gardé pour le Nettoyage : même périmètre pour le moteur de qualité,
     // et recette rejouable
@@ -635,8 +649,10 @@ export function AnalyseTab() {
     if (parsed.length > 0) {
       setSupabaseRows(parsed);
       setSupabaseFileName('Supabase — Tous appareils');
+      // Déjà partagées avec le Nettoyage : ne pas y laisser l'ancien chargement
+      if (chargementPartage) setShellyRows(lignesDansPlage(parsed, perimetre), options, { perimetre });
     }
-  }, [joursFerier]);
+  }, [joursFerier, chargementPartage, setShellyRows]);
 
   const clearLocal = () => {
     setLocalRows([]); setFileName(''); setFichierIllisible(null);
@@ -644,6 +660,7 @@ export function AnalyseTab() {
 
   const clearSupabase = () => {
     setSupabaseRows([]); setSupabaseFileName('');
+    if (chargementPartage) setShellyRows([]);
   };
 
   const loadFromImported = useCallback((f: import('./shared').ImportedFile) => {
@@ -858,6 +875,34 @@ export function AnalyseTab() {
     return typeMap[crossFilter] ? slicerRows.filter(typeMap[crossFilter]) : slicerRows;
   }, [slicerRows, crossFilter, tcdLigne]);
 
+  // ── Sans double comptage : une arrivée et ses départs, ou un départ et ses
+  // sous-départs, ne s'additionnent pas. Les vues par période et les totaux ne
+  // portent que sur la série principale de chaque site.
+  const [rolesCircuits, setRolesCircuits] = useState<RoleCircuit[]>([]);
+  const [sitesBilan, setSitesBilan] = useState<SiteBilan[]>([]);
+  const donneesShelly = supabaseRows.length > 0;
+  useEffect(() => {
+    if (!donneesShelly) return;
+    let annule = false;
+    Promise.all([fetchDeviceRoles(), fetchSiteBilan()])
+      .then(([r, b]) => { if (!annule) { setRolesCircuits(r); setSitesBilan(b); } })
+      .catch(e => console.warn('[AnalyseTab] rôles indisponibles', e));
+    return () => { annule = true; };
+  }, [donneesShelly]);
+  const idsSerie = useMemo(() => {
+    if (!donneesShelly || rolesCircuits.length === 0) return null;
+    const vus = new Map<string, string>();
+    for (const r of activeRows) if (r.deviceId && !vus.has(r.deviceId)) vus.set(r.deviceId, r.deviceLocation ?? '');
+    const ids = idsSerieSansDoubleCompte([...vus].map(([deviceId, site]) => ({ deviceId, site })), rolesCircuits, sitesBilan);
+    // Tous les appareils chargés sont additionnables : rien à restreindre
+    return ids && ids.size < vus.size ? ids : null;
+  }, [donneesShelly, activeRows, rolesCircuits, sitesBilan]);
+  const sansDoubleCompte = useCallback(
+    (rows: ShellyRow[]) => (idsSerie ? rows.filter(r => !r.deviceId || idsSerie.has(r.deviceId)) : rows),
+    [idsSerie]);
+  const slicerSerie = useMemo(() => sansDoubleCompte(slicerRows), [slicerRows, sansDoubleCompte]);
+  const tcdParAppareils = !drillMonth && (tcdLigne === 'appareil' || tcdLigne === 'piece');
+
   const stats = useMemo(() => {
     const vals = filteredRows
       .map(r => safeNum((r as unknown as Record<string, unknown>)[primarySerieMetric] as number, NaN))
@@ -893,7 +938,7 @@ export function AnalyseTab() {
   const serieData = useMemo(() =>
     filteredRows.map(r => {
       const obj: Record<string, unknown> & { appareil: string; emplacement: string; piece: string } = {
-        date: toDate(r.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
+        date: FORMAT_JOUR_MOIS.format(toDate(r.date)),
         consommation: +(r.kwhTotal ?? 0).toFixed(3),
         isWeekend: r.isWeekend,
         isFerie: r.isJourFerie,
@@ -968,7 +1013,8 @@ export function AnalyseTab() {
   };
 
   const tcdData = useMemo(() => {
-    const src = slicerRows;
+    // Par appareil ou pièce, chacun garde sa ligne ; par période, la série principale seule
+    const src = tcdParAppareils ? slicerRows : slicerSerie;
     if (src.length === 0) return [];
 
     // Drill-down : si un mois est sélectionné, afficher les jours de ce mois
@@ -1020,12 +1066,19 @@ export function AnalyseTab() {
     ];
     return types.map(({ key, rows }) => buildTcdGroup(rows, key));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slicerRows, tcdLigne, tcdMetrics, drillMonth]);
+  }, [slicerRows, slicerSerie, tcdParAppareils, tcdLigne, tcdMetrics, drillMonth]);
 
   // Total de la métrique principale sur toutes les catégories → pour la colonne "Part %" (occupation)
-  const tcdPrimaryTotal = useMemo(
-    () => tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[primaryTcdMetric] ?? 0), 0),
-    [tcdData, primaryTcdMetric]);
+  // Par appareil ou pièce avec plusieurs niveaux de compteurs, le total vient de la
+  // série principale : la somme des lignes compterait deux fois les mêmes kWh.
+  const tcdGroupeTotal = useMemo(
+    () => (tcdParAppareils && idsSerie ? buildTcdGroup(slicerSerie, 'TOTAL') as unknown as Record<string, number> : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tcdParAppareils, idsSerie, slicerSerie, tcdMetrics, primaryTcdMetric]);
+  const tcdTotal = (mk: string) => tcdGroupeTotal
+    ? tcdGroupeTotal[mk] ?? 0
+    : tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
+  const tcdPrimaryTotal = tcdTotal(primaryTcdMetric);
   const tcdPart = (row: Record<string, unknown>): string => {
     const v = (row as Record<string, number>)[primaryTcdMetric] ?? 0;
     return tcdPrimaryTotal > 0 ? `${fmtFr((v / tcdPrimaryTotal) * 100, 1)} %` : '—';
@@ -1048,7 +1101,7 @@ export function AnalyseTab() {
   // Série temporelle par phase (granularité = jour) — style Shelly Cloud
   const stackedData = useMemo(() => {
     const byDate = new Map<string, { d: Date; a: number; b: number; c: number }>();
-    for (const r of slicerRows) {
+    for (const r of slicerSerie) {
       const d = toDate(r.date);
       const key = d.toISOString().slice(0, 10);
       const cur = byDate.get(key) ?? { d, a: 0, b: 0, c: 0 };
@@ -1066,17 +1119,17 @@ export function AnalyseTab() {
         'Phase C': +c.toFixed(2),
         'Total':   +(a + b + c).toFixed(2),
       }));
-  }, [slicerRows]);
+  }, [slicerSerie]);
 
   const profilSemaineData = useMemo(() =>
     JOURS_SEMAINE.map((jour, idx) => {
-      const rows = filteredRows.filter(r => toDate(r.date).getDay() === idx);
+      const rows = sansDoubleCompte(filteredRows).filter(r => toDate(r.date).getDay() === idx);
       return {
         jour,
         kwhMoyen: rows.length ? +(rows.reduce((s, r) => s + r.kwhNet, 0) / rows.length).toFixed(2) : 0,
         n: rows.length,
       };
-    }), [filteredRows]);
+    }), [filteredRows, sansDoubleCompte]);
 
   const distributionData = useMemo(() => {
     if (filteredRows.length < 2) return [];
@@ -1113,13 +1166,14 @@ export function AnalyseTab() {
         {/* ---- Périmètre : un seul chargement pour toutes les vues ---- */}
         <PerimetreBar
           colonnesRecommandees={recommendedColumns}
-          onCharge={(rows, colonnes, options, p) => { handleSupabaseData(rows, colonnes, options); setPerimetreAnalyse(p); }}
+          repris={chargementRepris && perimetreAnalyse ? { perimetre: perimetreAnalyse, chargement: chargementRepris, nbLignes: supabaseRows.length } : undefined}
+          onCharge={(rows, _colonnes, options, p) => { handleSupabaseData(rows, options, p); setPerimetreAnalyse(p); }}
         />
 
         {/* ---- Qualité : une ligne, détail et réglages dans le Nettoyage ---- */}
         {supabaseRows.length > 0 && (
           <QualiteLigne q={qualite} onVoir={() => {
-            setShellyRows(activeRows, supabaseChargement);
+            setShellyRows(activeRows, supabaseChargement, { perimetre: perimetreAnalyse, reglesExclues: state.reglesShelly });
             setSelectedFile(null);
             setActiveTab('nettoyage');
           }} />
@@ -1613,6 +1667,14 @@ export function AnalyseTab() {
                     )}
                   </div>
 
+                  {idsSerie && (
+                    <p className="text-xs text-slate-400 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5">
+                      {tcdParAppareils
+                        ? 'Chaque appareil garde sa ligne ; le total et les parts portent sur la série principale de chaque site, car arrivée et départs ne s\'additionnent pas.'
+                        : 'Calculé sur la série principale de chaque site (arrivée, charge ou départs de premier niveau) : additionner arrivée et départs compterait deux fois la même énergie.'}
+                    </p>
+                  )}
+
                   {/* Cross-filter banner */}
                   {crossFilter && (
                     <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-1.5 text-xs">
@@ -1692,7 +1754,7 @@ export function AnalyseTab() {
                           <td className="px-4 py-2 text-slate-400 text-xs">{tcdData.reduce((s, r) => s + r.n, 0)}</td>
                           {Array.from(tcdMetrics).map(mk => {
                             const meta = METRIQUES.find(m => m.key === mk);
-                            const total = tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
+                            const total = tcdTotal(mk);
                             return <td key={mk} className="px-4 py-2 text-xs" style={{ color: couleurMetrique(mk) }}>
                               {fmtFr(total, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                             </td>;
@@ -2109,7 +2171,7 @@ export function AnalyseTab() {
                       <td className="px-3 py-1.5 text-slate-400">{tcdData.reduce((s, r) => s + r.n, 0)}</td>
                       {Array.from(tcdMetrics).map(mk => {
                         const meta = METRIQUES.find(m => m.key === mk);
-                        const total = tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
+                        const total = tcdTotal(mk);
                         return <td key={mk} className="px-3 py-1.5" style={{ color: couleurMetrique(mk) }}>
                           {fmtFr(total, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                         </td>;

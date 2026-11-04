@@ -24,6 +24,10 @@ export interface GraphiqueExcel {
   colonneCategories: string;
   barres: SerieExcel | null;
   courbes: SerieExcel[];
+  /** Camembert sur cette colonne : remplace barres et courbes. */
+  camembert?: string;
+  /** Titre de l'axe vertical (kWh par défaut). */
+  uniteAxe?: string;
   /** Index (0-based) des points en clair : jours exclus des statistiques. */
   pointsClairs?: number[];
   formatCategories?: string;
@@ -81,14 +85,21 @@ function chartXml(g: GraphiqueExcel): string {
     + `<c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>`;
   const axeVal = `<c:valAx><c:axId val="5002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/>`
     + `<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="E2E8F0"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>`
-    + `<c:title>${texteRiche('kWh', 1000, false)}<c:overlay val="0"/></c:title>`
-    + `<c:numFmt formatCode="#,##0" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>`
+    + `<c:title>${texteRiche(g.uniteAxe ?? 'kWh', 1000, false)}<c:overlay val="0"/></c:title>`
+    + `<c:numFmt formatCode="General" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>`
     + `<c:crossAx val="5001"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>`;
+
+  // Camembert : parts lisibles sur la tranche, pas d'axes
+  const camembert = g.camembert ? `<c:pieChart><c:varyColors val="1"/><c:ser><c:idx val="0"/><c:order val="0"/>`
+    + `<c:tx><c:strRef><c:f>${ref(g.feuille, g.camembert, g.ligneEntete)}</c:f></c:strRef></c:tx>`
+    + `<c:dLbls><c:numFmt formatCode="0 %" sourceLinked="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="1"/><c:showBubbleSize val="0"/><c:showLeaderLines val="1"/></c:dLbls>`
+    + `${catTexte}<c:val><c:numRef><c:f>${ref(g.feuille, g.camembert, l1, l2)}</c:f></c:numRef></c:val></c:ser><c:firstSliceAng val="0"/></c:pieChart>` : '';
+  const trace = g.camembert ? camembert : `${barres}${courbes}${axeCat}${axeVal}`;
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
     + `<c:chartSpace xmlns:c="${NS_C}" xmlns:a="${NS_A}" xmlns:r="${NS_R}"><c:lang val="fr-FR"/><c:roundedCorners val="0"/>`
     + `<c:chart><c:title>${texteRiche(g.titre)}<c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>`
-    + `<c:plotArea><c:layout/>${barres}${courbes}${axeCat}${axeVal}</c:plotArea>`
+    + `<c:plotArea><c:layout/>${trace}</c:plotArea>`
     + `<c:legend><c:legendPos val="t"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart>`
     + `<c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr></c:chartSpace>`;
 }
@@ -156,5 +167,6 @@ export async function ajouterGraphiquesNatifs(buffer: ArrayBuffer, nomFeuille: s
     + '</Types>');
   zip.file('[Content_Types].xml', types);
 
-  return zip.generateAsync({ type: 'arraybuffer' });
+  // Compressé : sans cela, le classeur pèse plusieurs fois son poids normal
+  return zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
 }

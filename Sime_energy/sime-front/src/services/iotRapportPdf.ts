@@ -9,7 +9,8 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { RapportCourbe, Tableau } from './iotRapport';
-import { graphiqueJournalier, graphiqueTypesJour } from './iotRapportGraphiques';
+import { graphiqueCarteChaleur, graphiqueCourbes, graphiqueJournalier, graphiqueRepartition, graphiqueTypesJour } from './iotRapportGraphiques';
+import type { RapportAnalyses } from './iotRapportAnalyses';
 
 const BLEU: [number, number, number] = [30, 58, 138];
 const GRIS: [number, number, number] = [100, 100, 100];
@@ -35,11 +36,12 @@ function nombre(v: number, decimales: number): string {
 function cellule(v: string | number | Date | null, format?: string): string {
   if (v == null) return '';
   if (v instanceof Date) return v.toLocaleDateString('fr-FR');
+  if (typeof v === 'number' && format === 'pct') return `${nombre(v * 100, 0)} %`;
   if (typeof v === 'number') return nombre(v, format === 'kwh' ? 1 : 0);
   return txt(v);
 }
 
-export function exporterRapportPdf(r: RapportCourbe, nomFichier: string): void {
+export function exporterRapportPdf(r: RapportCourbe, nomFichier: string, a?: RapportAnalyses | null): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const largeur = doc.internal.pageSize.getWidth() - 2 * MARGE;
   const hauteurPage = doc.internal.pageSize.getHeight();
@@ -100,6 +102,35 @@ export function exporterRapportPdf(r: RapportCourbe, nomFichier: string): void {
     y += 4;
   }
 
+  // ── L'essentiel d'abord : le lecteur pressé s'arrête là ─────
+  if (a) {
+    titreSection('L’essentiel');
+    autoTable(doc, {
+      startY: y,
+      body: a.essentiel.map(c => [
+        txt(c.libelle),
+        c.valeur == null ? 'non mesuré' : `${nombre(c.valeur, c.unite === 'W' || c.unite === 'h' ? 0 : 1)} ${c.unite}`,
+        txt(c.precision),
+      ]),
+      theme: 'grid',
+      styles: { fontSize: 8, cellPadding: 1.2 },
+      columnStyles: { 0: { cellWidth: 50, fontStyle: 'bold' }, 1: { cellWidth: 30, halign: 'right' } },
+      margin: { left: MARGE, right: MARGE },
+    });
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 2;
+    titreSection('Ce qu’il faut retenir');
+    if (a.aRetenir) paragraphe(a.aRetenir);
+    for (const p of a.constats) paragraphe(`•  ${p}`, { retrait: 2 });
+    if (a.aVerifier || a.aVerifierAuto.length) {
+      titreSection('À vérifier sur site');
+      if (a.aVerifier) paragraphe(a.aVerifier);
+      if (a.aVerifierAuto.length) {
+        paragraphe('Détecté automatiquement : une piste, pas une conclusion.', { taille: 8, italique: true, couleur: GRIS });
+        for (const p of a.aVerifierAuto) paragraphe(`•  ${p}`, { retrait: 2 });
+      }
+    }
+  }
+
   titreSection('Périmètre');
   autoTable(doc, {
     startY: y,
@@ -149,15 +180,47 @@ export function exporterRapportPdf(r: RapportCourbe, nomFichier: string): void {
     if (!png) return;
     const h = largeur * ratio;
     place(h + 2);
-    doc.addImage(png, 'PNG', MARGE, y, largeur, h);
+    doc.addImage(png, 'PNG', MARGE, y, largeur, h, undefined, 'FAST'); // compressé : sinon plusieurs Mo
     y += h + 3;
   };
   const imgJour = graphiqueJournalier(r.graphiques.journalier);
   const imgTypes = graphiqueTypesJour(r.graphiques.typesJour, r.graphiques.couleurTypes);
   if (imgJour || imgTypes) {
+    // Le titre reste avec son premier graphique
+    place(16 + largeur * (imgJour ? 760 / 1800 : (520 / 1200) * 0.75));
     titreSection('Graphiques');
     image(imgJour, 760 / 1800);
     image(imgTypes, 520 / 1200 * 0.75);
+  }
+
+  if (a) {
+    const heures = Array.from({ length: 24 }, (_, h) => `${h} h`);
+    const col = (i: number) => a.profil24.lignes.map(l => l[i] as number | null);
+    const principal = r.graphiques.couleurTypes;
+    const imgProfil = graphiqueCourbes('Journée type (kWh par heure)', heures, [
+      { libelle: 'Tous les jours', valeurs: col(1), couleur: principal },
+      { libelle: 'Jours ouvrés', valeurs: col(2), couleur: '#d97706' },
+      { libelle: 'Samedis', valeurs: col(3), couleur: '#16a34a' },
+      { libelle: 'Dimanches', valeurs: col(4), couleur: '#a855f7' },
+    ], 'kWh');
+    const imgCarte = a.carte ? graphiqueCarteChaleur('Chaque heure de chaque jour', a.carte, principal) : null;
+    const imgRep = graphiqueRepartition('Où va l’énergie ?', a.repartition, principal);
+    if (a.tranches.lignes.length) {
+      titreSection('Jour, nuit, soirée');
+      tableau(a.tranches);
+      tableau(a.tranchesParType);
+    }
+    if (imgProfil || imgCarte) {
+      place(16 + largeur * (imgProfil ? 700 / 1800 : 760 / 1800));
+      titreSection('Analyse par heure');
+    }
+    image(imgProfil, 700 / 1800);
+    image(imgCarte, 760 / 1800);
+    if (imgRep) {
+      place(16 + largeur * ((90 + Math.min(12, a.repartition.filter(x => x.kwh > 0).length) * 54 + 20) / 1800));
+      titreSection('Où va l’énergie');
+      image(imgRep, (90 + Math.min(12, a.repartition.filter(x => x.kwh > 0).length) * 54 + 20) / 1800);
+    }
   }
 
   titreSection('Données journalières');
@@ -178,7 +241,7 @@ export function exporterRapportPdf(r: RapportCourbe, nomFichier: string): void {
     paragraphe('Bilan par site', { taille: 9 });
     tableau(r.qualite.sites);
   }
-  paragraphe("Le détail par appareil et par jour figure dans le rapport Excel (feuille « Détail »).", { taille: 8, italique: true, couleur: GRIS });
+  paragraphe("Tableau croisé, circuits, pics et détail par appareil et par jour : voir le rapport Excel.", { taille: 8, italique: true, couleur: GRIS });
 
   // ── Pied de page : date d'export et numéro de page ──────────
   const n = doc.getNumberOfPages();

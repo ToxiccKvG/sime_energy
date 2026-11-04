@@ -482,6 +482,8 @@ export interface BilanSite {
 }
 
 export interface RapportNettoyage {
+  /** Appareils de la série principale (vide : pas de rôles, ou rien de mesuré). */
+  idsPrincipaux: Set<string>;
   rowsCalcul: ShellyRow[];        // une ligne par jour (bilan) ou les lignes du fichier
   rowsAffichage: ShellyRow[];     // lignes du détail
   joursExclus: Map<string, string>;
@@ -515,10 +517,14 @@ function sansQuarantaine(r: ShellyRow): ShellyRow {
   };
 }
 
+/** Un départ imbriqué dans un autre est déjà compté par son parent : jamais additionné. */
+const estDuRole = (r: ShellyRow, role: string | null | undefined) =>
+  !!role && r.role === role && !(role === 'DEPART' && r.departImbrique);
+
 /** Flux par rôle d'un ensemble de lignes (sens inverse déjà appliqué par fn_profil_charge). */
 function fluxDe(lignes: ShellyRow[]): FluxRoles {
   const somme = (role: string, f: (r: ShellyRow) => number) => {
-    const l = lignes.filter(r => r.role === role);
+    const l = lignes.filter(r => estDuRole(r, role));
     return l.length ? l.reduce((s, r) => s + f(r), 0) : null;
   };
   return {
@@ -602,15 +608,15 @@ export function nettoyerProfil(
       // Le compteur de la série principale émet mais mesure 0 tous les jours :
       // ce n'est pas une consommation nulle, c'est une mesure absente
       const roleConso = nature === 'consommation' ? ROLE_DE_NATURE[methode!] : null;
-      const lignesConso = roleConso ? lignes.filter(r => r.role === roleConso) : [];
+      const lignesConso = roleConso ? lignes.filter(r => estDuRole(r, roleConso)) : [];
       if (lignesConso.length > 0 && lignesConso.every(estZero)) {
         nature = 'aucune';
         raison = `${lignesConso[0].nomAppareil ?? roleConso} émet mais mesure 0 sur toute la période (règle « Compteur principal à zéro ») : consommation non mesurée`;
       }
       natureSite.set(site, nature);
       const role = nature === 'consommation' ? ROLE_DE_NATURE[methode!] : nature === 'aucune' ? null : ROLE_DE_NATURE[nature];
-      for (const r of lignes) if (role && r.role === role) idsPrincipaux.add(idDe(r));
-      const principal = lignes.filter(r => role && r.role === role).reduce((s, r) => s + r.kwhTotal, 0);
+      for (const r of lignes) if (estDuRole(r, role)) idsPrincipaux.add(idDe(r));
+      const principal = lignes.filter(r => estDuRole(r, role)).reduce((s, r) => s + r.kwhTotal, 0);
       sites.push({
         site, methode: decl?.methode ?? 'non_declaree', explication: decl?.explication ?? '',
         nature, raison, flux, principal,
@@ -774,6 +780,7 @@ export function nettoyerProfil(
 
   return {
     rowsCalcul,
+    idsPrincipaux,
     rowsAffichage: rows.filter(r => !idsMasques.has(idDe(r))),
     joursExclus: new Map(jours.filter(j => j.exclu).map(j => [j.cle, j.exclu!])),
     jours,

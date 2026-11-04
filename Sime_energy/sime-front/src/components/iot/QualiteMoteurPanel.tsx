@@ -8,7 +8,7 @@
 // enregistre est une recette (chargement + règles exclues), rejouable.
 // ============================================================
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { ShieldCheck, Save, FolderOpen, Trash2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -193,6 +193,14 @@ export function nomChargement(ch: SupabaseExportOptions): string {
   return [ch.site ?? 'Tous les sites', periode].filter(Boolean).join(' · ');
 }
 
+/** Même nettoyage : même nom, mêmes données chargées, mêmes règles exclues. */
+function empreinteRecette(nom: string, ch: SupabaseExportOptions, regles: string[]): string {
+  return JSON.stringify([
+    nom.trim(), ch.site ?? '', ch.dateDebut ?? '', ch.dateFin ?? '', ch.granularite ?? '',
+    [...(ch.deviceIds ?? [])].sort(), [...regles].sort(),
+  ]);
+}
+
 export interface RecettesPanelHandle { enregistrer: () => void }
 
 export const RecettesPanel = forwardRef<RecettesPanelHandle, {
@@ -202,10 +210,14 @@ export const RecettesPanel = forwardRef<RecettesPanelHandle, {
   version: string | null;
   joursFerier: JourFerie[];
   onOuvrir: (rows: ShellyRow[], chargement: SupabaseExportOptions, reglesExclues: string[]) => void;
-}>(function RecettesPanel({ organizationId, chargement, reglesExclues, version, joursFerier, onOuvrir }, ref) {
+  /** Après un enregistrement réussi, ou si ce nettoyage existait déjà. */
+  onEnregistre?: () => void;
+}>(function RecettesPanel({ organizationId, chargement, reglesExclues, version, joursFerier, onOuvrir, onEnregistre }, ref) {
   const [recettes, setRecettes] = useState<Recette[]>([]);
   const [nom, setNom] = useState('');
   const [occupe, setOccupe] = useState<string | null>(null);
+  // Deux boutons mènent ici : un double clic ne doit écrire qu'une fois
+  const enregistrementEnCours = useRef(false);
 
   // Nom pré-rempli à chaque nouveau chargement : un clic suffit pour stocker
   useEffect(() => { setNom(chargement ? nomChargement(chargement) : ''); }, [chargement]);
@@ -217,15 +229,28 @@ export const RecettesPanel = forwardRef<RecettesPanelHandle, {
   useEffect(recharger, [organizationId]);
 
   const enregistrer = async () => {
-    if (!organizationId || !chargement || !nom.trim()) return;
+    if (!organizationId || !chargement || !nom.trim() || enregistrementEnCours.current) return;
+    enregistrementEnCours.current = true;
     setOccupe('enregistrer');
     try {
-      await creerRecette({ organizationId, nom: nom.trim(), chargement, reglesExclues: [...reglesExclues], reglesAu: version });
-      recharger();
-      toast({ title: 'Nettoyage enregistré', description: 'Visible par toute l\'organisation. Rouvert, il relit les mesures et réapplique les mêmes règles.' });
+      const regles = [...reglesExclues];
+      const empreinte = empreinteRecette(nom, chargement, regles);
+      const existantes = await fetchRecettes(organizationId);
+      if (existantes.some(r => empreinteRecette(r.nom, r.chargement, r.regles_exclues) === empreinte)) {
+        setRecettes(existantes);
+        toast({ title: 'Déjà enregistré', description: 'Ce nettoyage existe déjà avec ce nom, ces données et ces règles : rien n\'a été ajouté.' });
+      } else {
+        await creerRecette({ organizationId, nom: nom.trim(), chargement, reglesExclues: regles, reglesAu: version });
+        recharger();
+        toast({ title: 'Nettoyage enregistré', description: 'Retrouvez-le dans Fichiers, visible par toute l\'organisation. Rouvert, il relit les mesures et réapplique les mêmes règles.' });
+      }
+      onEnregistre?.();
     } catch (e) {
       toast({ title: 'Enregistrement impossible', description: e instanceof Error ? e.message : String(e), variant: 'destructive' });
-    } finally { setOccupe(null); }
+    } finally {
+      enregistrementEnCours.current = false;
+      setOccupe(null);
+    }
   };
 
   useImperativeHandle(ref, () => ({ enregistrer }));

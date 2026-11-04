@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ReferenceLine, Brush,
@@ -19,6 +19,16 @@ import type { ShellyRow } from './shared';
 import { supabase } from '@/lib/supabase';
 import { fetchDisponibles, fetchProfilCharge, fetchSiteBilan, type ProfilChargeJour, type SiteBilan } from '@/lib/iot-supabase-service';
 import type { PerimetreAnalyse } from './PerimetreBar';
+import { fetchDeviceRoles } from '@/lib/shelly-device-role-service';
+import {
+  fetchCoherence, fetchPicsMinute, fetchProfilHoraire, fetchRelevesBruts, fetchTemperatureJour, fetchVoiesMinute,
+  type CoherenceCircuit, type LigneHoraire, type PerimetreRapport, type PicMinute, type VoieMinute,
+} from '@/lib/iot-rapport-service';
+import {
+  construireAnalyses, lignesHorairesDepuisFichier, preparerReleves, TRANCHES_DEFAUT,
+  type RelevesRapport, type TranchesHoraires,
+} from '@/services/iotRapportAnalyses';
+import { departsImbriques } from '@/lib/iot-circuits';
 import { fetchRegles, fetchSignalements, versionRegles, type RegleQualite, type Signalement } from '@/lib/iot-qualite-service';
 import { fetchAccounts } from '@/lib/shelly-account-service';
 import { fetchDevicePeriodes } from '@/lib/shelly-device-period-service';
@@ -44,6 +54,7 @@ function profilJourToShellyRows(
   rows: ProfilChargeJour[],
   roomByDevice: Map<string, string>,
   heuresParJour: number,
+  imbriques: Set<string> = new Set(),
 ): ShellyRow[] {
   return rows.map(r => {
     const date = new Date(r.jour + 'T00:00:00');
@@ -95,6 +106,7 @@ function profilJourToShellyRows(
       deviceId: r.device_id,
       deviceFamily: r.device_family ?? undefined,
       role: r.role,
+      departImbrique: imbriques.has(r.device_id),
       nbHeures: r.nb_heures,
       quarantaine: r.nb_h_exclues > 0 ? {
         kwh: (r.wh_conso_exclu ?? 0) / 1000, kwhRetour: (r.wh_inj_exclu ?? 0) / 1000,
@@ -114,6 +126,8 @@ function heuresDansPlage(debut: number, fin: number): number {
 // Les règles et leurs textes viennent de la base (qualite_regles) ; ce
 // bandeau ne fait qu'afficher les signalements de fn_qualite et les choix.
 type OptsNettoyage = { completude: boolean; masquerZeros: boolean; quarantaine: boolean };
+const LIGNES_PAR_PAGE = 200;
+const MAX_RELEVES = 150_000;
 const jjmm = (cle: string) => `${cle.slice(8, 10)}/${cle.slice(5, 7)}`;
 const fmtPlage = (sg: Signalement) => {
   const d = new Date(sg.debut);
@@ -335,7 +349,9 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
   const csvRows = lignes ?? state.shellyRows;
 
   // ── Mode source ───────────────────────────────────────────────
-  const [sourceMode, setSourceMode] = useState<'csv' | 'supabase'>('csv');
+  // Avec un périmètre, dès le premier rendu : sinon celui-ci traiterait
+  // state.shellyRows (relevés à la minute) le temps que l'effet s'exécute
+  const [sourceMode, setSourceMode] = useState<'csv' | 'supabase'>(perimetre ? 'supabase' : 'csv');
   const [supabaseRows, setSupabaseRows] = useState<ShellyRow[]>([]);
   // Filtres multi-sélection
   const [sbSelectedSites, setSbSelectedSites] = useState<string[]>(['Ma Maison']);
@@ -475,11 +491,12 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
     // Agrégé côté serveur et lu par pages : toute la période, sans troncature.
     // Les familles sans énergie (shelly_familles) sont écartées par la fonction.
     // Qualité : signalements du moteur fn_qualite sur le même périmètre
-    const [data, sig, rg, sb] = await Promise.all([
+    const [data, sig, rg, sb, roles] = await Promise.all([
       fetchProfilCharge(perimetre),
       fetchSignalements(perimetre),
       fetchRegles(),
       fetchSiteBilan(),
+      fetchDeviceRoles(),
     ]);
     setSignalements(sig);
     setRegles(rg);
@@ -488,7 +505,7 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
     // Pièces : déjà connues par la liste des appareils (loadDevices)
     const roomMap = new Map(sbDevices.filter(d => d.room).map(d => [d.device_id, d.room as string]));
     const heures = heuresDansPlage(perimetre.heureDebut, perimetre.heureFin);
-    const rows = profilJourToShellyRows(data, roomMap, heures);
+    const rows = profilJourToShellyRows(data, roomMap, heures, departsImbriques(roles));
     setChargement({ debut: perimetre.dateDebut, fin: perimetre.dateFin, heureDebut: perimetre.heureDebut, heureFin: perimetre.heureFin, heures });
     setSupabaseRows(rows);
     if (rows.length === 0) setSbError('Aucune donnée pour cette sélection.');
@@ -500,18 +517,30 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
     setSourceMode('supabase');
     setSbLoading(true);
     setSbError(null);
-    chargerPerimetre({
-      dateDebut: perimetre.dateDebut, dateFin: perimetre.dateFin,
-      heureDebut: perimetre.heureDebut, heureFin: perimetre.heureFin,
-      sites: perimetre.site ? [perimetre.site] : sbSites,
-      deviceIds: perimetre.deviceIds.length > 0 ? perimetre.deviceIds : undefined,
-    })
+    // « Tous les sites » : la vraie liste, pas sbSites qui vaut encore la liste
+    // de secours quand ce chargement part au montage (retour sur l'onglet)
+    const sites = perimetre.site
+      ? Promise.resolve([perimetre.site])
+      : fetchAccounts()
+        .then(accounts => {
+          const liste = Array.from(new Set(accounts.map(a => a.site).filter(Boolean))).sort();
+          return liste.length > 0 ? liste : sbSites;
+        })
+        .catch(() => sbSites);
+    sites
+      .then(liste => chargerPerimetre({
+        dateDebut: perimetre.dateDebut, dateFin: perimetre.dateFin,
+        heureDebut: perimetre.heureDebut, heureFin: perimetre.heureFin,
+        sites: liste,
+        deviceIds: perimetre.deviceIds.length > 0 ? perimetre.deviceIds : undefined,
+      }))
       .catch(e => setSbError(e instanceof Error ? e.message : 'Erreur inconnue'))
       .finally(() => setSbLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perimetre?.version]);
 
   const [viewMode, setViewMode] = useState<ViewMode>('journalier');
+  const [pageTableau, setPageTableau] = useState(0);
   const [chartType, setChartType] = useState<ChartType>('aire');
   const [filterType, setFilterType] = useState<'tous' | 'ouvrés' | 'weekends' | 'fériés'>('tous');
 
@@ -561,6 +590,11 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
       periode: enSupabase ? { debut: chargement.debut, fin: chargement.fin } : undefined,
     },
   ), [filteredRows, signalements, regles, sitesBilan, optsNettoyage, enSupabase, chargement]);
+
+  // Page ramenée dans les limites quand les filtres réduisent le tableau
+  const nbPagesTableau = Math.ceil(nettoyage.rowsAffichage.length / LIGNES_PAR_PAGE);
+  const pageCourante = Math.min(pageTableau, Math.max(0, nbPagesTableau - 1));
+  const lignesTableau = nettoyage.rowsAffichage.slice(pageCourante * LIGNES_PAR_PAGE, (pageCourante + 1) * LIGNES_PAR_PAGE);
 
   // Bilan par rôle (données Supabase uniquement) : flux totaux, non mesuré, méthodes
   const nettoyageFlux = useMemo(() => {
@@ -669,6 +703,101 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
     fetchDevicePeriodes().then(setPeriodes).catch(() => setPeriodes([]));
   }, [rapportOuvert, enSupabase]);
 
+  // ── Analyses du rapport : heures, circuits, pics ────────────
+  const [tranchesRapport, setTranchesRapport] = useState<TranchesHoraires>(TRANCHES_DEFAUT);
+  const [aRetenir, setARetenir] = useState('');
+  const [aVerifier, setAVerifier] = useState('');
+  const [inclureReleves, setInclureReleves] = useState(false);
+  const [donneesRapport, setDonneesRapport] = useState<{
+    lignes: LigneHoraire[]; voies: VoieMinute[] | null; pics: PicMinute[] | null; compteur: string | null;
+    coherence: CoherenceCircuit[] | null; temperatures: Map<string, number> | null; manques: string[];
+  } | null>(null);
+  const [chargeRapport, setChargeRapport] = useState(false);
+  const perimetreRapport = useMemo<PerimetreRapport | null>(() => (enSupabase ? {
+    dateDebut: chargement.debut, dateFin: chargement.fin,
+    heureDebut: chargement.heureDebut, heureFin: chargement.heureFin,
+    sites: perimetre?.site ? [perimetre.site] : [...new Set(shellyRows.map(r => r.deviceLocation).filter((s): s is string => !!s))],
+    deviceIds: perimetre?.deviceIds.length ? perimetre.deviceIds : null,
+  } : null), [enSupabase, chargement, perimetre?.site, perimetre?.deviceIds, shellyRows]);
+  const talonDebut = tranchesRapport.talonDebut;
+  const talonFin = tranchesRapport.talonFin;
+  // Déjà chargé pour ce périmètre : rouvrir la fenêtre ne relance pas le calcul
+  const donneesChargeesPour = useRef<string | null>(null);
+  useEffect(() => {
+    if (!rapportOuvert) return;
+    const cle = JSON.stringify([perimetreRapport, talonDebut, talonFin, nettoyage.nature, perimetreRapport ? 0 : csvRows.length]);
+    if (donneesChargeesPour.current === cle) return;
+    donneesChargeesPour.current = cle;
+    if (!perimetreRapport) {
+      setDonneesRapport({ lignes: lignesHorairesDepuisFichier(csvRows), voies: null, pics: null, compteur: null, coherence: null, temperatures: null, manques: [] });
+      return;
+    }
+    let annule = false;
+    let termine = false;
+    setChargeRapport(true);
+    const compteur = nettoyage.idsPrincipaux.size === 1 ? [...nettoyage.idsPrincipaux][0] : null;
+    // Les appareils du chargement : lus dans les lignes, sans requête de plus
+    const appareilsCharges = [...new Set(shellyRows.map(r => r.deviceId).filter((d): d is string => !!d))];
+    Promise.allSettled([
+      fetchProfilHoraire(perimetreRapport),
+      fetchVoiesMinute(perimetreRapport, appareilsCharges, { debut: talonDebut, fin: talonFin }),
+      compteur ? fetchPicsMinute(perimetreRapport, compteur) : Promise.resolve(null),
+      fetchCoherence(perimetreRapport),
+      fetchTemperatureJour(perimetreRapport),
+    ]).then(([h, v, p, c, t]) => {
+      if (annule) return;
+      const manques: string[] = [];
+      if (h.status === 'rejected') manques.push('analyse par heures');
+      if (v.status === 'rejected') manques.push('puissances et tensions par circuit');
+      else if (v.value.echecs > 0) manques.push(`puissances et tensions de ${v.value.echecs} circuit${v.value.echecs > 1 ? 's' : ''}`);
+      if (p.status === 'rejected') manques.push('pics à la minute');
+      if (c.status === 'rejected') manques.push('cohérence des compteurs');
+      setDonneesRapport({
+        lignes: h.status === 'fulfilled' ? h.value : [],
+        voies: v.status === 'fulfilled' ? v.value.voies : null,
+        pics: p.status === 'fulfilled' ? p.value : null,
+        compteur,
+        coherence: c.status === 'fulfilled' ? c.value : null,
+        temperatures: t.status === 'fulfilled' ? t.value : null,
+        manques,
+      });
+    }).finally(() => { if (!annule) { termine = true; setChargeRapport(false); } });
+    return () => { annule = true; if (!termine) donneesChargeesPour.current = null; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- rechargé à l'ouverture, ou si le périmètre ou la plage du talon changent
+  }, [rapportOuvert, perimetreRapport, talonDebut, talonFin]);
+
+  const analysesRapport = useMemo(() => {
+    if (!donneesRapport || donneesRapport.lignes.length === 0) return null;
+    // Même filtre de jours que l'écran
+    const lignes = donneesRapport.lignes.filter(l => {
+      const d = l.ts.getUTCDay();
+      const finSemaine = d === 0 || d === 6;
+      return filterType === 'ouvrés' ? !finSemaine : filterType === 'weekends' ? finSemaine : filterType === 'fériés' ? false : true;
+    });
+    const pieces = new Map<string, string>();
+    for (const r of shellyRows) if (r.deviceId && r.deviceRoom) pieces.set(r.deviceId, r.deviceRoom);
+    return construireAnalyses({
+      lignes,
+      idsPrincipaux: perimetreRapport ? nettoyage.idsPrincipaux : null,
+      nettoyage,
+      libellePrincipal: nettoyageFlux ? TITRE_NATURE[nettoyageFlux.nature] : 'Consommation totale',
+      debut: perimetreRapport?.dateDebut, fin: perimetreRapport?.dateFin,
+      heureDebut: perimetreRapport?.heureDebut, heureFin: perimetreRapport?.heureFin,
+      tranches: tranchesRapport,
+      signalements: enSupabase ? signalements : [],
+      retirerQuarantaine: optsNettoyage.quarantaine,
+      piecesParAppareil: pieces,
+      totalEcranKwh: perimetreRapport && nettoyage.nature !== 'aucune' ? analyse.totalKwhConsomme : null,
+      voies: donneesRapport.voies,
+      pics: donneesRapport.pics,
+      compteurPics: donneesRapport.compteur,
+      coherence: donneesRapport.coherence,
+      temperatures: donneesRapport.temperatures,
+      aRetenir, aVerifier,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [donneesRapport, filterType, tranchesRapport, aRetenir, aVerifier, nettoyage, optsNettoyage.quarantaine, analyse]);
+
   const entreeRapport = useMemo<EntreeRapport>(() => {
     const meta = user?.user_metadata ?? {};
     // Compte connecté ; espaces en trop du profil retirés (« Maurice  DIOUF »)
@@ -694,6 +823,7 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
       periodes,
       auteur,
       commentaire,
+      couvertureParJour: analysesRapport?.couvertureParJour,
       // Couleurs des courbes de l'écran (palette + choix « Couleurs ») → graphiques du rapport
       couleurs: {
         principal: METRICS.find(m => m.key === 'total')?.color,
@@ -708,7 +838,7 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
       dateExport: new Date(),
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- METRICS est recalculé à chaque rendu (prefsGraph suivi)
-  }, [analyse, nettoyage, nettoyageFlux, prefsGraph, filteredRows, enSupabase, chargement, shellyRows, filterType, optsNettoyage, regles, periodes, user, commentaire]);
+  }, [analyse, nettoyage, nettoyageFlux, prefsGraph, filteredRows, enSupabase, chargement, shellyRows, filterType, optsNettoyage, regles, periodes, user, commentaire, analysesRapport]);
   const apercuRapport = useMemo(() => (rapportOuvert ? construireRapport(entreeRapport) : null), [rapportOuvert, entreeRapport]);
 
   const exporterRapport = async (format: 'excel' | 'pdf') => {
@@ -722,8 +852,18 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
         p.sites.length === 1 ? p.sites[0] : p.sites.length ? `${p.sites.length}_sites` : 'fichier',
         p.debut, p.fin,
       ].filter(Boolean).join('_').replace(/[^\p{L}\p{N}_-]+/gu, '_');
-      if (format === 'excel') await exporterRapportExcel(rapport, `${nom}.xlsx`);
-      else exporterRapportPdf(rapport, `${nom}.pdf`);
+      if (format === 'excel') {
+        let releves: RelevesRapport | null = null;
+        if (inclureReleves && perimetreRapport && donneesRapport) {
+          const ids = [...new Set(donneesRapport.lignes.map(l => l.deviceId))];
+          const estimation = donneesRapport.lignes.reduce((s, l) => s + l.nbMesures, 0);
+          if (estimation > MAX_RELEVES) {
+            throw new Error(`Environ ${estimation.toLocaleString('fr-FR')} relevés : trop pour un classeur (limite ${MAX_RELEVES.toLocaleString('fr-FR')}). Réduisez la période, ou décochez les onglets Brut et Nettoyé.`);
+          }
+          releves = preparerReleves(await fetchRelevesBruts(perimetreRapport, ids));
+        }
+        await exporterRapportExcel(rapport, `${nom}.xlsx`, analysesRapport, releves);
+      } else exporterRapportPdf(rapport, `${nom}.pdf`, analysesRapport);
       setRapportOuvert(false);
     } catch (e) {
       setRapportErreur(e instanceof Error ? e.message : String(e));
@@ -1210,6 +1350,70 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
                     {apercuRapport.phrases.map((p, i) => <li key={i}>{p}</li>)}
                   </ul>
                 </div>
+                <div className="rounded-lg border border-white/10 p-3 space-y-3">
+                  <p className="text-xs font-medium text-slate-300">Analyse par heures, circuits et pics</p>
+                  {chargeRapport && <p className="text-xs text-slate-400">Calcul en cours : heures, circuits, pics… Jusqu'à 2 minutes pour un mois d'un grand site.</p>}
+                  {!chargeRapport && donneesRapport && !analysesRapport && (
+                    <p className="text-xs text-amber-300">Pas d'analyse par heures sur ces données{perimetreRapport ? '' : ' : le fichier ne porte pas d’heures'}. Le rapport garde ses feuilles habituelles.</p>
+                  )}
+                  {donneesRapport && donneesRapport.manques.length > 0 && (
+                    <p className="text-xs text-amber-300">Non disponible, la période est sans doute trop longue : {donneesRapport.manques.join(', ')}. Le reste du rapport est complet.</p>
+                  )}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {([
+                      ['Jour : de', 'jourDebut'], ['Jour : à', 'jourFin'], ['Soirée : de', 'soirDebut'], ['Soirée : à', 'soirFin'],
+                      ['Conso. de fond : de', 'talonDebut'], ['Conso. de fond : à', 'talonFin'],
+                    ] as [string, keyof TranchesHoraires][]).map(([lib, cle]) => (
+                      <div key={cle}>
+                        <Label htmlFor={`tranche-${cle}`} className="text-[0.6875rem] text-slate-400">{lib}</Label>
+                        <select id={`tranche-${cle}`} value={tranchesRapport[cle]}
+                          onChange={e => setTranchesRapport(t => ({ ...t, [cle]: Number(e.target.value) }))}
+                          className="mt-0.5 h-8 w-full rounded-md bg-white/5 border border-white/15 text-slate-100 text-xs px-2">
+                          {Array.from({ length: 25 }, (_, h) => <option key={h} value={h} className="bg-[#1a1d2e]">{h} h</option>)}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  {analysesRapport && (
+                    <>
+                      <div>
+                        <p className="text-xs font-medium text-slate-300 mb-1">Constats calculés</p>
+                        <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
+                          {analysesRapport.constats.map((p, i) => <li key={i}>{p}</li>)}
+                        </ul>
+                        {analysesRapport.controle && (
+                          <p className={`text-xs mt-1 ${analysesRapport.controle.ok ? 'text-emerald-300' : 'text-amber-300'}`}>{analysesRapport.controle.texte}</p>
+                        )}
+                      </div>
+                      {analysesRapport.aVerifierAuto.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-300 mb-1">À vérifier, détecté automatiquement</p>
+                          <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
+                            {analysesRapport.aVerifierAuto.map((p, i) => <li key={i}>{p}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <div>
+                    <Label htmlFor="a-retenir-rapport" className="text-xs text-slate-300">Ce qu'il faut retenir, selon vous (facultatif)</Label>
+                    <Textarea id="a-retenir-rapport" value={aRetenir} onChange={e => setARetenir(e.target.value)}
+                      placeholder="Ce que les chiffres ne disent pas seuls : la consommation suit les prières…"
+                      className="mt-1 min-h-16 bg-white/5 border-white/15 text-slate-100 text-xs" />
+                  </div>
+                  <div>
+                    <Label htmlFor="a-verifier-rapport" className="text-xs text-slate-300">À vérifier sur site, selon vous (facultatif)</Label>
+                    <Textarea id="a-verifier-rapport" value={aVerifier} onChange={e => setAVerifier(e.target.value)}
+                      placeholder="Les questions à poser sur place : qu'alimente vraiment ce circuit ?"
+                      className="mt-1 min-h-16 bg-white/5 border-white/15 text-slate-100 text-xs" />
+                  </div>
+                  {perimetreRapport && (
+                    <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer">
+                      <input type="checkbox" className="mt-0.5 accent-blue-500" checked={inclureReleves} onChange={e => setInclureReleves(e.target.checked)} />
+                      <span>Ajouter à l'Excel les onglets Brut et Nettoyé (relevés à la minute). Fichier lourd : limité à {MAX_RELEVES.toLocaleString('fr-FR')} relevés.</span>
+                    </label>
+                  )}
+                </div>
                 <div>
                   <Label htmlFor="commentaire-rapport" className="text-xs text-slate-300">Commentaire de l'analyste (facultatif)</Label>
                   <Textarea
@@ -1228,11 +1432,11 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
             )}
             <DialogFooter>
               <Button variant="ghost" className="text-slate-300" onClick={() => setRapportOuvert(false)}>Annuler</Button>
-              <Button onClick={() => exporterRapport('pdf')} disabled={rapportEnCours} variant="outline" className="border-white/20 text-white hover:bg-white/10"
+              <Button onClick={() => exporterRapport('pdf')} disabled={rapportEnCours || chargeRapport} variant="outline" className="border-white/20 text-white hover:bg-white/10"
                 title="Document à lire : synthèse, chiffres clés, journalier, types de jour, mois, qualité">
                 <Download className="h-4 w-4 mr-1" /> PDF
               </Button>
-              <Button onClick={() => exporterRapport('excel')} disabled={rapportEnCours} className="bg-blue-600 hover:bg-blue-500"
+              <Button onClick={() => exporterRapport('excel')} disabled={rapportEnCours || chargeRapport} className="bg-blue-600 hover:bg-blue-500"
                 title="Classeur complet, avec le détail par appareil et par jour">
                 <Download className="h-4 w-4 mr-1" /> {rapportEnCours ? 'Préparation…' : 'Excel'}
               </Button>
@@ -1240,7 +1444,8 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
           </DialogContent>
         </Dialog>
 
-        {/* Tableau de données journalières */}
+        {/* Tableau de données journalières (par pages : un fichier à la minute
+            ferait dessiner des dizaines de milliers de lignes d'un coup) */}
         <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
           <div className="flex items-center justify-between p-4 border-b border-white/10">
             <h3 className="text-white font-semibold flex items-center gap-2">
@@ -1273,7 +1478,7 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
                 </tr>
               </thead>
               <tbody>
-                {nettoyage.rowsAffichage.map((r, i) => {
+                {lignesTableau.map((r, i) => {
                   return (
                     <tr key={i} className={`border-t border-white/5 hover:bg-white/5 ${r.jourActivites === 'Jour férié' ? 'bg-purple-500/5' :
                         r.jourActivites === 'Weekend' ? 'bg-yellow-500/5' : ''
@@ -1310,6 +1515,15 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
               </tbody>
             </table>
           </div>
+          {nbPagesTableau > 1 && (
+            <div className="flex items-center justify-end gap-2 px-4 py-2 border-t border-white/10 text-xs text-slate-400">
+              <span>
+                {(pageCourante * LIGNES_PAR_PAGE + 1).toLocaleString('fr-FR')}–{Math.min((pageCourante + 1) * LIGNES_PAR_PAGE, nettoyage.rowsAffichage.length).toLocaleString('fr-FR')} / {nettoyage.rowsAffichage.length.toLocaleString('fr-FR')}
+              </span>
+              <button disabled={pageCourante === 0} onClick={() => setPageTableau(pageCourante - 1)} aria-label="Page précédente" className="px-2 py-0.5 rounded bg-white/5 disabled:opacity-30 hover:bg-white/10">‹</button>
+              <button disabled={pageCourante >= nbPagesTableau - 1} onClick={() => setPageTableau(pageCourante + 1)} aria-label="Page suivante" className="px-2 py-0.5 rounded bg-white/5 disabled:opacity-30 hover:bg-white/10">›</button>
+            </div>
+          )}
         </div>
 
       </>}

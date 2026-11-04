@@ -59,6 +59,8 @@ function RoleBadge({ role }: { role: DeviceRole }) {
   );
 }
 
+const AUCUN_PARENT = '__aucun__';
+
 export function ShellyDeviceRolesPanel() {
   const [roles, setRoles]         = useState<ShellyDeviceRole[]>([]);
   const [appareils, setAppareils] = useState<Appareil[]>([]);
@@ -146,6 +148,27 @@ export function ShellyDeviceRolesPanel() {
 
   const changerSensInverse = (r: ShellyDeviceRole, v: boolean) =>
     action(r.device_id, () => upsertDeviceRole({ ...r, sens_inverse: v }));
+
+  const changerParent = (r: ShellyDeviceRole, parent: string | null) =>
+    action(r.device_id, () => upsertDeviceRole({ ...r, parent_device_id: parent }));
+
+  /** Compteurs possibles en amont : même site, compteur d'énergie, sans créer de boucle. */
+  const parentsPossibles = (r: ShellyDeviceRole, site: string | undefined) => {
+    const descendants = new Set<string>([r.device_id]);
+    for (let ajout = true; ajout;) {
+      ajout = false;
+      for (const x of roles) {
+        if (x.parent_device_id && descendants.has(x.parent_device_id) && !descendants.has(x.device_id)) {
+          descendants.add(x.device_id);
+          ajout = true;
+        }
+      }
+    }
+    return roles
+      .filter(x => !descendants.has(x.device_id) && x.role !== 'AMBIANCE' && x.role !== 'AUTRE' && parId.get(x.device_id)?.site === site)
+      .map(x => ({ id: x.device_id, nom: parId.get(x.device_id)?.name ?? x.libelle ?? x.device_id }))
+      .sort((a, b) => a.nom.localeCompare(b.nom));
+  };
 
   const changerRole = (r: ShellyDeviceRole, role: DeviceRole) =>
     action(r.device_id, () => upsertDeviceRole({ ...r, role }));
@@ -336,6 +359,7 @@ export function ShellyDeviceRolesPanel() {
                   <TableHead className="text-slate-400 text-xs">Appareil</TableHead>
                   <TableHead className="text-slate-400 text-xs">Site</TableHead>
                   <TableHead className="text-slate-400 text-xs">Rôle</TableHead>
+                  <TableHead className="text-slate-400 text-xs" title="Compteur en amont de ce circuit. Sans lui, le circuit compte comme une branche distincte : une branche imbriquée n'est jamais additionnée à son parent">Alimenté par</TableHead>
                   <TableHead className="text-slate-400 text-xs" title="Compteur dont le TC est monté à l'envers : production comptée en soutirage">Sens inversé</TableHead>
                   <TableHead className="text-slate-400 text-xs w-12" />
                 </TableRow>
@@ -350,6 +374,19 @@ export function ShellyDeviceRolesPanel() {
                       <TableCell className="text-slate-400 text-xs">{a?.site ?? '—'}</TableCell>
                       <TableCell>
                         <SelectRole value={r.role} onChange={role => changerRole(r, role)} disabled={saving != null} />
+                      </TableCell>
+                      <TableCell>
+                        {r.role === 'AMBIANCE' || r.role === 'AUTRE' ? <span className="text-slate-600 text-xs">—</span> : (
+                          <Select value={r.parent_device_id ?? AUCUN_PARENT} onValueChange={v => changerParent(r, v === AUCUN_PARENT ? null : v)} disabled={saving != null}>
+                            <SelectTrigger className="h-8 w-full sm:w-56 text-xs bg-white/5 border-white/20 text-white" aria-label={`Compteur en amont de ${a?.name ?? r.device_id}`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1a1d2e] border-white/20">
+                              <SelectItem value={AUCUN_PARENT} className="text-xs">Aucun compteur en amont</SelectItem>
+                              {parentsPossibles(r, a?.site).map(p => <SelectItem key={p.id} value={p.id} className="text-xs">{p.nom}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">

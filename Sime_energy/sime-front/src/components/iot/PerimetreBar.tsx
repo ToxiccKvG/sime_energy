@@ -44,28 +44,42 @@ const PERIODES: { cle: string; libelle: string; debut: () => string; fin: () => 
   { cle: 'moisPrec', libelle: 'Mois dernier', debut: () => { const d = new Date(); return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1))); }, fin: () => { const d = new Date(); return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0))); } },
 ];
 
+const libelleResume = (nb: number, granularite: 'horaire' | 'minute') =>
+  `${nb.toLocaleString('fr-FR')} relevés ${granularite === 'horaire' ? 'horaires' : 'à la minute'}`;
+
+/**
+ * Périmètre d'un chargement enregistré (recette rouverte), qui ne garde pas la
+ * plage horaire : la journée entière. null si le chargement n'a pas de période.
+ */
+export function perimetreDepuisChargement(ch: SupabaseExportOptions): PerimetreAnalyse | null {
+  if (!ch.dateDebut || !ch.dateFin) return null;
+  return { site: ch.site ?? '', deviceIds: ch.deviceIds ?? [], dateDebut: ch.dateDebut, dateFin: ch.dateFin, heureDebut: 0, heureFin: 23, version: 1 };
+}
+
 /** Colonnes recommandées selon les familles chargées (fournies par l'onglet Analyse). */
 export type ColonnesRecommandees = (familles: Set<string>) => string[];
 
-export function PerimetreBar({ colonnesRecommandees, onCharge }: {
+export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
   colonnesRecommandees: ColonnesRecommandees;
+  /** Chargement retrouvé au retour sur l'onglet : la barre affiche ce qui est à l'écran. */
+  repris?: { perimetre: PerimetreAnalyse; chargement: SupabaseExportOptions; nbLignes: number };
   onCharge: (rows: Record<string, unknown>[], colonnes: string[], options: SupabaseExportOptions, perimetre: PerimetreAnalyse) => void;
 }) {
   const [catalogue, setCatalogue] = useState<{ sites: string[]; devices: Appareil[] }>({ sites: [], devices: [] });
-  const [site, setSite] = useState('');
-  const [deviceIds, setDeviceIds] = useState<string[]>([]);
+  const [site, setSite] = useState(repris?.perimetre.site ?? '');
+  const [deviceIds, setDeviceIds] = useState<string[]>(repris?.perimetre.deviceIds ?? []);
   const [recherche, setRecherche] = useState('');
-  const [periode, setPeriode] = useState('7j');
-  const [dateDebut, setDateDebut] = useState(ilYa(7));
-  const [dateFin, setDateFin] = useState(ilYa(0));
-  const [heureDebut, setHeureDebut] = useState(0);
-  const [heureFin, setHeureFin] = useState(23);
-  const [granularite, setGranularite] = useState<'auto' | 'horaire' | 'minute'>('auto');
-  const [limit, setLimit] = useState<number | undefined>(undefined);
+  const [periode, setPeriode] = useState(repris ? 'perso' : '7j');
+  const [dateDebut, setDateDebut] = useState(repris?.perimetre.dateDebut ?? ilYa(7));
+  const [dateFin, setDateFin] = useState(repris?.perimetre.dateFin ?? ilYa(0));
+  const [heureDebut, setHeureDebut] = useState(repris?.perimetre.heureDebut ?? 0);
+  const [heureFin, setHeureFin] = useState(repris?.perimetre.heureFin ?? 23);
+  const [granularite, setGranularite] = useState<'auto' | 'horaire' | 'minute'>(repris?.chargement.granularite ?? 'auto');
+  const [limit, setLimit] = useState<number | undefined>(repris?.chargement.limit);
   const [chargement, setChargement] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
-  const [resume, setResume] = useState<string | null>(null);
-  const [version, setVersion] = useState(0);
+  const [resume, setResume] = useState<string | null>(repris ? libelleResume(repris.nbLignes, repris.chargement.granularite ?? 'horaire') : null);
+  const [version, setVersion] = useState(repris?.perimetre.version ?? 0);
 
   useEffect(() => { fetchDisponibles().then(d => setCatalogue({ sites: d.sites, devices: d.devices as Appareil[] })); }, []);
 
@@ -112,7 +126,7 @@ export function PerimetreBar({ colonnesRecommandees, onCharge }: {
     if (res.erreur) { setErreur(res.erreur); return; }
     const v = version + 1;
     setVersion(v);
-    setResume(`${res.total.toLocaleString('fr-FR')} relevés ${granulariteEffective === 'horaire' ? 'horaires' : 'à la minute'}`);
+    setResume(libelleResume(res.total, granulariteEffective));
     onCharge(res.rows, colonnes, options, { site, deviceIds, dateDebut, dateFin, heureDebut, heureFin, version: v });
   };
 

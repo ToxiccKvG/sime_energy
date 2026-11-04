@@ -9,6 +9,7 @@ import { useOrganization } from '@/context/OrganizationContext';
 import { toast } from '@/hooks/use-toast';
 import * as fileService from '@/lib/iot-file-service';
 import type { SupabaseExportOptions } from '@/lib/iot-supabase-service';
+import type { PerimetreAnalyse } from './PerimetreBar';
 
 // ---- Persistance ----
 //
@@ -77,6 +78,12 @@ export interface AnalysePreset {
   deviceIds: string[];
 }
 
+/** Ce qui accompagne des lignes Shelly partagées entre Analyse et Nettoyage. */
+export interface ContexteShelly {
+  perimetre?: PerimetreAnalyse | null;
+  reglesExclues?: string[] | null;
+}
+
 interface IOTState {
   // Raccourci Sources → Analyse (non persisté)
   analysePreset: AnalysePreset | null;
@@ -92,6 +99,12 @@ interface IOTState {
   // inconnu). Permet au Nettoyage d'interroger le moteur de qualité sur le
   // même périmètre et d'enregistrer une recette rejouable. Non persisté.
   chargementShelly: SupabaseExportOptions | null;
+  // Périmètre de ces lignes : l'onglet Analyse le retrouve à son retour et
+  // recalcule la courbe comme au premier chargement. Non persisté.
+  perimetreShelly: PerimetreAnalyse | null;
+  // Règles exclues d'une recette rouverte (null : réglages par défaut du
+  // moteur). Ici et non dans le Nettoyage : on rouvre aussi depuis Fichiers.
+  reglesShelly: string[] | null;
   // Données techniques (généralités, hors facturation)
   donneesTechniques: DonneesTechniques;
   // Calendrier
@@ -133,6 +146,8 @@ const DEFAULT_CALENDRIER: CalendrierSite = {
 const initialState: IOTState = {
   analysePreset: null,
   chargementShelly: null,
+  perimetreShelly: null,
+  reglesShelly: null,
   files: [],
   filesLoading: false,
   filesLoaded: false,
@@ -156,7 +171,7 @@ type Action =
   | { type: 'UPDATE_FILE'; id: string; data: Partial<ImportedFile> }
   | { type: 'REMOVE_FILE'; id: string }
   | { type: 'SET_SELECTED_FILE'; id: string | null }
-  | { type: 'SET_SHELLY_ROWS'; rows: ShellyRow[]; chargement?: SupabaseExportOptions | null }
+  | { type: 'SET_SHELLY_ROWS'; rows: ShellyRow[]; chargement?: SupabaseExportOptions | null; contexte?: ContexteShelly }
   | { type: 'UPDATE_DONNEES_TECHNIQUES'; data: Partial<DonneesTechniques> }
   // Calendrier
   | { type: 'ADD_JOUR_FERIE'; jour: JourFerie }
@@ -191,7 +206,13 @@ function reducer(state: IOTState, action: Action): IOTState {
     case 'SET_SELECTED_FILE':
       return { ...state, selectedFileId: action.id };
     case 'SET_SHELLY_ROWS':
-      return { ...state, shellyRows: action.rows, chargementShelly: action.chargement ?? null };
+      return {
+        ...state,
+        shellyRows: action.rows,
+        chargementShelly: action.chargement ?? null,
+        perimetreShelly: action.contexte?.perimetre ?? null,
+        reglesShelly: action.contexte?.reglesExclues ?? null,
+      };
     case 'UPDATE_DONNEES_TECHNIQUES':
       return { ...state, donneesTechniques: { ...state.donneesTechniques, ...action.data } };
     case 'ADD_JOUR_FERIE':
@@ -246,7 +267,7 @@ interface IOTContextValue {
    */
   ensureFileContent: (id: string) => Promise<ImportedFile | null>;
   setSelectedFile: (id: string | null) => void;
-  setShellyRows: (rows: ShellyRow[], chargement?: SupabaseExportOptions | null) => void;
+  setShellyRows: (rows: ShellyRow[], chargement?: SupabaseExportOptions | null, contexte?: ContexteShelly) => void;
   updateDonneesTechniques: (data: Partial<DonneesTechniques>) => void;
   // Calendrier
   addJourFerie: (jour: JourFerie) => void;
@@ -363,7 +384,7 @@ export function IOTProvider({ children }: { children: React.ReactNode }) {
   }, [notifyError]);
   const setSelectedFile = useCallback((id: string | null) => dispatch({ type: 'SET_SELECTED_FILE', id }), []);
   const setShellyRows = useCallback(
-    (rows: ShellyRow[], chargement?: SupabaseExportOptions | null) => dispatch({ type: 'SET_SHELLY_ROWS', rows, chargement }),
+    (rows: ShellyRow[], chargement?: SupabaseExportOptions | null, contexte?: ContexteShelly) => dispatch({ type: 'SET_SHELLY_ROWS', rows, chargement, contexte }),
     [],
   );
   const updateDonneesTechniques = useCallback((data: Partial<DonneesTechniques>) => dispatch({ type: 'UPDATE_DONNEES_TECHNIQUES', data }), []);

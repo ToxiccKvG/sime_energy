@@ -30,6 +30,8 @@ import { transformRowsToProfilMi, transformHoraireToProfilMi } from '@/lib/iot-s
 import { GenericNettoyage } from './GenericNettoyage';
 import { lireFichierImporte } from '@/lib/iot-lecture-fichier';
 import { useQualiteMoteur, QualiteMoteurPanel, RecettesPanel, nomChargement, type RecettesPanelHandle } from './QualiteMoteurPanel';
+import { ID_NETTOYAGES_ENREGISTRES } from './FichiersTab';
+import type { SupabaseExportOptions } from '@/lib/iot-supabase-service';
 import { useOrganization } from '@/context/OrganizationContext';
 import { supabase } from '@/lib/supabase';
 
@@ -474,8 +476,11 @@ export function NettoyageTab() {
   const { organization } = useOrganization();
   const chargementShelly = hasLocalData ? null : state.chargementShelly;
   const modeMoteur = chargementShelly !== null && activeRows.some(r => r.deviceId);
-  const [reglesInitiales, setReglesInitiales] = useState<string[] | null>(null);
-  const qualite = useQualiteMoteur(activeRows, modeMoteur, reglesInitiales);
+  const qualite = useQualiteMoteur(activeRows, modeMoteur, state.reglesShelly);
+  const ouvrirRecette = (rows: ShellyRow[], ch: SupabaseExportOptions, regles: string[]) => {
+    setSelectedFile(null); // sinon Analyse rouvrirait ce fichier plutôt que la recette
+    setShellyRows(rows, ch, { reglesExclues: regles });
+  };
   // Mesures de la base : lecture seule (les règles excluent, rien n'est réécrit).
   // Une retouche créerait une copie locale et ferait basculer l'écran en mode fichier.
   const recettesRef = useRef<RecettesPanelHandle>(null);
@@ -1336,7 +1341,7 @@ export function NettoyageTab() {
           reglesExclues={new Set()}
           version={null}
           joursFerier={state.joursFerier}
-          onOuvrir={(rows, ch, regles) => { setReglesInitiales(regles); setShellyRows(rows, ch); }}
+          onOuvrir={ouvrirRecette}
         />
         {fichiersPannel || (
           <div className="flex flex-col items-center justify-center py-24 text-slate-500">
@@ -1527,7 +1532,12 @@ export function NettoyageTab() {
             reglesExclues={qualite.exclues}
             version={qualite.version}
             joursFerier={state.joursFerier}
-            onOuvrir={(rows, ch, regles) => { setReglesInitiales(regles); setShellyRows(rows, ch); }}
+            onOuvrir={ouvrirRecette}
+            onEnregistre={() => {
+              setActiveTab('fichiers');
+              // Le temps que l'onglet Fichiers s'affiche
+              setTimeout(() => document.getElementById(ID_NETTOYAGES_ENREGISTRES)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+            }}
           />
         </>
       ) : (

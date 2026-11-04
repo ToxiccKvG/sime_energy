@@ -52,6 +52,8 @@ export interface EntreeRapport {
   commentaire: string;
   /** Couleurs de l'écran (palette + choix « Couleurs »), reprises dans les graphiques. */
   couleurs?: { principal?: string; flux?: Partial<Record<keyof FluxRoles, string>> };
+  /** Heures mesurées de chaque jour (série principale), si les heures sont chargées. */
+  couvertureParJour?: Map<string, { heures: number; etat: string }>;
   dateExport: Date;
 }
 
@@ -64,7 +66,7 @@ export interface ChiffreCle {
 }
 
 export interface Tableau {
-  colonnes: { titre: string; format?: 'kwh' | 'nombre' | 'texte' | 'date' | 'pct' }[];
+  colonnes: { titre: string; format?: 'kwh' | 'nombre' | 'texte' | 'date' | 'pct' | 'dateheure' }[];
   lignes: (string | number | Date | null)[][];
   /** Avertissement affiché au-dessus du tableau. */
   note?: string;
@@ -362,6 +364,7 @@ export function construireRapport(e: EntreeRapport): RapportCourbe {
            ...fluxPresents.map(f => ({ titre: `${f.libelle} (kWh)${fluxNonMesures.has(f.cle) ? ' — non mesuré' : ''}`, format: 'kwh' as const }))]
         : [{ titre: 'kWh total', format: 'kwh' as const }, { titre: 'kWh retour', format: 'kwh' as const }, { titre: 'kWh net', format: 'kwh' as const }]),
       { titre: 'Coupures (min)', format: 'nombre' },
+      ...(e.couvertureParJour ? [{ titre: 'Heures mesurées', format: 'nombre' as const }, { titre: 'Journée', format: 'texte' as const }] : []),
       { titre: 'Exclu des statistiques', format: 'texte' },
       { titre: 'Incohérence', format: 'texte' },
     ],
@@ -375,6 +378,7 @@ export function construireRapport(e: EntreeRapport): RapportCourbe {
           ? [...(nonCalculable ? [] : [j.kwhNet]), ...fluxPresents.map(f => (fluxNonMesures.has(f.cle) ? null : j.flux?.[f.cle] ?? null))]
           : [j.kwhTotal, j.kwhRetourTotal, j.kwhNet]),
         c?.coupureMin ? Math.round(c.coupureMin) : null,
+        ...(e.couvertureParJour ? [e.couvertureParJour.get(cleJour(j.date))?.heures ?? null, e.couvertureParJour.get(cleJour(j.date))?.etat ?? null] : []),
         j.exclu ?? null,
         c?.incoherence ?? null,
       ];
