@@ -173,7 +173,10 @@ const UNIT_BY_NAME: [RegExp, string][] = [
   [/lux|illumin|lumino/i, 'lux'],
   [/uv/i, ''],
   [/ppm|co2|concentration/i, 'ppm'],
-  [/kwh|energ|^wh|_wh|wh_/i, 'Wh'],
+  // « kWh Total » est en kWh, pas en Wh : sinon ses valeurs sont divisées par 1 000
+  [/mwh/i, 'MWh'],
+  [/kwh/i, 'kWh'],
+  [/energ|^wh|_wh|wh_/i, 'Wh'],
   [/power|puiss|_w$|^p_[abc]$/i, 'W'],
   [/volt|tension|^v_[abc]$|_v$/i, 'V'],
   [/current|courant|intensit|^i_[abc]$|_a$/i, 'A'],
