@@ -744,7 +744,7 @@ function DailyProfileView({ measurements, primary, unit, stops }: { measurements
           </ModeButton>
         </div>
       </div>
-      {/* Heures en ordonnée (0 h en bas), jours en abscisse en bas — remarque du 20/10 */}
+      {/* Heures en abscisse, jours en ordonnée — consigne du 09/11 */}
       <CarteChaleur
         colonnes={active.colonnes}
         valeurs={active.rows}
