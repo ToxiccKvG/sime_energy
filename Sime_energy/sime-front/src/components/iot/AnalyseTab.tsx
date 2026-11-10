@@ -27,17 +27,20 @@ import { useIOT } from './IOTContext';
 import { ProfilChargeTab } from './ProfilChargeTab';
 import { METRIQUES, METRIQUES_ENV, colorForMetric, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, fmtFr, grandeursDisponibles, type MetricKey, type MetricGroup } from './analyse/communs';
 import { EnvCourbeView, EnvBandeView, EnvHeatmapView, EnvProfil24View, SignatureView } from './analyse/VuesEnvironnement';
-import { PerimetreBar, perimetreDepuisChargement, type PerimetreAnalyse } from './PerimetreBar';
+import { libelleSites, PerimetreBar, perimetreDepuisChargement, type PerimetreAnalyse } from './PerimetreBar';
+import { VueComparaisonSites, VueEtats } from './analyse/VuesEtats';
+import { RapportCapteursDialog } from './RapportCapteursDialog';
+import type { PerimetreRapport } from '@/lib/iot-rapport-service';
 import { fetchDeviceRoles } from '@/lib/shelly-device-role-service';
 import { idsSerieSansDoubleCompte, type RoleCircuit } from '@/lib/iot-circuits';
 import { useQualiteMoteur, QualiteLigne } from './QualiteMoteurPanel';
 import { parseShellyRow, profilMiToShellyRow, calculerStats, detecterFormatShelly, parseShellySectionCSV } from '@/lib/iot-profil-engine';
-import { transformRowsToProfilMi, transformHoraireToProfilMi, fetchSiteBilan, type SiteBilan, type SupabaseExportOptions } from '@/lib/iot-supabase-service';
+import { transformRowsToProfilMi, transformHoraireToProfilMi, fetchDisponibles, fetchSiteBilan, type SiteBilan, type SupabaseExportOptions } from '@/lib/iot-supabase-service';
 import { JOURS_SEMAINE, MOIS_FR, COLONNES_PROFIL_SHELLY } from './shared';
 import type { ShellyRow } from './shared';
 
 type AnalyseMode = 'courbe' | 'tcd' | 'profil_semaine' | 'distribution' | 'correlation' | 'serie'
-  | 'env_courbe' | 'env_bande' | 'env_heatmap' | 'env_profil24' | 'signature';
+  | 'env_courbe' | 'env_bande' | 'env_heatmap' | 'env_profil24' | 'signature' | 'etats' | 'sites';
 
 const ENV_MODES: AnalyseMode[] = ['env_courbe', 'env_bande', 'env_heatmap', 'env_profil24'];
 type ChartType = 'bar' | 'line' | 'area' | 'pie';
@@ -57,6 +60,8 @@ const MODE_LABELS: Record<string, string> = {
   env_heatmap: 'Carte de chaleur',
   env_profil24: 'Profil 24 h',
   signature: 'Signature énergétique',
+  etats: 'États des capteurs',
+  sites: 'Comparaison des sites',
 };
 
 
@@ -533,7 +538,7 @@ export function AnalyseTab() {
   // Source décrite par son périmètre (site · période), pas par « Supabase — Tous appareils »
   const jjmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
   const dataSource = supabaseRows.length > 0
-    ? (perimetreAnalyse ? `${perimetreAnalyse.site || 'Tous les sites'} · ${jjmm(perimetreAnalyse.dateDebut)} → ${jjmm(perimetreAnalyse.dateFin)}` : 'Données Shelly')
+    ? (perimetreAnalyse ? `${libelleSites(perimetreAnalyse.sites)} · ${jjmm(perimetreAnalyse.dateDebut)} → ${jjmm(perimetreAnalyse.dateFin)}` : 'Données Shelly')
     : localRows.length > 0 ? fileName
       : shellyRows.length > 0 ? 'Données transmises par un autre onglet' : null;
 
@@ -700,6 +705,13 @@ export function AnalyseTab() {
     const autresGrandeurs = [...new Set(activeRows.flatMap(r => r.grandeurs ? Object.keys(r.grandeurs) : []))];
     const hasEnergy = activeRows.some(r => r.kwhTotal !== 0 || r.kwhRetourTotal !== 0 || r.puissKwTotal !== 0);
     const hms = (d: Date) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    // Identifiant et rôle : un fichier réimporté refait le même calcul sans
+    // double comptage (compteur général vs départs) que l'analyse en direct
+    const avecId = activeRows.some(r => r.deviceId);
+    const avecRole = activeRows.some(r => r.role);
+    // Nombres (pas de texte « 0,120 ») à pleine précision, unité dans l'en-tête :
+    // la réimport relit exactement ces valeurs
+    const nb = (v: unknown) => +safeNum(v, 0).toFixed(6);
     await exportJsonToXlsx(
       activeRows.map(r => {
         const d = toDate(r.date);
@@ -707,19 +719,21 @@ export function AnalyseTab() {
           Date: d.toLocaleDateString('fr-FR'),
           Heure: hms(d),
           Appareil: r.nomAppareil ?? '',
+          ...(avecId ? { 'ID appareil': r.deviceId ?? '' } : {}),
+          ...(avecRole ? { 'Rôle': r.role ?? '' } : {}),
           Pièce: r.deviceRoom ?? '',
           Site: r.deviceLocation ?? '',
         };
         for (const m of envCols) ligne[`${m.label}${m.unit ? ` (${m.unit})` : ''}`] = typeof r[m.key] === 'number' ? r[m.key] : '';
         for (const k of autresGrandeurs) ligne[k] = r.grandeurs?.[k] ?? '';
         if (hasEnergy) {
-          ligne['kWh Total'] = fmt3(r.kwhTotal);
-          ligne['kWh Net'] = fmt3(r.kwhNet);
-          ligne['kWh Retour'] = r.kwhRetourTotal.toFixed(3);
-          ligne['Puissance (kW)'] = fmt3(r.puissKwTotal);
-          ligne['Phase A'] = fmt3(r.kwhA);
-          ligne['Phase B'] = fmt3(r.kwhB);
-          ligne['Phase C'] = fmt3(r.kwhC);
+          ligne['kWh Total'] = nb(r.kwhTotal);
+          ligne['kWh Net'] = nb(r.kwhNet);
+          ligne['kWh Retour'] = nb(r.kwhRetourTotal);
+          ligne['Puissance (kW)'] = nb(r.puissKwTotal);
+          ligne['Phase A (kWh)'] = nb(r.kwhA);
+          ligne['Phase B (kWh)'] = nb(r.kwhB);
+          ligne['Phase C (kWh)'] = nb(r.kwhC);
         }
         ligne['Jour'] = r.jourSemaine;
         ligne['Férié'] = r.isJourFerie ? 'Oui' : '';
@@ -765,14 +779,19 @@ export function AnalyseTab() {
   // (compteurs + météo), les relevés des capteurs env en sont donc absents.
   // Les vues env_* partent d'activeRows avec les mêmes filtres globaux, en ne
   // gardant que les lignes portant au moins une grandeur environnementale.
+  // Plusieurs sites : les grandeurs se lisent site par site, jamais en moyenne entre lieux
+  const sitesCharges = useMemo(() => [...new Set(activeRows.map(r => r.deviceLocation).filter((s): s is string => !!s))].sort(), [activeRows]);
+  const [siteVueChoisi, setSiteVue] = useState<string | null>(null);
+  const siteVue = sitesCharges.length > 1 ? (siteVueChoisi && sitesCharges.includes(siteVueChoisi) ? siteVueChoisi : sitesCharges[0]) : null;
   const envRows = useMemo(() => {
     let rows = activeRows.filter(r => r.grandeurs || METRIQUES_ENV.some(m => typeof r[m.key] === 'number'));
+    if (siteVue) rows = rows.filter(r => r.deviceLocation === siteVue);
     if (!showFeries) rows = rows.filter(r => !r.isJourFerie);
     if (!showWeekends) rows = rows.filter(r => !r.isWeekend);
     if (slicerAppareil.length) rows = rows.filter(r => slicerAppareil.includes(r.nomAppareil ?? ''));
     if (slicerPiece.length) rows = rows.filter(r => slicerPiece.includes(r.deviceRoom ?? ''));
     return rows;
-  }, [activeRows, showFeries, showWeekends, slicerAppareil, slicerPiece]);
+  }, [activeRows, showFeries, showWeekends, slicerAppareil, slicerPiece, siteVue]);
 
   // Grandeurs env réellement présentes → pilote l'affichage des modes env_*
   const paletteGrandeurs = usePalette();
@@ -824,6 +843,34 @@ export function AnalyseTab() {
     }
   }, [envMetricsAvailable, envMetric]);
 
+  // Familles du catalogue : pour dire ce qui est chargé, et ne proposer États que s'il y en a
+  const [familleDe, setFamilleDe] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (supabaseRows.length === 0) return;
+    let annule = false;
+    fetchDisponibles().then(d => { if (!annule) setFamilleDe(new Map(d.devices.map(x => [x.device_id, x.device_family]))); }).catch(() => {});
+    return () => { annule = true; };
+  }, [supabaseRows.length]);
+  const nbParType = useMemo(() => {
+    const ids = new Set(activeRows.map(r => r.deviceId).filter((d): d is string => !!d));
+    const n = { compteurs: 0, ambiance: 0, etats: 0, autres: 0 };
+    for (const id of ids) {
+      const f = familleDe.get(id);
+      if (f === 'CAPTEUR_ENV') n.ambiance++;
+      else if (f === 'ETAT') n.etats++;
+      else if (f && f.startsWith('ENERGIE') || f === 'LUMIERE') n.compteurs++;
+      else n.autres++;
+    }
+    return n;
+  }, [activeRows, familleDe]);
+  const perimetreRapportEcran = useMemo<PerimetreRapport | null>(() => (supabaseRows.length > 0 && perimetreAnalyse ? {
+    dateDebut: perimetreAnalyse.dateDebut, dateFin: perimetreAnalyse.dateFin,
+    heureDebut: perimetreAnalyse.heureDebut, heureFin: perimetreAnalyse.heureFin,
+    sites: perimetreAnalyse.sites.length ? perimetreAnalyse.sites : sitesCharges,
+    deviceIds: perimetreAnalyse.deviceIds.length ? perimetreAnalyse.deviceIds : null,
+  } : null), [supabaseRows.length, perimetreAnalyse, sitesCharges]);
+  const [rapportCapteursOuvert, setRapportCapteursOuvert] = useState(false);
+
   // Mode actif indisponible pour ces données (ex. mode énergie sur un jeu 100%
   // météo, ou Signature sans les deux types de données) → basculer sur le
   // premier mode pertinent
@@ -833,10 +880,12 @@ export function AnalyseTab() {
       setMode(hasEnergyData ? 'courbe' : 'env_courbe');
     } else if (isEnvMode && !hasEnvData && hasEnergyData) {
       setMode('courbe');
-    } else if (!isEnvMode && mode !== 'signature' && !hasEnergyData && hasEnvData) {
+    } else if (!isEnvMode && mode !== 'signature' && mode !== 'etats' && mode !== 'sites' && !hasEnergyData && hasEnvData) {
       setMode('env_courbe');
+    } else if (mode !== 'etats' && !hasEnergyData && !hasEnvData && nbParType.etats > 0) {
+      setMode('etats');
     }
-  }, [mode, hasEnvData, hasEnergyData, hasTemperature]);
+  }, [mode, hasEnvData, hasEnergyData, hasTemperature, nbParType.etats]);
 
   // Slicers Power BI (saison, tranche, type de jour)
   const slicerRows = useMemo(() => {
@@ -880,7 +929,10 @@ export function AnalyseTab() {
   // portent que sur la série principale de chaque site.
   const [rolesCircuits, setRolesCircuits] = useState<RoleCircuit[]>([]);
   const [sitesBilan, setSitesBilan] = useState<SiteBilan[]>([]);
-  const donneesShelly = supabaseRows.length > 0;
+  // Un fichier réimporté (export de l'Analyse) porte l'ID et le rôle de chaque
+  // appareil : même règle que les données en direct
+  const avecIdsAppareils = useMemo(() => activeRows.some(r => r.deviceId), [activeRows]);
+  const donneesShelly = supabaseRows.length > 0 || avecIdsAppareils;
   useEffect(() => {
     if (!donneesShelly) return;
     let annule = false;
@@ -890,10 +942,16 @@ export function AnalyseTab() {
     return () => { annule = true; };
   }, [donneesShelly]);
   const idsSerie = useMemo(() => {
-    if (!donneesShelly || rolesCircuits.length === 0) return null;
+    if (!donneesShelly) return null;
     const vus = new Map<string, string>();
     for (const r of activeRows) if (r.deviceId && !vus.has(r.deviceId)) vus.set(r.deviceId, r.deviceLocation ?? '');
-    const ids = idsSerieSansDoubleCompte([...vus].map(([deviceId, site]) => ({ deviceId, site })), rolesCircuits, sitesBilan);
+    // Rôles de la base ; à défaut (appareil inconnu), celui écrit dans le fichier
+    const connus = new Set(rolesCircuits.map(r => r.device_id));
+    const duFichier = new Map<string, string>();
+    for (const r of activeRows) if (r.deviceId && r.role && !connus.has(r.deviceId)) duFichier.set(r.deviceId, r.role);
+    const roles = [...rolesCircuits, ...[...duFichier].map(([device_id, role]) => ({ device_id, role }))];
+    if (roles.length === 0) return null;
+    const ids = idsSerieSansDoubleCompte([...vus].map(([deviceId, site]) => ({ deviceId, site })), roles, sitesBilan);
     // Tous les appareils chargés sont additionnables : rien à restreindre
     return ids && ids.size < vus.size ? ids : null;
   }, [donneesShelly, activeRows, rolesCircuits, sitesBilan]);
@@ -1170,6 +1228,20 @@ export function AnalyseTab() {
           onCharge={(rows, _colonnes, options, p) => { handleSupabaseData(rows, options, p); setPerimetreAnalyse(p); }}
         />
 
+        {/* ---- Ce qui est chargé : tout en une ligne ---- */}
+        {supabaseRows.length > 0 && familleDe.size > 0 && (
+          <p className="text-xs text-slate-400 px-1">
+            <span className="text-slate-300 font-medium">Chargé : </span>
+            {[
+              sitesCharges.length > 1 ? `${sitesCharges.length} sites` : null,
+              nbParType.compteurs ? `${nbParType.compteurs} compteur${nbParType.compteurs > 1 ? 's' : ''} d'énergie` : null,
+              nbParType.ambiance ? `${nbParType.ambiance} capteur${nbParType.ambiance > 1 ? 's' : ''} d'ambiance ou météo` : null,
+              nbParType.etats ? `${nbParType.etats} capteur${nbParType.etats > 1 ? 's' : ''} d'état` : null,
+              nbParType.autres ? `${nbParType.autres} non classé${nbParType.autres > 1 ? 's' : ''}` : null,
+            ].filter(Boolean).join(' · ')}
+          </p>
+        )}
+
         {/* ---- Qualité : une ligne, détail et réglages dans le Nettoyage ---- */}
         {supabaseRows.length > 0 && (
           <QualiteLigne q={qualite} onVoir={() => {
@@ -1311,6 +1383,12 @@ export function AnalyseTab() {
                 ...(hasEnergyData && hasTemperature ? [
                   { cle: 'signature', libelle: 'Signature énergétique', icone: <Zap className="h-3.5 w-3.5" />, vues: [{ mode: 'signature' as AnalyseMode, libelle: 'Signature énergétique' }] },
                 ] : []),
+                ...(nbParType.etats > 0 ? [
+                  { cle: 'etats', libelle: 'États', icone: <Activity className="h-3.5 w-3.5" />, vues: [{ mode: 'etats' as AnalyseMode, libelle: 'États des capteurs' }] },
+                ] : []),
+                ...(hasEnergyData && sitesCharges.length > 1 ? [
+                  { cle: 'sites', libelle: 'Comparaison des sites', icone: <Layers className="h-3.5 w-3.5" />, vues: [{ mode: 'sites' as AnalyseMode, libelle: 'Comparaison des sites' }] },
+                ] : []),
               ];
               const actif = groupes.find(g => g.vues.some(v => v.mode === mode)) ?? groupes[0];
               const nbFiltres = slicerAppareil.length + slicerPiece.length + (showFeries ? 0 : 1) + (showWeekends ? 0 : 1);
@@ -1360,12 +1438,28 @@ export function AnalyseTab() {
                         <Download className="h-3.5 w-3.5" />
                       </Button>
                       <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-7 px-2 gap-1.5"
-                        onClick={() => { setMode('courbe'); setDemandeRapport(n => n + 1); }}
-                        title="Rapport PDF ou Excel de la courbe de charge (synthèse, graphiques, journalier, qualité)">
+                        onClick={() => {
+                          // Sans énergie, pas de courbe de charge : le rapport porte sur les capteurs
+                          if (!hasEnergyData) { setRapportCapteursOuvert(true); return; }
+                          setMode('courbe'); setDemandeRapport(n => n + 1);
+                        }}
+                        title="Rapport PDF ou Excel : tout ce qui est chargé (énergie, capteurs, états, sites)">
                         <FileText className="h-3.5 w-3.5" /> Rapport
                       </Button>
                     </div>
                   </div>
+                  {/* Plusieurs sites : grandeurs et signature se lisent un site à la fois */}
+                  {siteVue && (ENV_MODES.includes(mode) || mode === 'signature') && (
+                    <div className="flex flex-wrap items-center gap-1 pl-1">
+                      <span className="text-xs text-slate-500 mr-1">Site affiché :</span>
+                      {sitesCharges.map(s => (
+                        <button key={s} onClick={() => setSiteVue(s)}
+                          className={`px-2.5 py-1 rounded-md text-xs ${siteVue === s ? 'bg-white/15 text-white' : 'text-slate-400 hover:text-white'}`}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {actif && actif.vues.length > 1 && (
                     <div className="flex flex-wrap items-center gap-1 pl-1">
                       {actif.vues.map(v => (
@@ -1470,6 +1564,18 @@ export function AnalyseTab() {
                 </div>
               )}
 
+              {/* ---- États et comparaison des sites ---- */}
+              {mode === 'etats' && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                  <VueEtats rows={activeRows} perimetre={perimetreRapportEcran} />
+                </div>
+              )}
+              {mode === 'sites' && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                  <VueComparaisonSites rows={slicerSerie} />
+                </div>
+              )}
+
               {/* ---- Vues environnementales ---- */}
               {ENV_MODES.includes(mode) && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
@@ -1508,7 +1614,7 @@ export function AnalyseTab() {
               {/* ---- Signature énergétique (jeu mixte uniquement) ---- */}
               {mode === 'signature' && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-                  <SignatureView envRows={envRows} energyRows={filteredRows} />
+                  <SignatureView envRows={envRows} energyRows={siteVue ? filteredRows.filter(r => r.deviceLocation === siteVue) : filteredRows} />
                 </div>
               )}
 
@@ -1943,6 +2049,14 @@ export function AnalyseTab() {
       {/* ============================================================
         OVERLAY FULLSCREEN — Dashboard Power BI
     ============================================================ */}
+      <RapportCapteursDialog
+        ouvert={rapportCapteursOuvert}
+        onFermer={() => setRapportCapteursOuvert(false)}
+        perimetre={perimetreRapportEcran}
+        lignesFichier={perimetreRapportEcran ? null : activeRows}
+        nomFichier={fileName}
+      />
+
       {fullscreenTCD && (
         <div className="fixed inset-0 z-50 bg-[#0f111a] flex flex-col overflow-hidden">
           {/* Header */}

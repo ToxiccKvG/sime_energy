@@ -11,6 +11,7 @@ import autoTable from 'jspdf-autotable';
 import type { RapportCourbe, Tableau } from './iotRapport';
 import { graphiqueCarteChaleur, graphiqueCourbes, graphiqueJournalier, graphiqueRepartition, graphiqueTypesJour } from './iotRapportGraphiques';
 import type { RapportAnalyses } from './iotRapportAnalyses';
+import type { RapportCapteurs } from './iotRapportCapteurs';
 
 const BLEU: [number, number, number] = [30, 58, 138];
 const GRIS: [number, number, number] = [100, 100, 100];
@@ -35,13 +36,15 @@ function nombre(v: number, decimales: number): string {
 
 function cellule(v: string | number | Date | null, format?: string): string {
   if (v == null) return '';
+  if (v instanceof Date && format === 'dateheure') return v.toISOString().slice(0, 16).replace(/(\d+)-(\d+)-(\d+)T/, '$3/$2 ');
   if (v instanceof Date) return v.toLocaleDateString('fr-FR');
+  if (typeof v === 'number' && format === 'decimal') return nombre(v, 1);
   if (typeof v === 'number' && format === 'pct') return `${nombre(v * 100, 0)} %`;
   if (typeof v === 'number') return nombre(v, format === 'kwh' ? 1 : 0);
   return txt(v);
 }
 
-export function exporterRapportPdf(r: RapportCourbe, nomFichier: string, a?: RapportAnalyses | null): void {
+export function exporterRapportPdf(r: RapportCourbe, nomFichier: string, a?: RapportAnalyses | null, cap?: RapportCapteurs | null): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const largeur = doc.internal.pageSize.getWidth() - 2 * MARGE;
   const hauteurPage = doc.internal.pageSize.getHeight();
@@ -223,6 +226,20 @@ export function exporterRapportPdf(r: RapportCourbe, nomFichier: string, a?: Rap
     }
   }
 
+  if (a?.comparaisonSites) {
+    titreSection('Comparaison des sites');
+    tableau(colonnes(a.comparaisonSites, ['Site', 'Série mesurée', 'kWh', 'Part du total', 'Jours', 'kWh par jour', 'Part du jour', 'P max']));
+  }
+  if (cap) {
+    titreSection('Capteurs');
+    paragraphe(`Sur ce périmètre : ${cap.resume}.`);
+    for (const p of cap.constats) paragraphe(`•  ${p}`, { retrait: 2 });
+    for (const p of cap.aVerifierAuto) paragraphe(`•  À vérifier : ${p}`, { retrait: 2 });
+    if (cap.grandeurs) tableau(colonnes(cap.grandeurs, ['Grandeur', 'Capteur', 'Heures', 'Minimum', 'Maximum', 'Moyenne', 'Total']));
+    if (cap.etats) tableau(colonnes(cap.etats, ['Site', 'Capteur', 'Ce qui est compté', 'Nombre', 'Durée (h)']));
+    tableau(colonnes(cap.sante, ['Site', 'Capteur', 'Heures mesurées', 'Pile', 'Remarque']));
+  }
+
   titreSection('Données journalières');
   tableau(r.journalier);
   titreSection('Moyennes par type de jour');
@@ -254,5 +271,125 @@ export function exporterRapportPdf(r: RapportCourbe, nomFichier: string, a?: Rap
     doc.text(`Page ${i} / ${n}`, MARGE + largeur, hauteurPage - 8, { align: 'right' });
   }
 
+  doc.save(nomFichier);
+}
+
+/** Garde les colonnes utiles d'un tableau trop large pour une page A4. */
+function colonnes(t: Tableau, titres: string[]): Tableau {
+  const garder = titres.map(x => t.colonnes.findIndex(c => c.titre.startsWith(x))).filter(i => i >= 0);
+  return { colonnes: garder.map(i => t.colonnes[i]), lignes: t.lignes.map(l => garder.map(i => l[i])) };
+}
+
+export interface EntetePdfCapteurs { titre: string; sousTitre: string; perimetre: [string, string][]; aRetenir: string; aVerifier: string }
+
+/** Synthèse courte d'un rapport capteurs : l'Excel porte le détail. */
+export function exporterRapportCapteursPdf(cap: RapportCapteurs, entete: EntetePdfCapteurs, nomFichier: string): void {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const largeur = doc.internal.pageSize.getWidth() - 2 * MARGE;
+  const hauteurPage = doc.internal.pageSize.getHeight();
+  let y = 18;
+  const place = (h: number) => { if (y + h > hauteurPage - 18) { doc.addPage(); y = 18; } };
+  const titreSection = (t: string) => {
+    place(14);
+    y += 4;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(...BLEU);
+    doc.text(txt(t), MARGE, y);
+    doc.setDrawColor(...BLEU);
+    doc.setLineWidth(0.3);
+    doc.line(MARGE, y + 1.5, MARGE + largeur, y + 1.5);
+    y += 6;
+  };
+  const paragraphe = (t: string, retrait = 0) => {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(30, 30, 30);
+    const lignes = doc.splitTextToSize(txt(t), largeur - retrait);
+    const h = lignes.length * 9 * 0.42;
+    place(h + 1);
+    doc.text(lignes, MARGE + retrait, y);
+    y += h + 1.5;
+  };
+  const tableau = (t: Tableau) => {
+    if (t.lignes.length === 0) return;
+    autoTable(doc, {
+      startY: y,
+      head: [t.colonnes.map(c => txt(c.titre))],
+      body: t.lignes.map(l => l.map((v, i) => cellule(v, t.colonnes[i]?.format))),
+      theme: 'grid',
+      styles: { fontSize: 7.5, cellPadding: 1.2, overflow: 'linebreak' },
+      headStyles: { fillColor: BLEU, fontSize: 7.5 },
+      margin: { left: MARGE, right: MARGE },
+    });
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 4;
+  };
+  const image = (png: string | null, ratio: number) => {
+    if (!png) return;
+    const h = largeur * ratio;
+    place(h + 2);
+    doc.addImage(png, 'PNG', MARGE, y, largeur, h, undefined, 'FAST');
+    y += h + 3;
+  };
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.setTextColor(20, 30, 60);
+  doc.text(txt(entete.titre), MARGE, y);
+  y += 6;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(...GRIS);
+  doc.text(txt(entete.sousTitre), MARGE, y);
+  y += 4;
+
+  titreSection('Périmètre');
+  for (const [k, v] of entete.perimetre) paragraphe(`${k} : ${v}`);
+  paragraphe(`Sur ce périmètre : ${cap.resume}.`);
+  titreSection('Ce qu’il faut retenir');
+  if (entete.aRetenir) paragraphe(entete.aRetenir);
+  for (const p of cap.constats) paragraphe(`•  ${p}`, 2);
+  if (entete.aVerifier || cap.aVerifierAuto.length) {
+    titreSection('À vérifier sur site');
+    if (entete.aVerifier) paragraphe(entete.aVerifier);
+    for (const p of cap.aVerifierAuto) paragraphe(`•  ${p}`, 2);
+  }
+  if (cap.grandeurs) {
+    titreSection('Les mesures, capteur par capteur');
+    tableau(colonnes(cap.grandeurs, ['Grandeur', 'Capteur', 'Heures', 'Minimum', 'Date du minimum', 'Maximum', 'Date du maximum', 'Moyenne', 'Total']));
+  }
+  // Les quatre premières grandeurs : le détail complet est dans l'Excel
+  const COULEURS = ['#f97316', '#2563eb', '#16a34a', '#a855f7', '#0891b2', '#dc2626'];
+  for (const v of cap.vues.slice(0, 4)) {
+    const source = v.profil24 ?? v.parJour;
+    const categories = source.lignes.map(l => String(l[0]));
+    const series = source.colonnes.slice(1, 7).map((c, i) => ({
+      libelle: c.titre.length > 40 ? `${c.titre.slice(0, 39)}…` : c.titre,
+      valeurs: source.lignes.map(l => l[i + 1] as number | null),
+      couleur: COULEURS[i],
+    }));
+    const png = graphiqueCourbes(v.profil24 ? `${v.def.libelle} : journée type` : `${v.def.libelle} par jour`, categories, series, v.def.unite || 'valeur');
+    place(16 + largeur * (700 / 1800));
+    titreSection(v.def.libelle);
+    image(png, 700 / 1800);
+    if (v.carte) image(graphiqueCarteChaleur(v.carte.titre, v.carte, COULEURS[0], { unite: v.def.unite }), 760 / 1800);
+  }
+  if (cap.etats) {
+    titreSection('États');
+    tableau(colonnes(cap.etats, ['Site', 'Capteur', 'Ce qui est compté', 'Nombre', 'Durée (h)']));
+  }
+  titreSection('Santé des capteurs');
+  tableau(colonnes(cap.sante, ['Site', 'Capteur', 'Heures mesurées', 'Pile', 'Remarque']));
+  paragraphe('Détail par jour, journée type, cartes de chaleur et croisements : voir le rapport Excel.');
+
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...GRIS);
+    doc.text(txt(`${entete.titre} — ${entete.sousTitre}`), MARGE, hauteurPage - 8);
+    doc.text(`Page ${i} / ${n}`, MARGE + largeur, hauteurPage - 8, { align: 'right' });
+  }
   doc.save(nomFichier);
 }

@@ -351,6 +351,12 @@ export interface LectureFichier {
   colonnes: LectureColonne[];
   /** Ce que mesure le fichier : une production (PV) est rangée comme le PV des sites (rôle M5_PV). */
   sens?: 'consommation' | 'production';
+  /**
+   * Colonnes d'identité d'un fichier à plusieurs appareils empilés (export de
+   * l'Analyse : une ligne par appareil et par heure). Sans elles, toutes les
+   * lignes d'une même heure fusionnaient en une seule.
+   */
+  identite?: { appareil?: string; id?: string; role?: string; site?: string; piece?: string };
 }
 
 // ============================================================

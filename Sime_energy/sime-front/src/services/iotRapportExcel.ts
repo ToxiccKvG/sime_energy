@@ -10,6 +10,7 @@ import ExcelJS from 'exceljs';
 import { triggerDownload } from '@/lib/excel-utils';
 import type { RapportCourbe, Tableau } from './iotRapport';
 import type { RapportAnalyses, RelevesRapport } from './iotRapportAnalyses';
+import type { RapportCapteurs, VueGrandeur } from './iotRapportCapteurs';
 import { ajouterGraphiquesNatifs, type GraphiqueExcel } from './iotRapportGraphiquesExcel';
 
 const BLEU = 'FF1E3A8A';
@@ -20,6 +21,7 @@ const FORMATS: Record<string, string> = {
   pct: '0.0 %',
   date: 'dd/mm/yyyy',
   dateheure: 'dd/mm/yyyy hh:mm',
+  decimal: '#,##0.0',
 };
 
 function entete(ws: ExcelJS.Worksheet, ligne: number, titres: string[]) {
@@ -99,7 +101,7 @@ function section(ws: ExcelJS.Worksheet, ligne: number, intitule: string, t: Tabl
 }
 
 /** Page d'entrée : l'essentiel, où va l'énergie, à retenir, à vérifier, quel onglet pour quoi. */
-function feuilleLisezMoi(wb: ExcelJS.Workbook, r: RapportCourbe, a: RapportAnalyses, onglets: [string, string][]) {
+function feuilleLisezMoi(wb: ExcelJS.Workbook, r: RapportCourbe, a: RapportAnalyses, onglets: [string, string][], cap?: RapportCapteurs | null) {
   const ws = wb.addWorksheet('Lisez-moi');
   largeurs(ws, [44, 16, 12, 72]);
   titre(ws, 1, r.titre, 15);
@@ -174,7 +176,14 @@ function feuilleLisezMoi(wb: ExcelJS.Workbook, r: RapportCourbe, a: RapportAnaly
     bloc('Rien de signalé automatiquement.');
   }
   l++;
-  titre(ws, l++, '5. Quel onglet pour quoi ?');
+  if (cap) {
+    titre(ws, l++, '5. Capteurs');
+    bloc(`Sur ce périmètre : ${cap.resume}.`);
+    for (const p of cap.constats) bloc(`• ${p}`);
+    for (const p of cap.aVerifierAuto) bloc(`• À vérifier : ${p}`);
+    l++;
+  }
+  titre(ws, l++, `${cap ? 6 : 5}. Quel onglet pour quoi ?`);
   for (const [nom, role] of onglets) {
     const c = ws.getCell(l, 1);
     c.value = { text: nom, hyperlink: `#'${nom.replace(/'/g, "''")}'!A1` };
@@ -183,6 +192,102 @@ function feuilleLisezMoi(wb: ExcelJS.Workbook, r: RapportCourbe, a: RapportAnaly
     ws.getCell(l, 2).value = role;
     l++;
   }
+}
+
+const lettreColonne = (i: number) => { let n = i + 1, l = ''; while (n > 0) { const m = (n - 1) % 26; l = String.fromCharCode(65 + m) + l; n = Math.floor((n - 1) / 26); } return l; };
+
+type PlacerGraphique = (spec: Omit<GraphiqueExcel, 'deLigne' | 'aLigne'>, hauteur?: number) => void;
+const COULEURS_CAPTEURS = ['#f97316', '#2563eb', '#16a34a', '#a855f7', '#0891b2', '#dc2626'];
+
+/** Une carte de chaleur par grandeur, empilées : heures en ordonnée (0 h en bas), dates en bas. */
+function feuilleCartesCapteurs(wb: ExcelJS.Workbook, vues: VueGrandeur[]) {
+  const avec = vues.filter(v => v.carte);
+  if (avec.length === 0) return;
+  const ws = wb.addWorksheet('Cartes capteurs');
+  ws.getColumn(1).width = 8;
+  let l = 1;
+  avec.forEach((v, numero) => {
+    const c = v.carte!;
+    titre(ws, l++, c.titre);
+    const debut = l;
+    for (let h = 23; h >= 0; h--) {
+      const row = ws.getRow(l++);
+      row.getCell(1).value = `${String(h).padStart(2, '0')} h`;
+      row.getCell(1).font = { bold: true };
+      c.matrice[h].forEach((val, i) => {
+        if (val == null) return;
+        row.getCell(i + 2).value = val;
+        row.getCell(i + 2).numFmt = '0.0';
+      });
+    }
+    const pas = Math.max(1, Math.ceil(c.jours.length / 31));
+    c.jours.forEach((j, i) => {
+      if (i % pas !== 0) return;
+      const cell = ws.getRow(l).getCell(i + 2);
+      cell.value = `${j.slice(8, 10)}/${j.slice(5, 7)}`;
+      cell.font = { bold: true, size: 8 };
+      ws.getColumn(i + 2).width = 6.5;
+    });
+    ws.addConditionalFormatting({
+      ref: `B${debut}:${lettreColonne(c.jours.length)}${debut + 23}`,
+      rules: [{ type: 'colorScale', priority: numero + 1, cfvo: [{ type: 'min' }, { type: 'max' }], color: [{ argb: 'FFFFFFFF' }, { argb: `FF${COULEURS_CAPTEURS[numero % COULEURS_CAPTEURS.length].replace('#', '').toUpperCase()}` }] }],
+    });
+    l += 2;
+  });
+}
+
+/** Les feuilles capteurs, identiques dans un rapport mixte et dans un rapport capteurs seuls. */
+function feuillesCapteurs(wb: ExcelJS.Workbook, cap: RapportCapteurs, placer: PlacerGraphique) {
+  if (cap.grandeurs) feuilleTableau(wb, 'Capteurs', cap.grandeurs, [20, 7, 18, 30, 9, 9, 16, 9, 16, 9, 9, 12, 12]);
+  if (cap.vues.length) {
+    const wj = wb.addWorksheet('Capteurs par jour');
+    const wp = wb.addWorksheet('Profil capteurs');
+    wj.getColumn(1).width = 10;
+    wp.getColumn(1).width = 10;
+    let lj = 1;
+    let lp = 1;
+    for (const v of cap.vues) {
+      const unite = v.def.unite || 'valeur';
+      const nb = v.parJour.colonnes.length - 1;
+      for (let i = 0; i < nb; i++) { wj.getColumn(i + 2).width = 20; wp.getColumn(i + 2).width = 20; }
+      const s = section(wj, lj, v.def.libelle, v.parJour);
+      lj = s.fin;
+      if (v.parJour.lignes.length) {
+        const series = v.parJour.colonnes.slice(1, 7).map((_, i) => ({ colonne: lettreColonne(i + 1), couleur: COULEURS_CAPTEURS[i] }));
+        placer({
+          titre: `${v.def.libelle} par jour`, feuille: 'Capteurs par jour', ligneEntete: s.ligneEntete, nbLignes: v.parJour.lignes.length, colonneCategories: 'A',
+          barres: v.def.nature === 'cumul' ? series[0] : null, courbes: v.def.nature === 'cumul' ? series.slice(1) : series, uniteAxe: unite,
+        }, 18);
+      }
+      if (v.profil24) {
+        const sp = section(wp, lp, `${v.def.libelle} : journée type`, v.profil24);
+        lp = sp.fin;
+        placer({
+          titre: `${v.def.libelle} : journée type`, feuille: 'Profil capteurs', ligneEntete: sp.ligneEntete, nbLignes: 24, colonneCategories: 'A', barres: null, uniteAxe: unite,
+          courbes: v.profil24.colonnes.slice(1, 7).map((_, i) => ({ colonne: lettreColonne(i + 1), couleur: COULEURS_CAPTEURS[i] })),
+        }, 18);
+      }
+    }
+    feuilleCartesCapteurs(wb, cap.vues);
+  }
+  if (cap.etats) {
+    const we = wb.addWorksheet('États');
+    largeurs(we, [18, 32, 24, 10, 20, 10, 12, 12]);
+    let le = section(we, 1, 'Ce que les capteurs ont fait', cap.etats).fin;
+    if (cap.etatsParHeure) {
+      const nb = cap.etatsParHeure.colonnes.length - 1;
+      for (let i = 8; i < nb + 1; i++) we.getColumn(i + 1).width = 14;
+      const sh = section(we, le, 'Selon l’heure', cap.etatsParHeure);
+      le = sh.fin;
+      placer({
+        titre: 'Activité des capteurs d’état selon l’heure', feuille: 'États', ligneEntete: sh.ligneEntete, nbLignes: 24, colonneCategories: 'A', barres: null, uniteAxe: 'événements',
+        courbes: cap.etatsParHeure.colonnes.slice(1, 7).map((_, i) => ({ colonne: lettreColonne(i + 1), couleur: COULEURS_CAPTEURS[i] })),
+      }, 18);
+    }
+    if (cap.etatsParJour) section(we, le, 'Selon le jour', cap.etatsParJour);
+  }
+  if (cap.croisements) feuilleTableau(wb, 'Croisements', cap.croisements, [20, 44, 12, 12]);
+  feuilleTableau(wb, 'Santé des capteurs', cap.sante, [18, 32, 24, 16, 10, 12, 16, 10, 10, 40]);
 }
 
 /** Carte de chaleur : heures en ordonnée (0 h en bas), dates en bas, une seule couleur en dégradé. */
@@ -221,7 +326,83 @@ function feuilleCarte(wb: ExcelJS.Workbook, a: NonNullable<RapportAnalyses['cart
   ws.views = [{ state: 'frozen', xSplit: 1 }];
 }
 
-export async function exporterRapportExcel(r: RapportCourbe, nomFichier: string, a?: RapportAnalyses | null, releves?: RelevesRapport | null): Promise<void> {
+const ONGLETS_CAPTEURS = (cap: RapportCapteurs): [string, string][] => [
+  ...(cap.grandeurs ? [['Capteurs', 'Minimum, maximum et moyenne de chaque grandeur, capteur par capteur'] as [string, string]] : []),
+  ...(cap.vues.length ? [
+    ['Capteurs par jour', 'Chaque grandeur, jour par jour'] as [string, string],
+    ['Profil capteurs', 'La journée type de chaque grandeur'] as [string, string],
+    ...(cap.vues.some(v => v.carte) ? [['Cartes capteurs', 'Chaque heure de chaque jour, par grandeur'] as [string, string]] : []),
+  ] : []),
+  ...(cap.etats ? [['États', 'Ouvertures, détections, appuis et durées, selon l’heure et le jour'] as [string, string]] : []),
+  ...(cap.croisements ? [['Croisements', 'Consommation comparée à la température et à l’activité'] as [string, string]] : []),
+  ['Santé des capteurs', 'Heures mesurées, pile, signal, capteurs figés ou muets'],
+];
+
+export interface EnteteCapteurs { titre: string; sousTitre: string; perimetre: [string, string][]; aRetenir: string; aVerifier: string }
+
+/** Rapport sans énergie : uniquement ce qui est chargé, aucune feuille d'énergie vide. */
+export async function exporterRapportCapteursExcel(cap: RapportCapteurs, entete: EnteteCapteurs, nomFichier: string): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'SIMEE — module IOT';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Lisez-moi');
+  largeurs(ws, [44, 16, 12, 72]);
+  titre(ws, 1, entete.titre, 15);
+  ws.getCell(2, 1).value = entete.sousTitre;
+  let l = 4;
+  const bloc = (texte: string) => {
+    ws.mergeCells(l, 1, l, 4);
+    const c = ws.getCell(l, 1);
+    c.value = texte;
+    c.alignment = { wrapText: true, vertical: 'top' };
+    ws.getRow(l).height = Math.max(18, Math.ceil(texte.length / 125) * 16);
+    l++;
+  };
+  titre(ws, l++, '1. Périmètre');
+  for (const [k, v] of entete.perimetre) bloc(`${k} : ${v}`);
+  bloc(`Sur ce périmètre : ${cap.resume}.`);
+  l++;
+  titre(ws, l++, '2. Ce qu’il faut retenir');
+  if (entete.aRetenir) bloc(entete.aRetenir);
+  if (cap.constats.length) for (const p of cap.constats) bloc(`• ${p}`);
+  else if (!entete.aRetenir) bloc('Données insuffisantes pour un constat sur cette période.');
+  l++;
+  titre(ws, l++, '3. À vérifier sur site');
+  if (entete.aVerifier) bloc(entete.aVerifier);
+  for (const p of cap.aVerifierAuto) bloc(`• ${p}`);
+  if (!entete.aVerifier && cap.aVerifierAuto.length === 0) bloc('Rien de signalé automatiquement.');
+  l++;
+  titre(ws, l++, '4. Quel onglet pour quoi ?');
+  for (const [nom, role] of [['Graphiques', 'Tous les graphiques, liés aux feuilles et modifiables dans Excel'] as [string, string], ...ONGLETS_CAPTEURS(cap)]) {
+    const c = ws.getCell(l, 1);
+    c.value = { text: nom, hyperlink: `#'${nom.replace(/'/g, "''")}'!A1` };
+    c.font = { color: { argb: 'FF1D4ED8' }, underline: true };
+    ws.mergeCells(l, 2, l, 4);
+    ws.getCell(l, 2).value = role;
+    l++;
+  }
+  const wg = wb.addWorksheet('Graphiques');
+  wg.getCell(1, 1).value = 'Graphiques liés aux feuilles du classeur : clic droit sur un graphique pour en modifier les couleurs, le type ou les séries.';
+  wg.getCell(1, 1).font = { italic: true, color: { argb: 'FF64748B' } };
+  const graphiques: GraphiqueExcel[] = [];
+  let ancrage = 2;
+  feuillesCapteurs(wb, cap, (spec, hauteur = 20) => {
+    graphiques.push({ ...spec, deLigne: ancrage, aLigne: ancrage + hauteur });
+    ancrage += hauteur + 2;
+  });
+  const buffer = await wb.xlsx.writeBuffer() as ArrayBuffer;
+  triggerDownload(await ajouterGraphiquesNatifs(buffer, 'Graphiques', graphiques) as unknown as ExcelJS.Buffer, nomFichier);
+}
+
+export type SuiviExcel = (libelle: string, pct: number | null) => void;
+// Sans minuterie : le navigateur ralentit fortement les minuteries d'un onglet au second plan
+const pause = () => new Promise<void>(r => {
+  const canal = new MessageChannel();
+  canal.port1.onmessage = () => r();
+  canal.port2.postMessage(0);
+});
+
+export async function exporterRapportExcel(r: RapportCourbe, nomFichier: string, a?: RapportAnalyses | null, releves?: RelevesRapport | null, cap?: RapportCapteurs | null, suivi?: SuiviExcel): Promise<void> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'SIMEE — module IOT';
   wb.created = new Date();
@@ -240,6 +421,8 @@ export async function exporterRapportExcel(r: RapportCourbe, nomFichier: string,
       ['Statistiques', 'Heures classées, distribution, lien avec la température'],
       ...(a.pics ? [['Pics', 'Les minutes les plus fortes et chaque circuit à cet instant'] as [string, string]] : []),
       ...(a.coherence ? [['Cohérence', 'Les compteurs concordent-ils entre eux ?'] as [string, string]] : []),
+      ...(a.comparaisonSites ? [['Comparaison des sites', 'L’énergie de chaque site, côte à côte'] as [string, string]] : []),
+      ...(cap ? ONGLETS_CAPTEURS(cap) : []),
       ['Horaire', 'Détail heure par heure'],
       ['Journalier', 'Détail jour par jour, avec les heures couvertes'],
       ['Types de jour', 'Moyennes par type de jour'],
@@ -248,7 +431,7 @@ export async function exporterRapportExcel(r: RapportCourbe, nomFichier: string,
       ['Détail', 'Une ligne par appareil et par jour'],
       ...(releves ? [['Brut', 'Les relevés tels que collectés'] as [string, string], ['Nettoyé', 'Sans lignes vides ni relectures'] as [string, string], ['Journal nettoyage', 'Ce qui a été retiré'] as [string, string]] : []),
     ];
-    feuilleLisezMoi(wb, r, a, onglets);
+    feuilleLisezMoi(wb, r, a, onglets, cap);
   }
 
   // ── Synthèse ────────────────────────────────────────────────
@@ -425,6 +608,11 @@ export async function exporterRapportExcel(r: RapportCourbe, nomFichier: string,
 
     if (a.pics) feuilleTableau(wb, 'Pics', a.pics, [16, 14, ...a.pics.colonnes.slice(2).map(() => 14)]);
     if (a.coherence) feuilleTableau(wb, 'Cohérence', a.coherence, [30, 40, 12, 14, 12, 14, 54]);
+    if (a.comparaisonSites) {
+      feuilleTableau(wb, 'Comparaison des sites', a.comparaisonSites, [24, 18, 12, 10, 8, 12, 10, 10, 10, 10, 10, 10]);
+      placer({ titre: 'kWh par site', feuille: 'Comparaison des sites', ligneEntete: 2, nbLignes: a.comparaisonSites.lignes.length, colonneCategories: 'A', barres: { colonne: 'C', couleur: principal }, courbes: [], etiquettes: true }, 18);
+    }
+    if (cap) feuillesCapteurs(wb, cap, placer);
 
     feuilleTableau(wb, 'Horaire', a.horaire, [16, 14, 12, 12, ...a.horaire.colonnes.slice(4).map(() => 14)]);
     if (a.horaire.lignes.length) {
@@ -465,19 +653,31 @@ export async function exporterRapportExcel(r: RapportCourbe, nomFichier: string,
   feuilleTableau(wb, 'Détail', r.detail, [12, 16, 34, 34, 16, 14, 12, 12, 12, 12, 12, 16]);
 
   if (releves) {
-    const brut = (nom: string, lignes: RelevesRapport['brut']) => {
+    const nbLignes = releves.brut.length + releves.nettoye.length;
+    let ecrites = 0;
+    const brut = async (nom: string, lignes: RelevesRapport['brut']) => {
       const ws3 = wb.addWorksheet(nom);
       const colonnes = lignes[0] ? Object.keys(lignes[0]) : [];
       entete(ws3, 1, colonnes);
       colonnes.forEach((_, i) => { ws3.getColumn(i + 1).width = i < 2 ? 22 : 12; });
-      for (const x of lignes) ws3.addRow(colonnes.map(c => x[c]));
+      // Par paquets : la page reste vivante et la barre avance (70 à 95 %, la lecture ayant pris le début)
+      for (let i = 0; i < lignes.length; i++) {
+        ws3.addRow(colonnes.map(c => lignes[i][c]));
+        ecrites++;
+        if (ecrites % 2000 === 0) {
+          suivi?.(`Écriture de l'onglet ${nom} : ${ecrites.toLocaleString('fr-FR')} / ${nbLignes.toLocaleString('fr-FR')} lignes`, 70 + (ecrites / nbLignes) * 25);
+          await pause();
+        }
+      }
       ws3.views = [{ state: 'frozen', ySplit: 1 }];
     };
-    brut('Brut', releves.brut);
-    brut('Nettoyé', releves.nettoye);
+    await brut('Brut', releves.brut);
+    await brut('Nettoyé', releves.nettoye);
     feuilleTableau(wb, 'Journal nettoyage', releves.journal, [60, 14]);
   }
 
+  suivi?.('Compression du fichier…', releves ? 96 : null);
+  await pause();
   const buffer = await wb.xlsx.writeBuffer() as ArrayBuffer;
   triggerDownload(await ajouterGraphiquesNatifs(buffer, 'Graphiques', graphiques) as unknown as ExcelJS.Buffer, nomFichier);
 }

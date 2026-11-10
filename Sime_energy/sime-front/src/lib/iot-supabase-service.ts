@@ -107,6 +107,8 @@ export interface SupabaseExportOptions {
   granularite?: 'horaire' | 'minute';
   /** Filtrer par site */
   site?: string;
+  /** Plusieurs sites (au moins 2). Un seul site reste dans `site`. */
+  sites?: string[];
   /** Filtrer par device_family (ENERGIE_3PH, ENERGIE_1PH, LUMIERE…) */
   deviceFamily?: string;
   /** Filtrer par device_type exact (code Shelly : SHEM-3, SHPLG-S…) */
@@ -637,12 +639,13 @@ async function fetchAllDevicesKeyset<T extends { ts?: string }>(
 
 /** Liste des appareils concernés — nécessaire pour interroger appareil par appareil. */
 async function resolveDeviceIds(opts: {
-  deviceIds?: string[]; site?: string; deviceFamily?: string;
+  deviceIds?: string[]; site?: string; sites?: string[]; deviceFamily?: string;
   deviceType?: string; deviceName?: string;
 }): Promise<string[]> {
   if (opts.deviceIds && opts.deviceIds.length > 0) return opts.deviceIds;
   let q = supabase.from('shelly_devices_catalog_visible').select('device_id');
   if (opts.site)         q = q.eq('site', opts.site);
+  if (opts.sites?.length) q = q.in('site', opts.sites);
   if (opts.deviceFamily) q = q.eq('device_family', opts.deviceFamily);
   if (opts.deviceType)   q = q.eq('device_type', opts.deviceType);
   if (opts.deviceName)   q = q.eq('name', opts.deviceName);
@@ -730,6 +733,7 @@ export async function exporterDonneesSupabase(
     colonnes,
     granularite = 'horaire',
     site,
+    sites,
     deviceFamily,
     deviceType,
     deviceName,
@@ -752,9 +756,12 @@ export async function exporterDonneesSupabase(
         let query = supabase
           .from('shelly_cl_horaire')
           .select('*')
-          .order('ts_heure', { ascending: true });
+          .order('ts_heure', { ascending: true })
+          // Tri stable : sinon des lignes de la même heure sont lues deux fois ou perdues entre deux pages
+          .order('device_id', { ascending: true });
 
         if (site)         query = query.eq('site', site);
+        if (sites?.length) query = query.in('site', sites);
         if (deviceFamily) query = query.eq('device_family', deviceFamily);
         if (deviceType)   query = query.eq('device_type', deviceType);
         if (deviceName)   query = query.eq('name', deviceName);
@@ -772,6 +779,7 @@ export async function exporterDonneesSupabase(
         .order('ts', { ascending: false })
         .limit(5000);
       if (site)                              roomQuery = roomQuery.eq('site', site);
+      if (sites?.length)                     roomQuery = roomQuery.in('site', sites);
       if (deviceIds && deviceIds.length > 0) roomQuery = roomQuery.in('device_id', deviceIds);
 
       const [data, { data: roomData }] = await Promise.all([
@@ -803,7 +811,7 @@ export async function exporterDonneesSupabase(
         return query;
       };
 
-      const ids = await resolveDeviceIds({ deviceIds, site, deviceFamily, deviceType, deviceName });
+      const ids = await resolveDeviceIds({ deviceIds, site, sites, deviceFamily, deviceType, deviceName });
       if (ids.length === 0) {
         return { rows: [], total: 0, erreur: 'Aucun appareil ne correspond aux filtres sélectionnés' };
       }

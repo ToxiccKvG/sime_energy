@@ -16,6 +16,7 @@ import { toast } from '@/hooks/use-toast';
 import type { ShellyRow, JourFerie } from './shared';
 import { fetchRegles, fetchSignalements, versionRegles, type RegleQualite, type Signalement, type PerimetreQualite } from '@/lib/iot-qualite-service';
 import { exporterDonneesSupabase, type SupabaseExportOptions } from '@/lib/iot-supabase-service';
+import { libelleSites } from './PerimetreBar';
 import { profilMiToShellyRow, cleJour } from '@/lib/iot-profil-engine';
 import { fetchRecettes, creerRecette, supprimerRecette, type Recette } from '@/lib/iot-recette-service';
 
@@ -190,13 +191,13 @@ export function QualiteMoteurPanel({ q, nbLignes }: {
 export function nomChargement(ch: SupabaseExportOptions): string {
   const jm = (d?: string) => d ? d.slice(8, 10) + '/' + d.slice(5, 7) : '';
   const periode = ch.dateDebut ? `${jm(ch.dateDebut)} → ${jm(ch.dateFin)}` : '';
-  return [ch.site ?? 'Tous les sites', periode].filter(Boolean).join(' · ');
+  return [libelleSites(ch.sites?.length ? ch.sites : ch.site ? [ch.site] : []), periode].filter(Boolean).join(' · ');
 }
 
 /** Même nettoyage : même nom, mêmes données chargées, mêmes règles exclues. */
 function empreinteRecette(nom: string, ch: SupabaseExportOptions, regles: string[]): string {
   return JSON.stringify([
-    nom.trim(), ch.site ?? '', ch.dateDebut ?? '', ch.dateFin ?? '', ch.granularite ?? '',
+    nom.trim(), [...(ch.sites?.length ? ch.sites : ch.site ? [ch.site] : [])].sort(), ch.dateDebut ?? '', ch.dateFin ?? '', ch.granularite ?? '',
     [...(ch.deviceIds ?? [])].sort(), [...regles].sort(),
   ]);
 }
@@ -294,7 +295,7 @@ export const RecettesPanel = forwardRef<RecettesPanelHandle, {
               <li key={r.id} className="flex flex-wrap items-center gap-2 py-1.5">
                 <span className="text-slate-200 font-medium">{r.nom}</span>
                 <span className="text-slate-500">
-                  {[r.chargement.site ?? 'tous sites', r.chargement.dateDebut && `${r.chargement.dateDebut} → ${r.chargement.dateFin}`, r.chargement.granularite].filter(Boolean).join(' · ')}
+                  {[r.chargement.sites?.length ? r.chargement.sites.join(', ') : r.chargement.site ?? 'tous sites', r.chargement.dateDebut && `${r.chargement.dateDebut} → ${r.chargement.dateFin}`, r.chargement.granularite].filter(Boolean).join(' · ')}
                   {` · ${r.regles_exclues.length} règle${r.regles_exclues.length > 1 ? 's' : ''} exclue${r.regles_exclues.length > 1 ? 's' : ''} · ${new Date(r.cree_le).toLocaleDateString('fr-FR')}`}
                 </span>
                 <span className="ml-auto flex gap-1">

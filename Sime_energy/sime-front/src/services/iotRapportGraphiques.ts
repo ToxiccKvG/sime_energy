@@ -274,45 +274,47 @@ export function graphiqueRepartition(titre: string, items: { libelle: string; kw
   return c.toDataURL('image/png');
 }
 
-/** Carte de chaleur : heures en ordonnée, 0 h en bas ; dates en bas, espacées ; case vide = non mesuré. */
-export function graphiqueCarteChaleur(titre: string, carte: { jours: string[]; matrice: (number | null)[][] }, couleur: string): string | null {
+/** Carte de chaleur : heures en abscisse (0 h à gauche) ; dates en ordonnée, la plus ancienne en haut, espacées ; case vide = non mesuré. */
+export function graphiqueCarteChaleur(titre: string, carte: { jours: string[]; matrice: (number | null)[][] }, couleur: string, grandeur?: { unite: string }): string | null {
   const valeurs = carte.matrice.flat().filter((v): v is number => v != null);
   if (carte.jours.length === 0 || valeurs.length === 0) return null;
   const L = 1800, H = 760;
   const [c, ctx] = toile(L, H);
-  const m = { g: 90, d: 30, h: 60, b: 50 };
-  const lc = (L - m.g - m.d) / carte.jours.length, hc = (H - m.h - m.b) / 24;
+  const m = { g: 100, d: 30, h: 60, b: 50 };
+  const lc = (L - m.g - m.d) / 24, hc = (H - m.h - m.b) / carte.jours.length;
   const max = Math.max(...valeurs);
+  // L'énergie part de 0 ; une température se lit entre son minimum et son maximum
+  const min = grandeur ? Math.min(...valeurs) : 0;
   const r = parseInt(couleur.slice(1, 3), 16), g = parseInt(couleur.slice(3, 5), 16), b = parseInt(couleur.slice(5, 7), 16);
-  for (let h = 0; h < 24; h++) {
-    const y = m.h + (23 - h) * hc;
-    carte.jours.forEach((_, i) => {
+  const pasY = [1, 2, 3, 7, 14, 30].find(p => p * hc >= 24) ?? 30;
+  carte.jours.forEach((j, i) => {
+    const y = m.h + i * hc;
+    for (let h = 0; h < 24; h++) {
       const v = carte.matrice[h][i];
-      if (v == null) return;
-      const part = max > 0 ? v / max : 0;
+      if (v == null) continue;
+      const part = max > min ? (v - min) / (max - min) : 0;
       ctx.fillStyle = `rgb(${Math.round(255 + (r - 255) * part)},${Math.round(255 + (g - 255) * part)},${Math.round(255 + (b - 255) * part)})`;
-      ctx.fillRect(m.g + i * lc, y, Math.ceil(lc), Math.ceil(hc));
-    });
-    if (h % 3 === 0) {
+      ctx.fillRect(m.g + h * lc, y, Math.ceil(lc), Math.ceil(hc));
+    }
+    if (i % pasY === 0) {
       ctx.font = `20px ${POLICE}`;
       ctx.fillStyle = TEXTE;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`${h} h`, m.g - 10, y + hc / 2);
+      ctx.fillText(`${j.slice(8, 10)}/${j.slice(5, 7)}`, m.g - 10, y + hc / 2);
     }
-  }
+  });
   ctx.strokeStyle = GRILLE;
   ctx.strokeRect(m.g, m.h, L - m.g - m.d, H - m.h - m.b);
   ctx.font = `20px ${POLICE}`;
   ctx.fillStyle = TEXTE;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  const pasX = [1, 2, 3, 7, 14, 30].find(p => p * lc >= 80) ?? 30;
-  carte.jours.forEach((j, i) => { if (i % pasX === 0) ctx.fillText(`${j.slice(8, 10)}/${j.slice(5, 7)}`, m.g + (i + 0.5) * lc, H - m.b + 10); });
+  for (let h = 0; h < 24; h++) ctx.fillText(`${h} h`, m.g + (h + 0.5) * lc, H - m.b + 10);
   ctx.font = `bold 28px ${POLICE}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#0f172a';
-  ctx.fillText(`${titre} (0 à ${nf(max, 2)} kWh par heure)`, m.g, 38);
+  ctx.fillText(grandeur ? `${titre} : ${nf(min, 1)} à ${nf(max, 1)} ${grandeur.unite}` : `${titre} (0 à ${nf(max, 2)} kWh par heure)`, m.g, 38);
   return c.toDataURL('image/png');
 }

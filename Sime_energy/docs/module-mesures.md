@@ -510,3 +510,31 @@ un message explicite. Bénéficie aussi à `AnalyseTab` et `CustomSensorMapper`.
   biais injecté A = 1,03·B + 15 W : pas auto 15 min, biais −32,9 W, a = 0,971,
   b = −14,6 W, exports PNG + Excel vérifiés dans le navigateur.
 - `tsc --noEmit`, `eslint` (hors erreurs préexistantes), `bun run build` : OK.
+
+## Analyse IOT : plusieurs sites et tous les capteurs (6 novembre 2026)
+
+**Choix des sites.** La barre de périmètre coche un, plusieurs ou tous les sites (`PerimetreBar.tsx`). Un seul site reste dans `SupabaseExportOptions.site` : même requête et mêmes nettoyages enregistrés qu'avant. Plusieurs sites vont dans `sites`.
+
+**Règles avec plusieurs sites.**
+
+- Énergie : la série principale de chaque site, puis un total. Jamais d'addition entre arrivée et départs.
+- Température, humidité, météo : jamais de moyenne entre sites ni entre capteurs. Une ligne par capteur ; à l'écran, un site affiché à la fois.
+- Pics : un par compteur de référence. Les pics ne s'additionnent pas.
+- Phases : non données sur plusieurs sites.
+
+**Rapport.** `ProfilChargeTab.tsx` porte le rapport dès qu'il y a de l'énergie ; `RapportCapteursDialog.tsx` prend le relais quand il n'y en a pas. Le contenu suit ce qui est chargé :
+
+| Fichier | Rôle |
+|---|---|
+| `lib/iot-rapport-service.ts` | Lectures : `fn_profil_horaire`, `fn_voie_minute`, `fn_pics_minute`, `fn_coherence_circuits`, `fn_capteurs_horaire`, `fn_etats_appareil` |
+| `services/iotRapportAnalyses.ts` | Énergie : tranches, circuits, pics, tableau croisé, comparaison des sites |
+| `services/iotRapportCapteurs.ts` | Capteurs : grandeurs, états, santé, croisements |
+| `services/iotRapportExcel.ts`, `iotRapportPdf.ts` | Sorties, sans aucun calcul |
+
+**Nature des grandeurs** (`GRANDEURS` dans `iotRapportCapteurs.ts`) : la pluie se lit en total, le reste en moyenne. Une nouvelle grandeur s'ajoute là. Une colonne libre d'un fichier importé est résumée en moyenne.
+
+**États.** Comptés sur les relevés bruts (`fn_etats_appareil`), un appareil à la fois : le dernier état de l'heure ne suffit pas à compter des ouvertures. Un écart de plus de 15 minutes sans relevé n'entre pas dans les durées et est donné à part. Un relais donne une durée allumée, pas une énergie.
+
+**Aucun seuil de confort ou d'alerte** : le rapport décrit les mesures. Les pistes « à vérifier » restent des pistes : température, humidité ou pression figée, pile basse (une pile à 0 % qui émet encore n'est pas signalée), porte toujours ouverte.
+
+**Non-régression.** Tout rapport énergie sur un seul site doit rester identique, cellule par cellule. Seule la page Lisez-moi gagne une section quand des capteurs sont chargés.

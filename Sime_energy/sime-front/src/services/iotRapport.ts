@@ -66,7 +66,7 @@ export interface ChiffreCle {
 }
 
 export interface Tableau {
-  colonnes: { titre: string; format?: 'kwh' | 'nombre' | 'texte' | 'date' | 'pct' | 'dateheure' }[];
+  colonnes: { titre: string; format?: 'kwh' | 'nombre' | 'decimal' | 'texte' | 'date' | 'pct' | 'dateheure' }[];
   lignes: (string | number | Date | null)[][];
   /** Avertissement affiché au-dessus du tableau. */
   note?: string;

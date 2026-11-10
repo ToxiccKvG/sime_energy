@@ -80,7 +80,7 @@ const bornes = (p: PerimetreRapport) => {
 
 /** Un appel par appareil, 4 à la fois : un appareil qui échoue n'emporte pas les autres. */
 export async function fetchVoiesMinute(
-  p: PerimetreRapport, deviceIds: string[], talon: { debut: number; fin: number },
+  p: PerimetreRapport, deviceIds: string[], talon: { debut: number; fin: number }, onAppareil?: () => void,
 ): Promise<{ voies: VoieMinute[]; echecs: number }> {
   const voies: VoieMinute[] = [];
   let echecs = 0;
@@ -93,6 +93,7 @@ export async function fetchVoiesMinute(
       });
       if (error) echecs++;
       else voies.push(...((data ?? []) as VoieMinute[]));
+      onAppareil?.();
     }
   };
   await Promise.all(Array.from({ length: 4 }, ouvrier));
@@ -151,6 +152,81 @@ export async function fetchTemperatureJour(p: PerimetreRapport): Promise<Map<str
     if (!data || data.length < PAGE) break;
   }
   return new Map([...parJour].map(([k, v]) => [k, v.somme / v.n]));
+}
+
+// ── Capteurs (tout ce qui n'est pas de l'énergie) ────────────
+export interface LigneCapteur {
+  ts: Date;
+  site: string;
+  deviceId: string;
+  nom: string;
+  famille: string | null;
+  type: string | null;
+  /** Grandeurs mesurées cette heure-là ; absente = pas de mesure. */
+  valeurs: Record<string, number>;
+  nbMesures: number;
+}
+
+const COLONNES_CAPTEUR = [
+  'temperature', 'temperature_min', 'temperature_max', 'humidite', 'ressenti', 'point_rosee',
+  'uv', 'uv_max', 'lux', 'lux_max', 'pression', 'pluie_mm', 'vent', 'rafale',
+  'inclinaison', 'gaz_ppm', 'temp_interne', 'batterie', 'signal',
+] as const;
+
+export async function fetchCapteursHoraire(p: PerimetreRapport): Promise<LigneCapteur[]> {
+  const PAGE = 1000;
+  const lignes: LigneCapteur[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .rpc('fn_capteurs_horaire', {
+        p_date_debut: p.dateDebut, p_date_fin: p.dateFin,
+        p_heure_debut: p.heureDebut, p_heure_fin: p.heureFin,
+        p_sites: p.sites, p_device_ids: p.deviceIds,
+      })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    for (const r of data ?? []) {
+      const valeurs: Record<string, number> = {};
+      for (const c of COLONNES_CAPTEUR) if (typeof r[c] === 'number') valeurs[c] = r[c];
+      lignes.push({
+        ts: new Date(r.ts_heure), site: r.site, deviceId: r.device_id, nom: r.name ?? r.device_id,
+        famille: r.device_family, type: r.device_type, valeurs, nbMesures: r.nb_mesures_reelles ?? 0,
+      });
+    }
+    if (!data || data.length < PAGE) break;
+  }
+  return lignes;
+}
+
+export interface EtatAppareil {
+  device_id: string;
+  etat: string;
+  nb_entrees: number;
+  duree_s: number;
+  nb_releves: number;
+  par_heure: number[];
+  par_jour: Record<string, number>;
+  duree_inconnue_s: number;
+}
+
+/** Un appel par appareil, 4 à la fois : un appareil qui échoue n'emporte pas les autres. */
+export async function fetchEtatsAppareils(p: PerimetreRapport, deviceIds: string[], onAppareil?: () => void): Promise<{ etats: EtatAppareil[]; echecs: number }> {
+  const etats: EtatAppareil[] = [];
+  let echecs = 0;
+  const { p_debut, p_fin } = bornes(p);
+  const file = [...deviceIds];
+  const ouvrier = async () => {
+    for (let id = file.shift(); id; id = file.shift()) {
+      const { data, error } = await supabase.rpc('fn_etats_appareil', {
+        p_device_id: id, p_debut, p_fin, p_heure_debut: p.heureDebut, p_heure_fin: p.heureFin,
+      });
+      if (error) echecs++;
+      else etats.push(...((data ?? []) as EtatAppareil[]));
+      onAppareil?.();
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, ouvrier));
+  return { etats, echecs };
 }
 
 // ── Relevés bruts (onglets facultatifs Brut / Nettoyé) ───────

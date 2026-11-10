@@ -6,7 +6,10 @@ import {
 import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { CouleursDonnees } from '@/components/shared/CouleursDonnees';
 import { couleurDonnee, useChartPreferences } from '@/lib/chart-preferences';
-import { Download, Zap, Calendar, Database, RefreshCw, ChevronDown, X } from 'lucide-react';
+import { Download, Zap, Calendar, Database, RefreshCw, ChevronDown, Info, X } from 'lucide-react';
+import { Portal as TooltipPortal } from '@radix-ui/react-tooltip';
+import { BarreAvancement, laisserAfficher, type Avancement } from './BarreAvancement';
+import { Tooltip as Bulle, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -21,9 +24,10 @@ import { fetchDisponibles, fetchProfilCharge, fetchSiteBilan, type ProfilChargeJ
 import type { PerimetreAnalyse } from './PerimetreBar';
 import { fetchDeviceRoles } from '@/lib/shelly-device-role-service';
 import {
-  fetchCoherence, fetchPicsMinute, fetchProfilHoraire, fetchRelevesBruts, fetchTemperatureJour, fetchVoiesMinute,
-  type CoherenceCircuit, type LigneHoraire, type PerimetreRapport, type PicMinute, type VoieMinute,
+  fetchCapteursHoraire, fetchCoherence, fetchEtatsAppareils, fetchPicsMinute, fetchProfilHoraire, fetchRelevesBruts, fetchTemperatureJour, fetchVoiesMinute,
+  type CoherenceCircuit, type EtatAppareil, type LigneCapteur, type LigneHoraire, type PerimetreRapport, type PicMinute, type VoieMinute,
 } from '@/lib/iot-rapport-service';
+import { construireCapteurs, lignesCapteursDepuisFichier } from '@/services/iotRapportCapteurs';
 import {
   construireAnalyses, lignesHorairesDepuisFichier, preparerReleves, TRANCHES_DEFAUT,
   type RelevesRapport, type TranchesHoraires,
@@ -128,6 +132,16 @@ function heuresDansPlage(debut: number, fin: number): number {
 type OptsNettoyage = { completude: boolean; masquerZeros: boolean; quarantaine: boolean };
 const LIGNES_PAR_PAGE = 200;
 const MAX_RELEVES = 150_000;
+
+/** Les six réglages des tranches horaires du rapport, et ce que dit la bulle de chacun. */
+const REGLAGES_TRANCHES: { libelle: string; cle: keyof TranchesHoraires; bulle: string }[] = [
+  { libelle: 'Jour : de', cle: 'jourDebut', bulle: "Heure où commence la journée. Sert à séparer l'énergie consommée le jour de celle consommée la nuit. Conseillé : 7 h." },
+  { libelle: 'Jour : à', cle: 'jourFin', bulle: "Heure où finit la journée, non comprise. Tout ce qui est en dehors du jour compte comme la nuit. Conseillé : 19 h." },
+  { libelle: 'Soirée : de', cle: 'soirDebut', bulle: "Début de la période à surveiller à part, souvent quand la consommation monte. Sert à voir la part d'énergie consommée sur ces quelques heures. Conseillé : 19 h." },
+  { libelle: 'Soirée : à', cle: 'soirFin', bulle: "Fin de la période à surveiller, non comprise. La soirée reste comptée dans le jour ou la nuit. Si elle couvre toute la nuit, elle n'apprend rien de plus. Conseillé : 23 h." },
+  { libelle: 'Conso. de fond : de', cle: 'talonDebut', bulle: "Début du moment où presque tout est éteint. Ce qui consomme encore à ce moment-là tourne en permanence : veille, frigo, éclairage laissé allumé. Conseillé : 0 h." },
+  { libelle: 'Conso. de fond : à', cle: 'talonFin', bulle: "Fin de ce moment calme, non comprise. Choisissez une heure avant la reprise d'activité. Conseillé : 3 h." },
+];
 const jjmm = (cle: string) => `${cle.slice(8, 10)}/${cle.slice(5, 7)}`;
 const fmtPlage = (sg: Signalement) => {
   const d = new Date(sg.debut);
@@ -519,8 +533,8 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
     setSbError(null);
     // « Tous les sites » : la vraie liste, pas sbSites qui vaut encore la liste
     // de secours quand ce chargement part au montage (retour sur l'onglet)
-    const sites = perimetre.site
-      ? Promise.resolve([perimetre.site])
+    const sites = perimetre.sites.length > 0
+      ? Promise.resolve(perimetre.sites)
       : fetchAccounts()
         .then(accounts => {
           const liste = Array.from(new Set(accounts.map(a => a.site).filter(Boolean))).sort();
@@ -710,41 +724,89 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
   const [inclureReleves, setInclureReleves] = useState(false);
   const [donneesRapport, setDonneesRapport] = useState<{
     lignes: LigneHoraire[]; voies: VoieMinute[] | null; pics: PicMinute[] | null; compteur: string | null;
+    picsParCompteur: { compteur: string; pics: PicMinute[] }[] | null;
     coherence: CoherenceCircuit[] | null; temperatures: Map<string, number> | null; manques: string[];
+    capteurs: LigneCapteur[]; etats: EtatAppareil[] | null;
   } | null>(null);
   const [chargeRapport, setChargeRapport] = useState(false);
+  const [energiePrete, setEnergiePrete] = useState(false);
+  const [essaiRapport, setEssaiRapport] = useState(0);
+  const [avancementCalcul, setAvancementCalcul] = useState<Avancement | null>(null);
+  const [avancementFichier, setAvancementFichier] = useState<Avancement | null>(null);
   const perimetreRapport = useMemo<PerimetreRapport | null>(() => (enSupabase ? {
     dateDebut: chargement.debut, dateFin: chargement.fin,
     heureDebut: chargement.heureDebut, heureFin: chargement.heureFin,
-    sites: perimetre?.site ? [perimetre.site] : [...new Set(shellyRows.map(r => r.deviceLocation).filter((s): s is string => !!s))],
+    sites: perimetre?.sites.length ? perimetre.sites : [...new Set(shellyRows.map(r => r.deviceLocation).filter((s): s is string => !!s))],
     deviceIds: perimetre?.deviceIds.length ? perimetre.deviceIds : null,
-  } : null), [enSupabase, chargement, perimetre?.site, perimetre?.deviceIds, shellyRows]);
-  const talonDebut = tranchesRapport.talonDebut;
-  const talonFin = tranchesRapport.talonFin;
+  } : null), [enSupabase, chargement, perimetre?.sites, perimetre?.deviceIds, shellyRows]);
   // Déjà chargé pour ce périmètre : rouvrir la fenêtre ne relance pas le calcul
   const donneesChargeesPour = useRef<string | null>(null);
   useEffect(() => {
     if (!rapportOuvert) return;
-    const cle = JSON.stringify([perimetreRapport, talonDebut, talonFin, nettoyage.nature, perimetreRapport ? 0 : csvRows.length]);
+    const cle = JSON.stringify([perimetreRapport, nettoyage.nature, perimetreRapport ? 0 : csvRows.length, essaiRapport]);
     if (donneesChargeesPour.current === cle) return;
     donneesChargeesPour.current = cle;
     if (!perimetreRapport) {
-      setDonneesRapport({ lignes: lignesHorairesDepuisFichier(csvRows), voies: null, pics: null, compteur: null, coherence: null, temperatures: null, manques: [] });
+      setEnergiePrete(true);
+      setDonneesRapport({
+        lignes: lignesHorairesDepuisFichier(csvRows), voies: null, pics: null, compteur: null, picsParCompteur: null,
+        coherence: null, temperatures: null, manques: [], capteurs: lignesCapteursDepuisFichier(csvRows), etats: [],
+      });
       return;
     }
     let annule = false;
     let termine = false;
     setChargeRapport(true);
+    setEnergiePrete(false);
     const compteur = nettoyage.idsPrincipaux.size === 1 ? [...nettoyage.idsPrincipaux][0] : null;
     // Les appareils du chargement : lus dans les lignes, sans requête de plus
     const appareilsCharges = [...new Set(shellyRows.map(r => r.deviceId).filter((d): d is string => !!d))];
+    // Plusieurs sites : les pics de chaque compteur de référence, jusqu'à 6 compteurs
+    const compteurs = !compteur && nettoyage.idsPrincipaux.size > 1 && nettoyage.idsPrincipaux.size <= 6 && nettoyage.sites.length > 1
+      ? [...nettoyage.idsPrincipaux] : [];
+
+    // Avancement réel : chaque lecture terminée fait progresser la barre, qui ne recule jamais.
+    // Le nombre de capteurs d'état n'est connu qu'en cours de route.
+    let fait = 0;
+    let total = 5 + appareilsCharges.length + (compteur ? 1 : 0) + compteurs.length;
+    let maxPct = 0;
+    const annoncer = () => {
+      if (annule) return;
+      maxPct = Math.max(maxPct, Math.min(99, (fait / total) * 100));
+      setAvancementCalcul({ libelle: `Calcul en cours : ${fait} lecture${fait > 1 ? 's' : ''} sur ${total}`, pct: maxPct });
+    };
+    const uneDePlus = () => { fait++; annoncer(); };
+    const suivre = <T,>(lecture: Promise<T>) => lecture.finally(uneDePlus);
+    annoncer();
+
+    // L'énergie d'abord : dès qu'elle est là, on peut générer le fichier sans attendre le reste
+    const horaire = suivre(fetchProfilHoraire(perimetreRapport));
+    horaire
+      .then(lignes => {
+        if (annule) return;
+        setDonneesRapport({
+          lignes, voies: null, pics: null, compteur, picsParCompteur: null,
+          coherence: null, temperatures: null, manques: [], capteurs: [], etats: null,
+        });
+      })
+      .catch(() => { /* signalé avec les autres lectures */ })
+      .finally(() => { if (!annule) setEnergiePrete(true); });
+
     Promise.allSettled([
-      fetchProfilHoraire(perimetreRapport),
-      fetchVoiesMinute(perimetreRapport, appareilsCharges, { debut: talonDebut, fin: talonFin }),
-      compteur ? fetchPicsMinute(perimetreRapport, compteur) : Promise.resolve(null),
-      fetchCoherence(perimetreRapport),
-      fetchTemperatureJour(perimetreRapport),
-    ]).then(([h, v, p, c, t]) => {
+      horaire,
+      fetchVoiesMinute(perimetreRapport, appareilsCharges, { debut: TRANCHES_DEFAUT.talonDebut, fin: TRANCHES_DEFAUT.talonFin }, uneDePlus),
+      suivre(compteur ? fetchPicsMinute(perimetreRapport, compteur) : Promise.resolve(null)),
+      suivre(fetchCoherence(perimetreRapport)),
+      suivre(fetchTemperatureJour(perimetreRapport)),
+      Promise.all(compteurs.map(id => suivre(fetchPicsMinute(perimetreRapport, id, 5).then(pics => ({ compteur: id, pics }))))),
+      suivre(fetchCapteursHoraire(perimetreRapport)).then(async l => {
+        const ids = [...new Set(l.filter(x => x.famille === 'ETAT').map(x => x.deviceId))];
+        total += ids.length;
+        annoncer();
+        const etats = await fetchEtatsAppareils(perimetreRapport, ids, uneDePlus);
+        return { lignes: l, etats: etats.etats, echecs: etats.echecs };
+      }),
+    ]).then(([h, v, p, c, t, pc, cap]) => {
       if (annule) return;
       const manques: string[] = [];
       if (h.status === 'rejected') manques.push('analyse par heures');
@@ -752,6 +814,9 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
       else if (v.value.echecs > 0) manques.push(`puissances et tensions de ${v.value.echecs} circuit${v.value.echecs > 1 ? 's' : ''}`);
       if (p.status === 'rejected') manques.push('pics à la minute');
       if (c.status === 'rejected') manques.push('cohérence des compteurs');
+      if (pc.status === 'rejected') manques.push('pics par site');
+      if (cap.status === 'rejected') manques.push('capteurs');
+      else if (cap.value.echecs > 0) manques.push(`états de ${cap.value.echecs} capteur${cap.value.echecs > 1 ? 's' : ''}`);
       setDonneesRapport({
         lignes: h.status === 'fulfilled' ? h.value : [],
         voies: v.status === 'fulfilled' ? v.value.voies : null,
@@ -759,12 +824,15 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
         compteur,
         coherence: c.status === 'fulfilled' ? c.value : null,
         temperatures: t.status === 'fulfilled' ? t.value : null,
+        picsParCompteur: pc.status === 'fulfilled' && pc.value.length ? pc.value : null,
+        capteurs: cap.status === 'fulfilled' ? cap.value.lignes : [],
+        etats: cap.status === 'fulfilled' ? cap.value.etats : null,
         manques,
       });
-    }).finally(() => { if (!annule) { termine = true; setChargeRapport(false); } });
+    }).finally(() => { if (!annule) { termine = true; setChargeRapport(false); setAvancementCalcul(null); } });
     return () => { annule = true; if (!termine) donneesChargeesPour.current = null; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- rechargé à l'ouverture, ou si le périmètre ou la plage du talon changent
-  }, [rapportOuvert, perimetreRapport, talonDebut, talonFin]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- rechargé à l'ouverture, si le périmètre change, ou sur « Réessayer »
+  }, [rapportOuvert, perimetreRapport, essaiRapport]);
 
   const analysesRapport = useMemo(() => {
     if (!donneesRapport || donneesRapport.lignes.length === 0) return null;
@@ -791,12 +859,39 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
       voies: donneesRapport.voies,
       pics: donneesRapport.pics,
       compteurPics: donneesRapport.compteur,
+      picsParCompteur: donneesRapport.picsParCompteur,
       coherence: donneesRapport.coherence,
       temperatures: donneesRapport.temperatures,
       aRetenir, aVerifier,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [donneesRapport, filterType, tranchesRapport, aRetenir, aVerifier, nettoyage, optsNettoyage.quarantaine, analyse]);
+
+  // Capteurs du même périmètre : mêmes jours que l'écran, jamais de moyenne entre sites
+  const capteursRapport = useMemo(() => {
+    if (!donneesRapport) return null;
+    const garder = (d: Date) => {
+      const j = d.getUTCDay();
+      const finSemaine = j === 0 || j === 6;
+      return filterType === 'ouvrés' ? !finSemaine : filterType === 'weekends' ? finSemaine : filterType === 'fériés' ? false : true;
+    };
+    const energie = new Map<string, Map<string, number>>();
+    for (const l of donneesRapport.lignes) {
+      if (!nettoyage.idsPrincipaux.has(l.deviceId) || l.nbMesures === 0) continue;
+      const parJour = energie.get(l.site) ?? new Map<string, number>();
+      const cle = l.ts.toISOString().slice(0, 10);
+      parJour.set(cle, (parJour.get(cle) ?? 0) + l.wh / 1000);
+      energie.set(l.site, parJour);
+    }
+    return construireCapteurs({
+      lignes: donneesRapport.capteurs.filter(l => garder(l.ts)),
+      etats: donneesRapport.etats,
+      tranches: tranchesRapport,
+      debut: perimetreRapport?.dateDebut, fin: perimetreRapport?.dateFin,
+      heureDebut: perimetreRapport?.heureDebut, heureFin: perimetreRapport?.heureFin,
+      energieParJourEtSite: energie,
+    });
+  }, [donneesRapport, filterType, tranchesRapport, nettoyage.idsPrincipaux, perimetreRapport]);
 
   const entreeRapport = useMemo<EntreeRapport>(() => {
     const meta = user?.user_metadata ?? {};
@@ -841,9 +936,15 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
   }, [analyse, nettoyage, nettoyageFlux, prefsGraph, filteredRows, enSupabase, chargement, shellyRows, filterType, optsNettoyage, regles, periodes, user, commentaire, analysesRapport]);
   const apercuRapport = useMemo(() => (rapportOuvert ? construireRapport(entreeRapport) : null), [rapportOuvert, entreeRapport]);
 
+  // Connu avant le clic : au-delà de la limite, la case est bloquée et le dit tout de suite
+  const estimationReleves = useMemo(() => (donneesRapport?.lignes ?? []).reduce((s, l) => s + l.nbMesures, 0), [donneesRapport?.lignes]);
+  const relevesPossibles = estimationReleves <= MAX_RELEVES;
+
   const exporterRapport = async (format: 'excel' | 'pdf') => {
     setRapportEnCours(true);
     setRapportErreur(null);
+    setAvancementFichier({ libelle: format === 'excel' ? 'Construction du fichier Excel…' : 'Construction du fichier PDF…', pct: null });
+    await laisserAfficher();
     try {
       const rapport = construireRapport({ ...entreeRapport, dateExport: new Date() });
       const p = entreeRapport.perimetre;
@@ -854,21 +955,29 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
       ].filter(Boolean).join('_').replace(/[^\p{L}\p{N}_-]+/gu, '_');
       if (format === 'excel') {
         let releves: RelevesRapport | null = null;
-        if (inclureReleves && perimetreRapport && donneesRapport) {
+        if (inclureReleves && relevesPossibles && perimetreRapport && donneesRapport) {
           const ids = [...new Set(donneesRapport.lignes.map(l => l.deviceId))];
-          const estimation = donneesRapport.lignes.reduce((s, l) => s + l.nbMesures, 0);
+          const estimation = estimationReleves;
           if (estimation > MAX_RELEVES) {
             throw new Error(`Environ ${estimation.toLocaleString('fr-FR')} relevés : trop pour un classeur (limite ${MAX_RELEVES.toLocaleString('fr-FR')}). Réduisez la période, ou décochez les onglets Brut et Nettoyé.`);
           }
-          releves = preparerReleves(await fetchRelevesBruts(perimetreRapport, ids));
+          // La lecture est le plus long : 0 à 70 % de la barre
+          const brut = await fetchRelevesBruts(perimetreRapport, ids, n => setAvancementFichier({
+            libelle: `Lecture des relevés bruts : ${n.toLocaleString('fr-FR')} sur environ ${estimation.toLocaleString('fr-FR')}`,
+            pct: Math.min(70, estimation ? (n / estimation) * 70 : 0),
+          }));
+          setAvancementFichier({ libelle: 'Préparation des onglets Brut et Nettoyé…', pct: 70 });
+          await laisserAfficher();
+          releves = preparerReleves(brut);
         }
-        await exporterRapportExcel(rapport, `${nom}.xlsx`, analysesRapport, releves);
-      } else exporterRapportPdf(rapport, `${nom}.pdf`, analysesRapport);
+        await exporterRapportExcel(rapport, `${nom}.xlsx`, analysesRapport, releves, capteursRapport, (libelle, pct) => setAvancementFichier({ libelle, pct }));
+      } else exporterRapportPdf(rapport, `${nom}.pdf`, analysesRapport, capteursRapport);
       setRapportOuvert(false);
     } catch (e) {
       setRapportErreur(e instanceof Error ? e.message : String(e));
     } finally {
       setRapportEnCours(false);
+      setAvancementFichier(null);
     }
   };
 
@@ -1333,7 +1442,11 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
         </div>
 
         <Dialog open={rapportOuvert} onOpenChange={setRapportOuvert}>
-          <DialogContent className="max-w-2xl bg-[#0f111a] border-white/10 text-slate-100">
+          <DialogContent
+            className="max-w-2xl bg-[#0f111a] border-white/10 text-slate-100 outline-none focus:outline-none"
+            // Le focus reste sur la fenêtre : sur la première liste, il ouvrirait sa bulle tout seul
+            onOpenAutoFocus={e => { e.preventDefault(); (e.currentTarget as HTMLElement).focus(); }}
+          >
             <DialogHeader>
               <DialogTitle>Rapport — courbe de charge</DialogTitle>
             </DialogHeader>
@@ -1352,28 +1465,43 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
                 </div>
                 <div className="rounded-lg border border-white/10 p-3 space-y-3">
                   <p className="text-xs font-medium text-slate-300">Analyse par heures, circuits et pics</p>
-                  {chargeRapport && <p className="text-xs text-slate-400">Calcul en cours : heures, circuits, pics… Jusqu'à 2 minutes pour un mois d'un grand site.</p>}
                   {!chargeRapport && donneesRapport && !analysesRapport && (
                     <p className="text-xs text-amber-300">Pas d'analyse par heures sur ces données{perimetreRapport ? '' : ' : le fichier ne porte pas d’heures'}. Le rapport garde ses feuilles habituelles.</p>
                   )}
-                  {donneesRapport && donneesRapport.manques.length > 0 && (
-                    <p className="text-xs text-amber-300">Non disponible, la période est sans doute trop longue : {donneesRapport.manques.join(', ')}. Le reste du rapport est complet.</p>
+                  {!chargeRapport && donneesRapport && donneesRapport.manques.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="flex-1 min-w-48 text-xs text-amber-300">
+                        Non lu : {donneesRapport.manques.join(', ')}. La lecture a été trop longue, souvent parce que plusieurs calculs tournent en même temps. Le reste du rapport est complet.
+                      </p>
+                      <Button size="sm" variant="outline" className="h-7 text-xs border-white/20 text-slate-200" onClick={() => setEssaiRapport(n => n + 1)}>Réessayer</Button>
+                    </div>
                   )}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {([
-                      ['Jour : de', 'jourDebut'], ['Jour : à', 'jourFin'], ['Soirée : de', 'soirDebut'], ['Soirée : à', 'soirFin'],
-                      ['Conso. de fond : de', 'talonDebut'], ['Conso. de fond : à', 'talonFin'],
-                    ] as [string, keyof TranchesHoraires][]).map(([lib, cle]) => (
-                      <div key={cle}>
-                        <Label htmlFor={`tranche-${cle}`} className="text-[0.6875rem] text-slate-400">{lib}</Label>
-                        <select id={`tranche-${cle}`} value={tranchesRapport[cle]}
-                          onChange={e => setTranchesRapport(t => ({ ...t, [cle]: Number(e.target.value) }))}
-                          className="mt-0.5 h-8 w-full rounded-md bg-white/5 border border-white/15 text-slate-100 text-xs px-2">
-                          {Array.from({ length: 25 }, (_, h) => <option key={h} value={h} className="bg-[#1a1d2e]">{h} h</option>)}
-                        </select>
-                      </div>
-                    ))}
-                  </div>
+                  {/* Bulle sur chaque réglage. Portail : sans lui, la zone défilante de la fenêtre couperait la bulle */}
+                  <TooltipProvider delayDuration={150}>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {REGLAGES_TRANCHES.map(({ libelle, cle, bulle }) => (
+                        <Bulle key={cle}>
+                          <TooltipTrigger asChild>
+                            <div>
+                              <Label htmlFor={`tranche-${cle}`} className="text-[0.6875rem] text-slate-400 inline-flex items-center gap-1">
+                                {libelle} <Info className="h-3 w-3 text-slate-500" aria-hidden="true" />
+                              </Label>
+                              <select id={`tranche-${cle}`} value={tranchesRapport[cle]}
+                                onChange={e => setTranchesRapport(t => ({ ...t, [cle]: Number(e.target.value) }))}
+                                className="mt-0.5 h-8 w-full rounded-md bg-white/5 border border-white/15 text-slate-100 text-xs px-2">
+                                {Array.from({ length: 25 }, (_, h) => <option key={h} value={h} className="bg-[#1a1d2e]">{h} h</option>)}
+                              </select>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipPortal>
+                            <TooltipContent side="top" className="z-[60] max-w-xs bg-slate-800 border-white/15 text-slate-100 text-xs leading-relaxed">
+                              {bulle}
+                            </TooltipContent>
+                          </TooltipPortal>
+                        </Bulle>
+                      ))}
+                    </div>
+                  </TooltipProvider>
                   {analysesRapport && (
                     <>
                       <div>
@@ -1385,6 +1513,15 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
                           <p className={`text-xs mt-1 ${analysesRapport.controle.ok ? 'text-emerald-300' : 'text-amber-300'}`}>{analysesRapport.controle.texte}</p>
                         )}
                       </div>
+                      {capteursRapport && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-300 mb-1">Capteurs : {capteursRapport.resume}</p>
+                          <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
+                            {capteursRapport.constats.slice(0, 12).map((p, i) => <li key={i}>{p}</li>)}
+                            {capteursRapport.aVerifierAuto.map((p, i) => <li key={`v${i}`}>À vérifier : {p}</li>)}
+                          </ul>
+                        </div>
+                      )}
                       {analysesRapport.aVerifierAuto.length > 0 && (
                         <div>
                           <p className="text-xs font-medium text-slate-300 mb-1">À vérifier, détecté automatiquement</p>
@@ -1409,8 +1546,11 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
                   </div>
                   {perimetreRapport && (
                     <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer">
-                      <input type="checkbox" className="mt-0.5 accent-blue-500" checked={inclureReleves} onChange={e => setInclureReleves(e.target.checked)} />
-                      <span>Ajouter à l'Excel les onglets Brut et Nettoyé (relevés à la minute). Fichier lourd : limité à {MAX_RELEVES.toLocaleString('fr-FR')} relevés.</span>
+                      <input type="checkbox" className="mt-0.5 accent-blue-500" checked={inclureReleves && relevesPossibles} disabled={!relevesPossibles} onChange={e => setInclureReleves(e.target.checked)} />
+                      <span>
+                        Ajouter à l'Excel les onglets Brut et Nettoyé (relevés à la minute). Fichier lourd : limité à {MAX_RELEVES.toLocaleString('fr-FR')} relevés.
+                        {!relevesPossibles && <span className="block text-amber-300 mt-0.5">Indisponible ici : environ {estimationReleves.toLocaleString('fr-FR')} relevés sur cette période. Réduisez la période ou le nombre d'appareils.</span>}
+                      </span>
                     </label>
                   )}
                 </div>
@@ -1427,16 +1567,25 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
                     Signé {entreeRapport.auteur} et présenté comme l'avis de l'analyste, distinct des chiffres mesurés.
                   </p>
                 </div>
-                {rapportErreur && <p className="text-xs text-red-400">{rapportErreur}</p>}
+              </div>
+            )}
+            {/* Hors de la zone défilante : toujours visible, juste au-dessus des boutons */}
+            {rapportErreur && <p className="text-xs text-red-400" role="alert">{rapportErreur}</p>}
+            {(avancementFichier || avancementCalcul) && (
+              <div className="space-y-1">
+                <BarreAvancement avancement={(avancementFichier ?? avancementCalcul)!} />
+                {!avancementFichier && energiePrete && (
+                  <p className="text-[0.6875rem] text-slate-400">L'énergie est prête : vous pouvez déjà générer le fichier. Ce qui n'est pas encore lu n'y figurera pas.</p>
+                )}
               </div>
             )}
             <DialogFooter>
               <Button variant="ghost" className="text-slate-300" onClick={() => setRapportOuvert(false)}>Annuler</Button>
-              <Button onClick={() => exporterRapport('pdf')} disabled={rapportEnCours || chargeRapport} variant="outline" className="border-white/20 text-white hover:bg-white/10"
+              <Button onClick={() => exporterRapport('pdf')} disabled={rapportEnCours || !energiePrete} variant="outline" className="border-white/20 text-white hover:bg-white/10"
                 title="Document à lire : synthèse, chiffres clés, journalier, types de jour, mois, qualité">
                 <Download className="h-4 w-4 mr-1" /> PDF
               </Button>
-              <Button onClick={() => exporterRapport('excel')} disabled={rapportEnCours || chargeRapport} className="bg-blue-600 hover:bg-blue-500"
+              <Button onClick={() => exporterRapport('excel')} disabled={rapportEnCours || !energiePrete} className="bg-blue-600 hover:bg-blue-500"
                 title="Classeur complet, avec le détail par appareil et par jour">
                 <Download className="h-4 w-4 mr-1" /> {rapportEnCours ? 'Préparation…' : 'Excel'}
               </Button>

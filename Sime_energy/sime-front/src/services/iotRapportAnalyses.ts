@@ -15,6 +15,7 @@ import type { RapportNettoyage } from '@/lib/iot-profil-engine';
 import type { Signalement } from '@/lib/iot-qualite-service';
 import type { CoherenceCircuit, LigneHoraire, PicMinute, ReleveBrut, VoieMinute } from '@/lib/iot-rapport-service';
 import type { ChiffreCle, Tableau } from './iotRapport';
+import { tableauComparaisonSites } from './iotRapportCapteurs';
 
 export interface TranchesHoraires {
   jourDebut: number;
@@ -47,6 +48,8 @@ export interface EntreeAnalyses {
   voies: VoieMinute[] | null;
   pics: PicMinute[] | null;
   compteurPics: string | null;
+  /** Plusieurs sites : les pics de chaque compteur de référence. */
+  picsParCompteur?: { compteur: string; pics: PicMinute[] }[] | null;
   coherence: CoherenceCircuit[] | null;
   temperatures: Map<string, number> | null;
   aRetenir: string;
@@ -76,6 +79,8 @@ export interface RapportAnalyses {
   classement: Tableau;
   pics: Tableau | null;
   coherence: Tableau | null;
+  /** Deux sites ou plus : une ligne par site, sinon null. */
+  comparaisonSites: Tableau | null;
   tcd: { mois: Tableau; semaine: Tableau; jourSemaine: Tableau; typeJour: Tableau; appareil: Tableau; piece: Tableau | null; phases: Tableau | null };
   monotone: Tableau;
   distribution: Tableau;
@@ -390,7 +395,21 @@ export function construireAnalyses(e: EntreeAnalyses): RapportAnalyses {
   for (const a of appareils.values()) descendre(a.id, 0);
 
   // ── Synthèse par voie ───────────────────────────────────────
-  const voieDe = new Map((e.voies ?? []).map(v => [v.device_id, v]));
+  // Conso. de fond : médiane des puissances horaires déjà chargées, sans relire la base.
+  // Changer sa plage horaire est donc instantané, et elle peut passer minuit.
+  const talons = new Map<string, number[]>();
+  for (const l of e.lignes) {
+    if (l.wMoy == null || !dansPlage(heureUtc(l.ts), t.talonDebut, t.talonFin)) continue;
+    const v = talons.get(l.deviceId);
+    if (v) v.push(l.wMoy); else talons.set(l.deviceId, [l.wMoy]);
+  }
+  const mediane = (v: number[] | undefined) => {
+    if (!v?.length) return null;
+    const tri = [...v].sort((a, b) => a - b);
+    const i = (tri.length - 1) / 2;
+    return (tri[Math.floor(i)] + tri[Math.ceil(i)]) / 2;
+  };
+  const voieDe = new Map((e.voies ?? []).map(v => [v.device_id, { ...v, talon_w: mediane(talons.get(v.device_id)) }]));
   const voies: Tableau = {
     note: e.voies
       ? 'Puissance moyenne = énergie ÷ heures mesurées. Puissance max et min sur les relevés bruts. Talon = médiane de la puissance moyenne horaire '
@@ -506,6 +525,14 @@ export function construireAnalyses(e: EntreeAnalyses): RapportAnalyses {
     };
   }
 
+  if (e.picsParCompteur && e.picsParCompteur.length > 0) {
+    pics = {
+      note: 'Les minutes les plus fortes de chaque compteur de référence. Elles n’ont pas lieu au même moment : ne pas les additionner.',
+      colonnes: [{ titre: 'Site', format: 'texte' }, { titre: 'Compteur', format: 'texte' }, { titre: 'Minute', format: 'dateheure' }, { titre: 'Puissance (W)', format: 'nombre' }],
+      lignes: e.picsParCompteur.flatMap(({ compteur, pics: liste }) => liste.slice(0, 5).map(p => [appareils.get(compteur)?.site ?? '', nomDe(compteur), new Date(p.minute), p.power_w])),
+    };
+  }
+
   // ── Cohérence ───────────────────────────────────────────────
   let coherence: Tableau | null = null;
   let fiabilite: { pct: number; nom: string; minutes: number; toleranceTete: boolean } | null = null;
@@ -607,7 +634,8 @@ export function construireAnalyses(e: EntreeAnalyses): RapportAnalyses {
   const totauxPhases = [...parJourPhases.values()].reduce((s, p) => ({ a: s.a + p.a, b: s.b + p.b, c: s.c + p.c }), { a: 0, b: 0, c: 0 });
   const sommePhases = totauxPhases.a + totauxPhases.b + totauxPhases.c;
   // Un compteur monophasé n'est pas « déséquilibré » : il faut trois phases réellement chargées
-  const avecPhases = sommePhases > 0 && [totauxPhases.a, totauxPhases.b, totauxPhases.c].every(v => v / sommePhases >= 0.05);
+  // Additionner les phases de compteurs de sites différents n'aurait pas de sens
+  const avecPhases = sites.length <= 1 && sommePhases > 0 && [totauxPhases.a, totauxPhases.b, totauxPhases.c].every(v => v / sommePhases >= 0.05);
   const desequilibre = (p: { a: number; b: number; c: number }) => {
     const m = (p.a + p.b + p.c) / 3;
     return m > 0 ? Math.max(Math.abs(p.a - m), Math.abs(p.b - m), Math.abs(p.c - m)) / m : null;
@@ -665,6 +693,29 @@ export function construireAnalyses(e: EntreeAnalyses): RapportAnalyses {
     }
   }
 
+  // ── Comparaison des sites ───────────────────────────────────
+  let comparaisonSites: Tableau | null = null;
+  const lignesSites: Parameters<typeof tableauComparaisonSites>[0] = [];
+  if (sites.length > 1) {
+    for (const site of sites) {
+      const du = lignesP.filter(l => l.site === site);
+      if (du.length === 0) continue;
+      const heuresSite = new Set(du.filter(l => l.nbMesures > 0).map(l => l.ts.getTime()));
+      const joursSite = new Set(du.filter(l => l.nbMesures > 0).map(l => cleUtc(l.ts)));
+      const somme = (f: (h: number) => boolean) => du.filter(l => f(heureUtc(l.ts))).reduce((s, l) => s + l.wh, 0) / 1000;
+      const compteurs = [...new Set(du.map(l => l.deviceId))];
+      const voie = compteurs.length === 1 ? voieDe.get(compteurs[0]) : undefined;
+      const bilanSite = e.nettoyage.sites.find(s => s.site === site);
+      lignesSites.push({
+        site, nature: bilanSite?.nature === 'consommation' ? 'Consommation' : bilanSite?.nature === 'reseau' ? 'Énergie réseau' : bilanSite?.nature === 'departs' ? 'Départs mesurés' : 'Mesuré',
+        kwh: somme(() => true), jours: joursSite.size, heures: heuresSite.size,
+        jourKwh: somme(dansJour), nuitKwh: somme(h => !dansJour(h)), soirKwh: somme(dansSoir),
+        pMax: voie?.p_max ?? null, talon: voie?.talon_w ?? null,
+      });
+    }
+    if (lignesSites.length > 1) comparaisonSites = tableauComparaisonSites(lignesSites);
+  }
+
   // ── L'essentiel ─────────────────────────────────────────────
   // Compteur de référence : la série principale s'il n'y a qu'un compteur
   const reference = [...appareils.values()].filter(a => estPrincipal(a.id));
@@ -701,6 +752,10 @@ export function construireAnalyses(e: EntreeAnalyses): RapportAnalyses {
   // ── Constats : chacun a sa condition ────────────────────────
   const constats: string[] = [];
   const aVerifierAuto: string[] = [];
+  if (comparaisonSites && totalKwh > 0) {
+    const tri = [...lignesSites].sort((a, b) => b.kwh - a.kwh);
+    constats.push(`${tri[0].site} pèse ${pc(tri[0].kwh / totalKwh)} de l'énergie des ${tri.length} sites (${nf(tri[0].kwh)} kWh).`);
+  }
   const nbJoursOk = joursRetenus.length;
   if (mesure && totalKwh > 0 && nbJoursOk >= 3) {
     const kj = sommeSi(dansJour);
@@ -809,7 +864,7 @@ export function construireAnalyses(e: EntreeAnalyses): RapportAnalyses {
     essentiel, constats, aVerifierAuto,
     aRetenir: e.aRetenir.trim(), aVerifier: e.aVerifier.trim(),
     controle, tranches, tranchesParType, profil24, profilCircuits, carte, horaire, voies, bilan, repartition, classement,
-    pics, coherence,
+    pics, coherence, comparaisonSites,
     tcd: { mois, semaine, jourSemaine, typeJour, appareil, piece, phases },
     monotone, distribution, temperature, couvertureParJour,
   };

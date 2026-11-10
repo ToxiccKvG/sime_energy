@@ -134,6 +134,15 @@ export function lireTableau(brut: unknown[][]): TableauLu {
 const UNITES_ENERGIE: Record<string, number> = { wh: 1, kwh: 1000, mwh: 1e6, varh: 1, kvarh: 1000, vah: 1, kvah: 1000 };
 const UNITES_PUISSANCE: Record<string, number> = { w: 0.001, kw: 1, mw: 1000 };
 
+// Colonnes d'identité d'un fichier à plusieurs appareils (export de l'Analyse)
+const IDENTITE_RE: [keyof NonNullable<LectureFichier['identite']>, RegExp][] = [
+  ['appareil', /^(appareil|nom appareil|device|device[ _]?name)$/i],
+  ['id', /^(id appareil|device[ _]?id|identifiant appareil)$/i],
+  ['role', /^r[ôo]le$/i],
+  ['site', /^(site|emplacement|lieu)$/i],
+  ['piece', /^(pi[èe]ce|room|salle)$/i],
+];
+
 function libelleDe(col: string): string {
   const base = col.replace(/\s*[([][^)\]]*[)\]]\s*$/, '').replace(/_+/g, ' ').trim();
   return base || col;
@@ -197,15 +206,30 @@ export function proposerLecture(
     return x === 'A' || x === '1' ? 'A' : x === 'B' || x === '2' ? 'B' : x === 'C' || x === '3' ? 'C' : undefined;
   };
   const partiesEnergie = new Set<string>(); // « total », « A », « retour|B »… déjà attribués
+  const identite: NonNullable<LectureFichier['identite']> = {};
+  for (const c of candidates) {
+    const cle = IDENTITE_RE.find(([, re]) => re.test(c.trim()))?.[0];
+    if (cle && !identite[cle]) identite[cle] = c;
+  }
+  const colsIdentite = new Set(Object.values(identite));
+  // « Phase A » sans unité, à côté de « kWh Total » : l'énergie de la phase,
+  // dans l'unité de l'énergie du fichier (export de l'Analyse)
+  const uniteEnergie = candidates
+    .map(c => unites[c] || unitFromHeader(c) || unitFromName(c))
+    .find(u => /^(k|m)?wh$/i.test(u)) ?? '';
   for (const c of ordreRole) {
-    const unite = unites[c] || unitFromHeader(c) || unitFromName(c);
+    let unite = unites[c] || unitFromHeader(c) || unitFromName(c);
+    if (!unite && uniteEnergie && /^phase\s*[abc123]$/i.test(c.trim())) unite = uniteEnergie;
     const u = unite.toLowerCase();
+    if (colsIdentite.has(c)) { roles.set(c, { role: 'ignorer', cumul: false, unite, motif: 'identité de l\'appareil' }); continue; }
     if (INDEX_COL_RE.test(c.trim())) { roles.set(c, { role: 'ignorer', cumul: false, unite, motif: 'numéro de ligne' }); continue; }
     if (!hasAnyValue(datees, c)) { roles.set(c, { role: 'ignorer', cumul: false, unite, motif: 'vide' }); continue; }
     if (!isNumericColumn(datees, c)) { roles.set(c, { role: 'ignorer', cumul: false, unite, motif: 'texte' }); continue; }
     if (isConstantColumn(datees, c) && !(u in UNITES_ENERGIE)) { roles.set(c, { role: 'ignorer', cumul: false, unite, motif: 'valeur constante' }); continue; }
     const vals = datees.map(r => versNombre(r[c])).filter((v): v is number => v !== null);
     if (u in UNITES_ENERGIE && /^(k|m)?wh$/.test(u)) {
+      // Net = total − retour : recalculé, pas une énergie de plus
+      if (/\bnet\b/i.test(c)) { roles.set(c, { role: 'ignorer', cumul: false, unite, motif: 'calculée (total − retour)' }); continue; }
       const retour = /retour|inject|export|feed|vente/i.test(c);
       const phase = phaseDe(c);
       const partie = `${retour ? 'retour' : 'conso'}|${phase ?? 'total'}`;
@@ -235,6 +259,7 @@ export function proposerLecture(
     colHeure,
     ordreDates: ordre === 'iso' ? 'iso' : ordre === true ? 'jma' : ordre === false ? 'mja' : 'jma',
     colonnes,
+    ...(identite.appareil || identite.id ? { identite } : {}),
   };
 }
 
@@ -297,7 +322,7 @@ export function appliquerLecture(
   rows: Record<string, unknown>[],
   lecture: LectureFichier,
   joursFerier: JourFerie[],
-  ident: { nom?: string; lieu?: string; piece?: string } = {},
+  ident0: { nom?: string; lieu?: string; piece?: string } = {},
 ): ResultatLecture {
   const actives = lecture.colonnes.filter(c => c.role !== 'ignorer');
   const energie = actives.filter(c => c.role === 'energie');
@@ -309,23 +334,31 @@ export function appliquerLecture(
   // (export Shelly Cloud : « Consommation » puis « Retour Total »)
   // Énergie rangée par appartenance : total ou phase, consommation ou retour
   type Parts = { total: number | null; A: number; B: number; C: number };
-  type Acc = { date: Date; c: Parts; r: Parts; kw: number | null; g: Record<string, number> };
+  type Ident = { nom?: string; id?: string; role?: string; lieu?: string; piece?: string };
+  type Acc = { date: Date; ident: Ident; c: Parts; r: Parts; kw: number | null; g: Record<string, number> };
   const parts = (): Parts => ({ total: null, A: 0, B: 0, C: 0 });
   const ajouter = (p: Parts, phase: LectureColonne['phase'], wh: number) => {
     if (phase) p[phase] += wh; else p.total = (p.total ?? 0) + wh;
   };
   const totalDe = (p: Parts) => p.total ?? p.A + p.B + p.C;
-  const parTs = new Map<number, Acc>();
+  // Une ligne par appareil ET par horodatage : un fichier à plusieurs appareils
+  // empilés (export de l'Analyse) ne fusionne plus leurs lignes d'une même heure
+  const parTs = new Map<string, Acc>();
+  const idt = lecture.identite;
+  const texte = (r: Record<string, unknown>, col?: string) => {
+    const v = col ? String(r[col] ?? '').trim() : '';
+    return v || undefined;
+  };
   let section: 'conso' | 'retour' = 'conso';
   let illisibles = 0;
   const precedent = new Map<string, number>(); // dernier index des colonnes cumulatives
 
   const facteurWh = (c: LectureColonne) => UNITES_ENERGIE[c.unite.toLowerCase()] ?? 1;
   const facteurKw = (c: LectureColonne) => UNITES_PUISSANCE[c.unite.toLowerCase()] ?? 1;
-  const valeur = (r: Record<string, unknown>, c: LectureColonne): number | null => {
+  const valeur = (r: Record<string, unknown>, c: LectureColonne, appareil: string): number | null => {
     const v = versNombre(r[c.col]);
     if (v === null || !c.cumul) return v;
-    const cle = `${section}|${c.col}`;
+    const cle = `${appareil}|${section}|${c.col}`;
     const p = precedent.get(cle);
     precedent.set(cle, v);
     return p === undefined ? null : Math.max(0, v - p);
@@ -340,15 +373,20 @@ export function appliquerLecture(
       else if (t && !/^(temps|date|time|heure)/i.test(t)) illisibles++;
       continue;
     }
-    const ts = date.getTime();
-    const acc = parTs.get(ts) ?? { date, c: parts(), r: parts(), kw: null, g: {} };
+    const ident: Ident = idt
+      ? { nom: texte(r, idt.appareil) ?? texte(r, idt.id) ?? ident0.nom, id: texte(r, idt.id), role: texte(r, idt.role),
+          lieu: texte(r, idt.site) ?? ident0.lieu, piece: texte(r, idt.piece) ?? ident0.piece }
+      : { nom: ident0.nom, lieu: ident0.lieu, piece: ident0.piece };
+    const appareil = ident.id ?? ident.nom ?? '';
+    const cleTs = `${appareil}|${date.getTime()}`;
+    const acc = parTs.get(cleTs) ?? { date, ident, c: parts(), r: parts(), kw: null, g: {} };
     for (const c of energie) {
-      const v = valeur(r, c);
+      const v = valeur(r, c, appareil);
       if (v === null) continue;
       ajouter(section === 'retour' ? acc.r : acc.c, c.phase, Math.abs(v) * facteurWh(c));
     }
     for (const c of retour) {
-      const v = valeur(r, c);
+      const v = valeur(r, c, appareil);
       if (v !== null) ajouter(acc.r, c.phase, Math.abs(v) * facteurWh(c));
     }
     if (puissance && section === 'conso') {
@@ -359,12 +397,14 @@ export function appliquerLecture(
       const v = versNombre(r[c.col]);
       if (v !== null) acc.g[cleGrandeur(c)] = v;
     }
-    parTs.set(ts, acc);
+    parTs.set(cleTs, acc);
   }
 
   const accs = [...parTs.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
+  // Pas de temps : horodatages distincts (plusieurs appareils partagent la même heure)
+  const instants = [...new Set(accs.map(a => a.date.getTime()))];
   const pas: number[] = [];
-  for (let i = 1; i < accs.length; i++) pas.push((accs[i].date.getTime() - accs[i - 1].date.getTime()) / 1000);
+  for (let i = 1; i < instants.length; i++) pas.push((instants[i] - instants[i - 1]) / 1000);
   pas.sort((a, b) => a - b);
   const pasSecondes = pas.length ? pas[Math.floor(pas.length / 2)] : null;
   const pasHeures = pasSecondes ? pasSecondes / 3600 : 1;
@@ -386,15 +426,16 @@ export function appliquerLecture(
       'Wh_Phase A': production ? 0 : a.c.A, 'Wh_Phase B': production ? 0 : a.c.B, 'Wh_Phase C': production ? 0 : a.c.C,
       'Wh_Retour Total': production ? wh + whR : whR,
       'Wh_Retour Ph. A': a.r.A, 'Wh_Retour Ph. B': a.r.B, 'Wh_Retour Ph. C': a.r.C,
-      Appareil: ident.nom,
-      Site: ident.lieu,
-      Piece: ident.piece,
+      Appareil: a.ident.nom,
+      Site: a.ident.lieu,
+      Piece: a.ident.piece,
+      device_id: a.ident.id,
     }, joursFerier);
     if (!base) continue;
     const kw = a.kw ?? (energie.length ? base.kwhTotal / pasHeures : 0);
     out.push({
       ...base,
-      ...(production ? { role: 'M5_PV' } : {}),
+      ...(production ? { role: 'M5_PV' } : a.ident.role ? { role: a.ident.role } : {}),
       puissKwA: base.kwhA / pasHeures, puissKwB: base.kwhB / pasHeures, puissKwC: base.kwhC / pasHeures,
       puissKwTotal: production ? 0 : kw,
       puissKwRetourA: base.kwhRetourA / pasHeures, puissKwRetourB: base.kwhRetourB / pasHeures, puissKwRetourC: base.kwhRetourC / pasHeures,
@@ -424,6 +465,30 @@ export function lireFichierImporte(
     const lecture = { ...proposerLecture(t.columns, t.rows, t.unites, [], f.name), ...(f.lecture?.sens ? { sens: f.lecture.sens } : {}) };
     return appliquerLecture(t.rows, lecture, joursFerier, ident);
   }
-  if (f.lecture) return appliquerLecture(f.rawData, f.lecture, joursFerier, ident);
+  if (f.lecture) return appliquerLecture(f.rawData, lectureAJour(f.lecture, f), joursFerier, ident);
   return null;
+}
+
+/**
+ * Lecture enregistrée avant le 09/11, rattrapée sans réimport :
+ * - une colonne « kWh … » sans unité dans l'en-tête avait reçu l'unité Wh
+ *   (valeurs divisées par 1 000) ;
+ * - un fichier à plusieurs appareils empilés (colonne Appareil) fusionnait
+ *   leurs lignes : on refait la lecture, qui reconnaît maintenant l'appareil
+ *   et les phases.
+ */
+function lectureAJour(
+  lecture: LectureFichier,
+  f: { name: string; columns: string[]; rawData: Record<string, unknown>[] },
+): LectureFichier {
+  if (!lecture.identite) {
+    const neuve = proposerLecture(f.columns, f.rawData, {}, [], f.name);
+    if (neuve.identite) return { ...neuve, ...(lecture.sens ? { sens: lecture.sens } : {}) };
+  }
+  const colonnes = lecture.colonnes.map(c => {
+    if (c.unite !== 'Wh' || unitFromHeader(c.col)) return c;
+    const u = unitFromName(c.col);
+    return u === 'kWh' || u === 'MWh' ? { ...c, unite: u } : c;
+  });
+  return { ...lecture, colonnes };
 }

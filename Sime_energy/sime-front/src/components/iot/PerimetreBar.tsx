@@ -18,7 +18,8 @@ import { fetchDisponibles, exporterDonneesSupabase, type SupabaseExportOptions }
 
 /** Ce que l'utilisateur a choisi d'analyser, partagé par toutes les vues. */
 export interface PerimetreAnalyse {
-  site: string;              // '' = tous les sites
+  site: string;              // le site s'il n'y en a qu'un ; '' = plusieurs, ou tous
+  sites: string[];           // sites cochés ; vide = tous les sites
   deviceIds: string[];       // vide = tous les appareils du site
   dateDebut: string;         // 'YYYY-MM-DD'
   dateFin: string;
@@ -53,7 +54,14 @@ const libelleResume = (nb: number, granularite: 'horaire' | 'minute') =>
  */
 export function perimetreDepuisChargement(ch: SupabaseExportOptions): PerimetreAnalyse | null {
   if (!ch.dateDebut || !ch.dateFin) return null;
-  return { site: ch.site ?? '', deviceIds: ch.deviceIds ?? [], dateDebut: ch.dateDebut, dateFin: ch.dateFin, heureDebut: 0, heureFin: 23, version: 1 };
+  const sites = ch.sites?.length ? ch.sites : ch.site ? [ch.site] : [];
+  return { site: sites.length === 1 ? sites[0] : '', sites, deviceIds: ch.deviceIds ?? [], dateDebut: ch.dateDebut, dateFin: ch.dateFin, heureDebut: 0, heureFin: 23, version: 1 };
+}
+
+/** « Ma Maison », « Ma Maison, Donsin », « 4 sites », « Tous les sites ». */
+export function libelleSites(sites: string[]): string {
+  if (sites.length === 0) return 'Tous les sites';
+  return sites.length <= 2 ? sites.join(', ') : `${sites.length} sites`;
 }
 
 /** Colonnes recommandées selon les familles chargées (fournies par l'onglet Analyse). */
@@ -66,7 +74,7 @@ export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
   onCharge: (rows: Record<string, unknown>[], colonnes: string[], options: SupabaseExportOptions, perimetre: PerimetreAnalyse) => void;
 }) {
   const [catalogue, setCatalogue] = useState<{ sites: string[]; devices: Appareil[] }>({ sites: [], devices: [] });
-  const [site, setSite] = useState(repris?.perimetre.site ?? '');
+  const [sites, setSites] = useState<string[]>(repris?.perimetre.sites ?? []);
   const [deviceIds, setDeviceIds] = useState<string[]>(repris?.perimetre.deviceIds ?? []);
   const [recherche, setRecherche] = useState('');
   const [periode, setPeriode] = useState(repris ? 'perso' : '7j');
@@ -87,14 +95,14 @@ export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
   const { state: { analysePreset }, setAnalysePreset } = useIOT();
   useEffect(() => {
     if (!analysePreset || catalogue.devices.length === 0) return;
-    setSite(analysePreset.site);
+    setSites(analysePreset.site ? [analysePreset.site] : []);
     setDeviceIds(analysePreset.deviceIds);
     setAnalysePreset(null);
   }, [analysePreset, catalogue.devices.length, setAnalysePreset]);
 
   const appareilsSite = useMemo(
-    () => catalogue.devices.filter(d => !site || d.site === site).sort((a, b) => a.name.localeCompare(b.name)),
-    [catalogue.devices, site],
+    () => catalogue.devices.filter(d => sites.length === 0 || sites.includes(d.site)).sort((a, b) => a.name.localeCompare(b.name)),
+    [catalogue.devices, sites],
   );
   const cibles = deviceIds.length > 0 ? appareilsSite.filter(d => deviceIds.includes(d.device_id)) : appareilsSite;
   const familles = useMemo(() => new Set(cibles.map(d => d.device_family).filter(Boolean)), [cibles]);
@@ -117,7 +125,9 @@ export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
     const options: SupabaseExportOptions = {
       colonnes,
       granularite: granulariteEffective,
-      site: site || undefined,
+      // Un seul site reste dans `site` : même requête et même recette qu'avant
+      site: sites.length === 1 ? sites[0] : undefined,
+      sites: sites.length > 1 ? sites : undefined,
       deviceIds: deviceIds.length > 0 ? deviceIds : undefined,
       dateDebut, dateFin, limit,
     };
@@ -127,18 +137,26 @@ export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
     const v = version + 1;
     setVersion(v);
     setResume(libelleResume(res.total, granulariteEffective));
-    onCharge(res.rows, colonnes, options, { site, deviceIds, dateDebut, dateFin, heureDebut, heureFin, version: v });
+    onCharge(res.rows, colonnes, options, { site: sites.length === 1 ? sites[0] : '', sites, deviceIds, dateDebut, dateFin, heureDebut, heureFin, version: v });
+  };
+
+  // Deux sites ou plus à l'écran, y compris « Tous les sites »
+  const plusieursSites = sites.length !== 1 && new Set(appareilsSite.map(d => d.site)).size > 1;
+  const basculerSite = (s: string) => {
+    setSites(p => (p.includes(s) ? p.filter(x => x !== s) : [...p, s]));
+    setDeviceIds([]);
   };
 
   const parFamille = useMemo(() => {
     const m = new Map<string, Appareil[]>();
     for (const d of appareilsSite.filter(d => !recherche || d.name.toLowerCase().includes(recherche.toLowerCase()))) {
-      const k = d.device_family || 'AUTRE';
+      // Plusieurs sites cochés : regroupés par site, puis par famille
+      const k = `${plusieursSites ? d.site : ''}|${d.device_family || 'AUTRE'}`;
       if (!m.has(k)) m.set(k, []);
       m.get(k)!.push(d);
     }
-    return [...m.entries()];
-  }, [appareilsSite, recherche]);
+    return [...m.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [appareilsSite, recherche, plusieursSites]);
   const basculer = (id: string) => setDeviceIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
   const basculerFamille = (ids: string[], tous: boolean) =>
     setDeviceIds(p => tous ? [...new Set([...p, ...ids])] : p.filter(x => !ids.includes(x)));
@@ -150,13 +168,30 @@ export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
     <div className="bg-white/5 rounded-xl border border-white/10 p-3 space-y-2">
       <div className="flex flex-wrap items-end gap-3">
         {/* Site */}
-        <label className="space-y-1">
-          <span className="block text-xs text-slate-400">Site</span>
-          <select value={site} onChange={e => { setSite(e.target.value); setDeviceIds([]); }} className={`${champ} w-44`}>
-            <option value="" className="bg-[#1a1d2e]">Tous les sites</option>
-            {catalogue.sites.map(s => <option key={s} value={s} className="bg-[#1a1d2e]">{s}</option>)}
-          </select>
-        </label>
+        <div className="space-y-1">
+          <span className="block text-xs text-slate-400">Sites</span>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className={`${champ} w-44 flex items-center justify-between`} aria-label="Choisir les sites">
+                <span className="truncate">{libelleSites(sites)}</span>
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 p-2 bg-[#1a1d2e] border-white/20 max-h-96 overflow-y-auto">
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-200 cursor-pointer py-1">
+                <input type="checkbox" className="accent-violet-500" checked={sites.length === 0} onChange={() => { setSites([]); setDeviceIds([]); }} />
+                Tous les sites
+              </label>
+              <div className="border-t border-white/10 my-1" />
+              {catalogue.sites.map(s => (
+                <label key={s} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer py-1">
+                  <input type="checkbox" className="accent-violet-500" checked={sites.includes(s)} onChange={() => basculerSite(s)} />
+                  <span className="truncate">{s}</span>
+                </label>
+              ))}
+            </PopoverContent>
+          </Popover>
+        </div>
 
         {/* Appareils */}
         <div className="space-y-1">
@@ -175,11 +210,14 @@ export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
                   className="h-8 pl-7 bg-white/5 border-white/20 text-white text-xs" />
               </div>
               <button className="text-xs text-violet-300 hover:text-white mb-1" onClick={() => setDeviceIds([])}>Tous les appareils</button>
-              {parFamille.map(([fam, liste]) => {
+              {parFamille.map(([cle, liste], i) => {
+                const [siteGroupe, fam] = cle.split('|');
+                const nouveauSite = siteGroupe && siteGroupe !== parFamille[i - 1]?.[0].split('|')[0];
                 const ids = liste.map(d => d.device_id);
                 const tous = ids.every(id => deviceIds.includes(id));
                 return (
-                  <div key={fam} className="mb-2">
+                  <div key={cle} className="mb-2">
+                    {nouveauSite && <p className="text-xs font-semibold text-violet-300 mt-2 mb-1">{siteGroupe}</p>}
                     <label className="flex items-center gap-2 text-xs font-medium text-slate-300 cursor-pointer">
                       <input type="checkbox" className="accent-violet-500" checked={tous} onChange={() => basculerFamille(ids, !tous)} />
                       {LIBELLE_FAMILLE[fam] ?? fam} ({liste.length})
