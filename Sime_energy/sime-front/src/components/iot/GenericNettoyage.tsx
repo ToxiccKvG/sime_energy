@@ -716,7 +716,7 @@ export function GenericNettoyage({
               <label key={col} className="flex items-center gap-2 text-xs cursor-pointer">
                 <input type="checkbox" checked={visibleCols.has(col)} onChange={e => setSelectedCols(prev => {
                   const next = new Set(prev.size === 0 ? Array.from(defaultVisibleCols) : Array.from(prev));
-                  e.target.checked ? next.add(col) : next.delete(col);
+                  if (e.target.checked) next.add(col); else next.delete(col);
                   return next;
                 })} className="accent-blue-500" />
                 <span className="text-slate-300 truncate" title={col}>{col}</span>

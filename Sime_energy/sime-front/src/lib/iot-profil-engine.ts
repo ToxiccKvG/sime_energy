@@ -96,7 +96,7 @@ export function parseShellyRow(
   } else {
     const s = String(dateRaw).trim();
     // Essayer DD/MM/YYYY ou DD-MM-YYYY (format français/africain)
-    const ddmm = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    const ddmm = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
     if (ddmm) {
       const [, dd, mm, yy, hh = '0', min = '0', ss = '0'] = ddmm;
       const year = yy.length === 2 ? 2000 + parseInt(yy) : parseInt(yy);
@@ -879,7 +879,7 @@ export function detecterFormatShelly(colonnes: string[]): {
   hasRetour: boolean;
   colonneDate: string | null;
 } {
-  const cols    = colonnes.map(c => c.replace(/[﻿​]/g, "").toLowerCase().trim());
+  const cols    = colonnes.map(c => c.replace(/[\uFEFF\u200B]/g, "").toLowerCase().trim());
   const colsSet = new Set(cols);
 
   // ── 0. Shelly Cloud multi-section : 1ère colonne = "Phase A", "Phase B", "Total"… ──

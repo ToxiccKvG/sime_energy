@@ -556,7 +556,30 @@ export interface Alert {
   ts: string;
 }
 
-export function computeAlerts(snapshot: ShellyClRow[], allDevices: Device[]): Alert[] {
+/**
+ * Appareils dont le retrait est encore ouvert (table shelly_device_retraits,
+ * jusqu_a null) : débranchés volontairement ou retirés du site. Leur silence
+ * est attendu, ils ne doivent donc pas lever d'alerte « hors-ligne ».
+ * En cas d'erreur on renvoie un ensemble vide : le dashboard reste utilisable,
+ * il affichera simplement ces alertes comme avant.
+ */
+export async function fetchRetraitsOuverts(): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('shelly_device_retraits')
+    .select('device_id')
+    .is('jusqu_a', null);
+  if (error) {
+    console.warn('[Dashboard] retraits illisibles :', error.message);
+    return new Set();
+  }
+  return new Set((data ?? []).map(r => r.device_id as string));
+}
+
+export function computeAlerts(
+  snapshot: ShellyClRow[],
+  allDevices: Device[],
+  retires: Set<string> = new Set(),
+): Alert[] {
   const alerts: Alert[] = [];
   const onlineIds = new Set(snapshot.map(r => r.device_id));
   const nowIso = new Date().toISOString();
@@ -575,6 +598,8 @@ export function computeAlerts(snapshot: ShellyClRow[], allDevices: Device[]): Al
   // puisqu'on mesure des heures et des jours, jamais l'état « en ligne ».
   for (const d of allDevices) {
     if (onlineIds.has(d.device_id)) continue;
+    // Retrait ouvert : silence voulu (capteur débranché pour réemploi, etc.).
+    if (retires.has(d.device_id)) continue;
 
     const silenceMs = d.last_seen ? Date.now() - new Date(d.last_seen).getTime() : null;
     const heures = silenceMs == null ? null : silenceMs / 3_600_000;

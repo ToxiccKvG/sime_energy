@@ -1181,14 +1181,14 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
       </div>
       )}
 
-      {shellyRows.length === 0 && (
+      {shellyRows.length === 0 && !sbLoading && (
         <div className="flex flex-col items-center justify-center py-16 text-slate-500">
           <Zap className="h-12 w-12 opacity-20 mb-4" />
           {sourceMode === 'csv'
             ? <><p className="text-lg font-medium">Aucune donnée Shelly 3EM</p>
-              <p className="text-sm mt-1">Importez un fichier dans l'onglet <strong className="text-slate-400">Import</strong> ou basculez sur Supabase.</p></>
+              <p className="text-sm mt-1">Importez un fichier dans l'onglet <strong className="text-slate-400">Fichiers</strong> ou basculez sur Supabase.</p></>
             : <><p className="text-lg font-medium">Aucune donnée chargée</p>
-              <p className="text-sm mt-1">Sélectionnez un site et une période, puis cliquez sur <strong className="text-slate-400">Charger</strong>.</p></>
+              <p className="text-sm mt-1">Sélectionnez un site et une période, puis cliquez sur <strong className="text-slate-400">Analyser</strong>.</p></>
           }
         </div>
       )}

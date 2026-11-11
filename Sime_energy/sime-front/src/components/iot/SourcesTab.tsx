@@ -184,12 +184,15 @@ export function SourcesTab() {
   useEffect(() => { load(); }, []);
 
   const sites = useMemo(() => buildSites(appareils, roles), [appareils, roles]);
+  const idsAppareils = useMemo(() => new Set(appareils.map(a => a.device_id)), [appareils]);
   const totals = useMemo(() => ({
     devices: appareils.length,
-    classified: roles.filter(r => r.confirme_at).length,
-    proposed: roles.filter(r => !r.confirme_at).length,
+    // Seuls les rôles d'appareils présents au catalogue comptent : un rôle
+    // d'appareil disparu ne doit pas gonfler les totaux (108 ≠ 107 + 8).
+    classified: roles.filter(r => r.confirme_at && idsAppareils.has(r.device_id)).length,
+    proposed: roles.filter(r => !r.confirme_at && idsAppareils.has(r.device_id)).length,
     unclassified: sites.reduce((s, x) => s + x.unclassified, 0),
-  }), [appareils, roles, sites]);
+  }), [appareils, idsAppareils, roles, sites]);
 
   const isOpen = (site: string) => openSites[site] ?? true;
 

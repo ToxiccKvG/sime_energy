@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   fetchLatestSnapshot, fetchDevices, fetchEnergyByDevice,
-  fetchHourlyHeatmap, fetchCalendarActivity, computeAlerts, mergeSnapshotDevices,
+  fetchHourlyHeatmap, fetchCalendarActivity, computeAlerts, mergeSnapshotDevices, fetchRetraitsOuverts,
   DEFAULT_FILTERS,
   type ShellyClRow, type Device, type EnergyAgg, type HeatmapCell, type CalendarDay, type Alert,
   type Filters,
@@ -35,6 +35,8 @@ export function DashboardTab() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [snapshot, setSnapshot] = useState<ShellyClRow[]>([]);
   const [allDevices, setAllDevices] = useState<Device[]>([]);
+  // Nombre de sites réellement présents au catalogue (filtres compris).
+  const nbSites = useMemo(() => new Set(allDevices.map(d => d.site).filter(Boolean)).size, [allDevices]);
   const [energyAgg, setEnergyAgg] = useState<EnergyAgg[]>([]);
   const [heatmap, setHeatmap] = useState<HeatmapCell[]>([]);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
@@ -93,7 +95,7 @@ export function DashboardTab() {
     setLoading(true);
     setError(null);
     try {
-      const [snap, devs, energy, heat, cal] = await Promise.all([
+      const [snap, devs, energy, heat, cal, retires] = await Promise.all([
         fetchLatestSnapshot(filters),
         fetchDevices(
           filters.sites.length > 0 ? filters.sites : undefined,
@@ -102,6 +104,7 @@ export function DashboardTab() {
         fetchEnergyByDevice(filters, filters.period),
         fetchHourlyHeatmap(filters, filters.period === 'live' || filters.period === '1h' ? '24h' : filters.period),
         fetchCalendarActivity(filters),
+        fetchRetraitsOuverts(),
       ]);
       if (ctrl.signal.aborted) return;
       setSnapshot(snap);
@@ -112,7 +115,7 @@ export function DashboardTab() {
       setEnergyAgg(energy);
       setHeatmap(heat);
       setCalendarDays(cal);
-      setAlerts(computeAlerts(snap, mergeSnapshotDevices(devs, snap)));
+      setAlerts(computeAlerts(snap, mergeSnapshotDevices(devs, snap), retires));
       setLastUpdate(new Date());
     } catch (e) {
       console.error('[Dashboard] fetchAll error:', e);
@@ -212,7 +215,7 @@ export function DashboardTab() {
             <p className="text-slate-500 text-xs">
               {isHistoric
                 ? 'Consommation cumulée · phases A/B/C · Supabase'
-                : 'Vue globale Shelly Cloud · 2 sites · polling Supabase 30 s'}
+                : `Vue globale Shelly Cloud · ${nbSites} site${nbSites > 1 ? 's' : ''} · polling Supabase 30 s`}
             </p>
           </div>
         </div>

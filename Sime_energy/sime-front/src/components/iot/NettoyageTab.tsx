@@ -664,7 +664,6 @@ export function NettoyageTab() {
 
   // ---- Charger fichier importé ----
   const loadFromImported = useCallback((f: import('./shared').ImportedFile) => {
-    console.log('[NettoyageTab] loadFromImported', f.name, 'rawData:', f.rawData.length, 'shellyRows:', shellyRows.length);
     // reset other mode
     setGenericRows([]);
     setGenericFileName(null);
@@ -686,7 +685,6 @@ export function NettoyageTab() {
           });
         }
         const detect = detecterFormatShelly(f.columns);
-        console.log('[NettoyageTab] detected format:', detect.format, 'cols:', f.columns.slice(0, 5));
         let parsed: ShellyRow[] = [];
         if (!rows && (detect.format === 'shelly_excel' || detect.format === 'generic')) {
           parsed = f.rawData.map(r => parseShellyRow(r, state.joursFerier)).filter((r): r is ShellyRow => r !== null);
@@ -707,7 +705,6 @@ export function NettoyageTab() {
         if (!rows && parsed.length === 0) {
           parsed = f.rawData.map(r => parseShellyRow(r, state.joursFerier)).filter((r): r is ShellyRow => r !== null);
         }
-        console.log('[NettoyageTab] parsed rows:', parsed.length);
         if (!rows && parsed.length > 0) rows = parsed;
       } catch (e) {
         console.warn('[NettoyageTab] loadFromImported parse error:', e);
@@ -715,7 +712,6 @@ export function NettoyageTab() {
     }
     // Fallback final : données du contexte global (ex. après rechargement de page)
     if (!rows || rows.length === 0) {
-      console.log('[NettoyageTab] using shellyRows fallback, count:', shellyRows.length);
       if (shellyRows.length > 0) rows = [...shellyRows];
     }
     if (!rows || rows.length === 0) {

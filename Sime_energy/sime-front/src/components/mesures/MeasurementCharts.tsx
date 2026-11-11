@@ -419,7 +419,7 @@ function CurveView({
   const toggle = (key: string) =>
     setVisible((prev) => {
       const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
+      if (next.has(key)) next.delete(key); else next.add(key);
       if (next.size === 0) next.add(key); // garder au moins une série
       return next;
     });
@@ -447,7 +447,7 @@ function CurveView({
       talon,
     } as Record<MarkKey, number | null>;
   }, [shown, measurements, quantityKind, unit]);
-  const toggleMark = (k: MarkKey) => setMarks((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const toggleMark = (k: MarkKey) => setMarks((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   // Chaque grandeur a sa propre unité (ou aucune, ex. Cos φ) — jamais celle de la
   // grandeur principale par défaut.

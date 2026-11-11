@@ -77,7 +77,9 @@ function NodeLive({ icon: Icon, color, name, power, energy, sub, onClick }: {
   color: string; name: string; power: number | null; energy?: number | null; sub?: string;
   onClick?: () => void;
 }) {
-  if (power == null) return <NodeVide icon={Icon} name={name} sub={sub} motif="aucune donnée · hors ligne" onClick={onClick} />;
+  // Sans onClick, aucun appareil ne porte ce rôle sur le site : il n'est pas
+  // « hors ligne », il n'existe pas (ex. pas de PV à Ma Maison).
+  if (power == null) return <NodeVide icon={Icon} name={name} sub={sub} motif={onClick ? 'aucune donnée · hors ligne' : 'non équipé'} onClick={onClick} />;
   return (
     <div role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
@@ -104,7 +106,7 @@ function NodeHist({ icon: Icon, color, name, kwh, sub, onClick }: {
   icon: IconeNoeud;
   color: string; name: string; kwh: number | null; sub?: string; onClick?: () => void;
 }) {
-  if (kwh == null) return <NodeVide icon={Icon} name={name} sub={sub} motif="aucune donnée sur la période" onClick={onClick} />;
+  if (kwh == null) return <NodeVide icon={Icon} name={name} sub={sub} motif={onClick ? 'aucune donnée sur la période' : 'non équipé'} onClick={onClick} />;
   return (
     <div role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
