@@ -87,10 +87,9 @@ export async function updateInvoice(invoiceId: string, updates: Partial<AuditInv
       supplier: updates.supplier,
       invoice_date: updates.invoice_date,
       notes: updates.notes,
-      // TODO(bug) : ocr_data est ignoré ici (ligne commentée depuis le premier commit), alors que
-      // AnnotationPage enregistre ses corrections par updateInvoice(id, { ocr_data }) : ces sauvegardes
-      // ne changent que updated_at. Signalé par le typage du 2026-10-21, correction à décider.
-      // ocr_data: updates.ocr_data,
+      // Corrections de l'écran d'annotation. Un champ absent (undefined) n'est pas envoyé par
+      // supabase-js : les mises à jour de statut seules ne touchent donc pas à l'OCR.
+      ocr_data: toJson(updates.ocr_data),
       ocr_data_verified: toJson(updates.ocr_data_verified),
       updated_at: new Date().toISOString(),
     })
