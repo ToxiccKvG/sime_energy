@@ -298,9 +298,9 @@ export async function deleteAuditSite(siteId: string) {
 
 export interface ActivityItem {
   id: string;
-  action?: string;
-  description?: string;
-  entity_type?: string;
+  action_type: string;
+  title: string;
+  description: string;
   created_at: string;
 }
 
@@ -319,15 +319,12 @@ export async function getDashboardInvoiceCount(auditIds: string[]): Promise<numb
 export async function getDashboardActivity(auditIds: string[]): Promise<ActivityItem[]> {
   const { data, error } = await supabase
     .from('audit_activity')
-    .select('id, action, description, entity_type, created_at')
+    .select('id, action_type, title, description, created_at')
     .in('audit_id', auditIds)
     .order('created_at', { ascending: false })
     .limit(15);
   if (error) throw error;
-  // TODO(bug) : les colonnes `action` et `entity_type` n'existent pas dans audit_activity (les vraies sont
-  // `action_type` et `title`) : Supabase refuse la requête et l'activité du tableau de bord ne s'affiche jamais.
-  // Signalé par le typage du 2026-10-21, correction à décider.
-  return (data ?? []) as unknown as ActivityItem[];
+  return data ?? [];
 }
 
 // Notes d'inventaire (constats & rapport) — partagées par tous les membres de l'organisation

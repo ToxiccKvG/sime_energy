@@ -241,7 +241,7 @@ export default function Dashboard() {
 
                     <div className="flex-1 min-w-0 pb-1">
                       <p className="text-xs text-muted-foreground leading-snug">
-                        {item.description ?? item.action ?? item.entity_type ?? 'Action'}
+                        {item.description || item.title || item.action_type || 'Action'}
                       </p>
                       <p className="text-[10px] text-muted-foreground/60 font-mono mt-1.5">
                         {fmtRelative(item.created_at)}
