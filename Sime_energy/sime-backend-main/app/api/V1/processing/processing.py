@@ -75,7 +75,7 @@ class InvoiceData(BaseModel):
 ## Suppression du modèle strict pour la hiérarchie afin de garder de la flexibilité côté JSON
 
 @router.post("/pdf-invoices")
-async def process_file_structured(
+def process_file_structured(
     file: UploadFile = File(...),
     file_name: str = Form(...),
     invoice_id: str = Form(...),
@@ -88,7 +88,7 @@ async def process_file_structured(
     logger.info(f"Début du traitement du fichier: {file.filename}")
     controler_facture(utilisateur, invoice_id)
     try:
-        pdf_bytes = await file.read()
+        pdf_bytes = file.file.read()
 
         # Les pages suivantes deviennent des factures du même projet / de la même organisation
         principale_rows = (
@@ -327,7 +327,7 @@ async def process_file_structured(
         raise HTTPException(status_code=500, detail=f"Erreur lors du traitement du fichier: {str(e)}")
 
 @router.post('/excel-invoices')
-async def process_file_excel(
+def process_file_excel(
     file: UploadFile = File(...),
     file_name: str = Form(...),
     invoice_id: str = Form(...),
@@ -343,7 +343,7 @@ async def process_file_excel(
         if controler_facture(utilisateur, invoice_id) != organization_id:
             raise HTTPException(status_code=403, detail="La facture n'appartient pas à cette organisation")
     try:
-        contents = await file.read()
+        contents = file.file.read()
         excel_file = io.BytesIO(contents)
         df = pd.read_excel(excel_file, engine="openpyxl")
         df = df.dropna(how="all")
@@ -429,7 +429,7 @@ async def process_file_excel(
 
 
 @router.post('/measures')
-async def process_measures(
+def process_measures(
     file: UploadFile = File(...), 
     sensor_type: str = Form(...)
 ):
@@ -442,7 +442,7 @@ async def process_measures(
                 status_code=400,
                 detail=f"Type de capteur '{sensor_type}' non supporté pour le moment"
             )
-        contents = await file.read()
+        contents = file.file.read()
         if not contents.strip():
             raise HTTPException(status_code=400, detail="Le fichier est vide")
 
@@ -500,7 +500,7 @@ async def process_measures(
 
 
 @router.post("/invoice-tables-to-excel")
-async def process_invoice_tables_to_excel(invoice_data: InvoiceData):
+def process_invoice_tables_to_excel(invoice_data: InvoiceData):
     """
     Traite les tableaux de factures et génère un fichier Excel unifié.
     Le frontend envoie les données JSON des tableaux extraits et reçoit un fichier Excel.
@@ -582,7 +582,7 @@ async def process_invoice_tables_to_excel(invoice_data: InvoiceData):
 
 
 @router.post("/invoice-tables-to-json")
-async def process_invoice_tables_to_json(
+def process_invoice_tables_to_json(
     invoice_data: InvoiceData,
     utilisateur: Optional[Utilisateur] = Depends(utilisateur_courant),
 ):
@@ -693,7 +693,7 @@ async def process_invoice_tables_to_json(
 
 
 @router.post("/analyze-energy-label")
-async def analyze_energy_label(image: UploadFile = File(...)):
+def analyze_energy_label(image: UploadFile = File(...)):
     """
     Analyse une image d'étiquette énergétique ou de plaque constructeur.
     Extrait les caractéristiques techniques et retourne un JSON structuré.
@@ -709,7 +709,7 @@ async def analyze_energy_label(image: UploadFile = File(...)):
             )
         logger.info(f"Type de fichier: {image.content_type}")
         # Lire l'image
-        image_bytes = await image.read()
+        image_bytes = image.file.read()
         logger.info(f"Taille de l'image: {len(image_bytes)} bytes")
         # Convertir en base64
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')

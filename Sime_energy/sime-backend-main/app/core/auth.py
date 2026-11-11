@@ -71,7 +71,7 @@ def decoder_jeton(jeton: str) -> Utilisateur:
     return utilisateur
 
 
-async def utilisateur_courant(
+def utilisateur_courant(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> Optional[Utilisateur]:
     """Dépendance appliquée à tous les routeurs : exige un jeton Supabase valide."""
