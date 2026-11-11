@@ -103,3 +103,12 @@ def facture_vide(service_db, projet_test, session_test):
         "status": "pending",
     }).execute().data[0]
     return inv
+
+
+@pytest.fixture(autouse=True)
+def limiteur_remis_a_zero():
+    """Le client est partagé par toute la session : sans remise à zéro, le débit de l'OCR
+    (10 appels par minute) serait atteint par l'enchaînement des tests et donnerait des 429."""
+    from app.core.limites import limiteur
+    limiteur.reinitialiser()
+    yield

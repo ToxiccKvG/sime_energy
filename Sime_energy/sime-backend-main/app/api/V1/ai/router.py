@@ -1,12 +1,23 @@
 import os
 import json
+import logging
+import uuid
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+from app.core.limites import DEBIT_IA_PAR_MINUTE, limite_debit
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# Plafonds des requêtes IA (audit de sécurité, HIGH 4) : larges pour l'usage normal,
+# ils bloquent seulement les envois abusifs. Le contexte de synthèse contient toutes les mesures du projet.
+CONTEXTE_MAX = 400_000
+MESSAGE_MAX = 20_000
+MESSAGES_MAX = 200
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
@@ -35,7 +46,7 @@ Sois précis, chiffré quand possible, et orienté actions concrètes."""
 
 
 class SynthesizeRequest(BaseModel):
-    context: str
+    context: str = Field(max_length=CONTEXTE_MAX)
 
 
 class SynthesisResult(BaseModel):
@@ -48,7 +59,10 @@ class SynthesisResult(BaseModel):
 
 
 @router.post("/synthesize-audit", response_model=SynthesisResult)
-def synthesize_audit(body: SynthesizeRequest):
+def synthesize_audit(
+    body: SynthesizeRequest,
+    _debit: None = Depends(limite_debit("ia", DEBIT_IA_PAR_MINUTE)),
+):
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="DEEPSEEK_API_KEY not configured on server")
@@ -80,8 +94,10 @@ def synthesize_audit(body: SynthesizeRequest):
         response.raise_for_status()
     except requests.exceptions.Timeout:
         raise HTTPException(status_code=504, detail="DeepSeek API timeout")
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"DeepSeek API error: {str(e)}")
+    except requests.exceptions.RequestException:
+        reference = uuid.uuid4().hex[:8]
+        logger.exception("Appel DeepSeek (synthèse) en échec (réf. %s)", reference)
+        raise HTTPException(status_code=502, detail=f"Le service d'IA est indisponible, réf. {reference}")
 
     data = response.json()
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -117,17 +133,20 @@ Limite tes réponses à l'essentiel — pas de blabla, pas de répétition."""
 
 
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=MESSAGE_MAX)
 
 
 class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
-    context: Optional[str] = None
+    messages: list[ChatMessage] = Field(min_length=1, max_length=MESSAGES_MAX)
+    context: Optional[str] = Field(default=None, max_length=CONTEXTE_MAX)
 
 
 @router.post("/chat")
-def chat_with_benjamin(body: ChatRequest):
+def chat_with_benjamin(
+    body: ChatRequest,
+    _debit: None = Depends(limite_debit("ia", DEBIT_IA_PAR_MINUTE)),
+):
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="DEEPSEEK_API_KEY not configured on server")
@@ -164,7 +183,10 @@ def chat_with_benjamin(body: ChatRequest):
                         yield chunk
         except requests.exceptions.Timeout:
             yield b'data: {"error": "timeout"}\n\n'
-        except requests.exceptions.RequestException as e:
-            yield f'data: {{"error": "{str(e)}"}}\n\n'.encode()
+        except requests.exceptions.RequestException:
+            reference = uuid.uuid4().hex[:8]
+            logger.exception("Appel DeepSeek (chat) en échec (réf. %s)", reference)
+            erreur = json.dumps({"error": f"Le service d'IA est indisponible, réf. {reference}"})
+            yield f"data: {erreur}\n\n".encode()
 
     return StreamingResponse(generate(), media_type="text/event-stream")

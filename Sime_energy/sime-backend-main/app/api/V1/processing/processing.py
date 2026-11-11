@@ -14,6 +14,10 @@ from app.core.measures import (
     parse_th30_csv, parse_voltcraft_csv, prepare_chart_data,
 )
 from app.core.auth import Utilisateur, auth_requise, controler_facture, utilisateur_courant, verifier_membre
+from app.core.limites import (
+    DEBIT_OCR_PAR_MINUTE, LIMITE_EXCEL, LIMITE_IMAGE, LIMITE_MESURES, LIMITE_PDF,
+    erreur_interne, lire_fichier, limite_debit, verifier_image, verifier_pdf,
+)
 from app.core.supabase_client import supabase
 from app.core.unified_invoice_processor import UnifiedInvoiceProcessor
 from pydantic import BaseModel
@@ -80,6 +84,7 @@ def process_file_structured(
     file_name: str = Form(...),
     invoice_id: str = Form(...),
     utilisateur: Optional[Utilisateur] = Depends(utilisateur_courant),
+    _debit: None = Depends(limite_debit("ocr", DEBIT_OCR_PAR_MINUTE)),
 ):
     """
     Process PDF invoices with multi-invoice support.
@@ -88,7 +93,8 @@ def process_file_structured(
     logger.info(f"Début du traitement du fichier: {file.filename}")
     controler_facture(utilisateur, invoice_id)
     try:
-        pdf_bytes = file.file.read()
+        pdf_bytes = lire_fichier(file, LIMITE_PDF, "un PDF")
+        verifier_pdf(pdf_bytes)
 
         # Les pages suivantes deviennent des factures du même projet / de la même organisation
         principale_rows = (
@@ -201,7 +207,7 @@ def process_file_structured(
             if page_idx == 0:
                 # Première page: mettre à jour la facture existante
                 logger.info(f"[SUPABASE] Début mise à jour facture - ID: {invoice_id}, Page: {page_idx + 1}/{len(parsed_pages)}")
-                logger.info(f"[SUPABASE] Données à mettre à jour - Amount: {extracted_fields['amount']}, Supplier: {extracted_fields['supplier']}, Date: {extracted_fields['invoice_date']}, Confidence: {extracted_fields['confidence_score']}")
+                logger.info(f"[SUPABASE] Mise à jour de la facture {invoice_id}")
                 
                 try:
                     update_data = {
@@ -220,7 +226,6 @@ def process_file_structured(
                     }
 
                     logger.info(f"[SUPABASE] Tentative de mise à jour - Table: audit_invoices, ID: {invoice_id}")
-                    logger.debug(f"[SUPABASE] Payload de mise à jour: {update_data}")
 
                     update_result = supabase.table('audit_invoices').update(update_data).eq('id', invoice_id).execute()
 
@@ -228,7 +233,6 @@ def process_file_structured(
 
                     if update_result.data:
                         logger.info(f"[SUPABASE]  Mise à jour réussie - Facture ID: {invoice_id}, Lignes affectées: {len(update_result.data)}")
-                        logger.info(f"[SUPABASE] Données retournées: {update_result.data}")
                     else:
                         logger.warning(f"[SUPABASE]   Aucune ligne affectée pour la facture ID: {invoice_id} - La facture existe-t-elle?")
                         logger.warning(f"[SUPABASE] Vérifiez que l'ID {invoice_id} existe dans la table audit_invoices")
@@ -251,7 +255,6 @@ def process_file_structured(
                 # Pages suivantes: créer de nouvelles factures
                 new_file_name = f"{file_name}_page_{page_idx + 1}"
                 logger.info(f"[SUPABASE] Début création nouvelle facture - Page: {page_idx + 1}/{len(parsed_pages)}, Parent ID: {invoice_id}")
-                logger.info(f"[SUPABASE] Données à insérer - FileName: {new_file_name}, Amount: {extracted_fields['amount']}, Supplier: {extracted_fields['supplier']}, Date: {extracted_fields['invoice_date']}, Confidence: {extracted_fields['confidence_score']}")
                 
                 try:
                     insert_result = supabase.table('audit_invoices').insert({
@@ -279,7 +282,6 @@ def process_file_structured(
                     if insert_result.data and len(insert_result.data) > 0:
                         new_invoice_id = insert_result.data[0]['id']
                         logger.info(f"[SUPABASE] Création réussie - Nouvelle facture ID: {new_invoice_id}, Parent ID: {invoice_id}")
-                        logger.debug(f"[SUPABASE] Données retournées: {insert_result.data[0]}")
                     else:
                         new_invoice_id = None
                         logger.error(f"[SUPABASE] Création échouée - Aucune donnée retournée pour la page {page_idx + 1}")
@@ -319,12 +321,8 @@ def process_file_structured(
         raise
     except PDFPageCountError:
         raise HTTPException(status_code=400, detail="PDF illisible ou corrompu")
-    except Exception as e:
-        logger.error(f"Erreur globale lors du traitement: {str(e)}")
-        logger.error(f"Type d'erreur: {type(e).__name__}")
-        import traceback
-        logger.error(f"Stack trace: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Erreur lors du traitement du fichier: {str(e)}")
+    except Exception:
+        raise erreur_interne("le traitement du PDF")
 
 @router.post('/excel-invoices')
 def process_file_excel(
@@ -334,6 +332,7 @@ def process_file_excel(
     audit_id: str = Form(...),
     organization_id: str = Form(...),
     utilisateur: Optional[Utilisateur] = Depends(utilisateur_courant),
+    _debit: None = Depends(limite_debit("ocr", DEBIT_OCR_PAR_MINUTE)),
 ):
     """
     Traite les factures Excel et met à jour la base de données.
@@ -343,7 +342,7 @@ def process_file_excel(
         if controler_facture(utilisateur, invoice_id) != organization_id:
             raise HTTPException(status_code=403, detail="La facture n'appartient pas à cette organisation")
     try:
-        contents = file.file.read()
+        contents = lire_fichier(file, LIMITE_EXCEL, "un fichier Excel")
         excel_file = io.BytesIO(contents)
         df = pd.read_excel(excel_file, engine="openpyxl")
         df = df.dropna(how="all")
@@ -389,7 +388,7 @@ def process_file_excel(
 
         # Update audit_invoices table
         logger.info(f"[SUPABASE] Début mise à jour facture Excel - ID: {invoice_id}, FileName: {file_name}")
-        logger.info(f"[SUPABASE] Données à mettre à jour - Amount: {extracted_fields['amount']}, Supplier: {extracted_fields['supplier']}, Date: {extracted_fields['invoice_date']}, Confidence: {extracted_fields['confidence_score']}")
+        logger.info(f"[SUPABASE] Mise à jour de la facture {invoice_id}")
         logger.info(f"[SUPABASE] Nombre de lignes Excel: {len(json_response)}")
         
         try:
@@ -405,7 +404,6 @@ def process_file_excel(
             
             if update_result.data:
                 logger.info(f"[SUPABASE] Mise à jour Excel réussie - Facture ID: {invoice_id}, Lignes affectées: {len(update_result.data)}")
-                logger.debug(f"[SUPABASE] Données retournées: {update_result.data}")
             else:
                 logger.warning(f"[SUPABASE] Mise à jour Excel effectuée mais aucune donnée retournée pour la facture ID: {invoice_id}")
                 
@@ -422,9 +420,8 @@ def process_file_excel(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Excel processing error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise erreur_interne("l'import du fichier Excel")
     
 
 
@@ -442,7 +439,7 @@ def process_measures(
                 status_code=400,
                 detail=f"Type de capteur '{sensor_type}' non supporté pour le moment"
             )
-        contents = file.file.read()
+        contents = lire_fichier(file, LIMITE_MESURES, "un fichier de mesures")
         if not contents.strip():
             raise HTTPException(status_code=400, detail="Le fichier est vide")
 
@@ -494,9 +491,8 @@ def process_measures(
         return response_data
     except HTTPException:
         raise
-    except Exception as e:
-        print(e)
-        raise HTTPException(status_code=500, detail=f"Erreur lors du traitement: {str(e)}")
+    except Exception:
+        raise erreur_interne("le traitement des mesures")
 
 
 @router.post("/invoice-tables-to-excel")
@@ -570,15 +566,8 @@ def process_invoice_tables_to_excel(invoice_data: InvoiceData):
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Erreur lors du traitement des tableaux: {str(e)}")
-        logger.error(f"Type d'erreur: {type(e).__name__}")
-        import traceback
-        logger.error(f"Stack trace: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Erreur lors du traitement des tableaux: {str(e)}"
-        )
+    except Exception:
+        raise erreur_interne("la transformation des tableaux en Excel")
 
 
 @router.post("/invoice-tables-to-json")
@@ -681,19 +670,15 @@ def process_invoice_tables_to_json(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Erreur lors du traitement des tableaux (JSON): {str(e)}")
-        logger.error(f"Type d'erreur: {type(e).__name__}")
-        import traceback
-        logger.error(f"Stack trace: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Erreur lors du traitement des tableaux: {str(e)}"
-        )
+    except Exception:
+        raise erreur_interne("la transformation des tableaux")
 
 
 @router.post("/analyze-energy-label")
-def analyze_energy_label(image: UploadFile = File(...)):
+def analyze_energy_label(
+    image: UploadFile = File(...),
+    _debit: None = Depends(limite_debit("ocr", DEBIT_OCR_PAR_MINUTE)),
+):
     """
     Analyse une image d'étiquette énergétique ou de plaque constructeur.
     Extrait les caractéristiques techniques et retourne un JSON structuré.
@@ -709,14 +694,15 @@ def analyze_energy_label(image: UploadFile = File(...)):
             )
         logger.info(f"Type de fichier: {image.content_type}")
         # Lire l'image
-        image_bytes = image.file.read()
+        image_bytes = lire_fichier(image, LIMITE_IMAGE, "une image")
+        verifier_image(image_bytes)
         logger.info(f"Taille de l'image: {len(image_bytes)} bytes")
         # Convertir en base64
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
                 
         # Analyser avec Mistral Small via Bedrock (texte uniquement)
         characteristics = _analyze_energy_label_with_mistral(image_base64)
-        logger.info(f"Caractéristiques extraites: {characteristics}")
+        logger.info(f"Étiquette analysée : {len(characteristics or {})} caractéristiques")
         if not characteristics:
             raise HTTPException(
                 status_code=500, 
@@ -739,15 +725,8 @@ def analyze_energy_label(image: UploadFile = File(...)):
         
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Erreur lors de l'analyse de l'étiquette énergétique: {str(e)}")
-        logger.error(f"Type d'erreur: {type(e).__name__}")
-        import traceback
-        logger.error(f"Stack trace: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Erreur lors de l'analyse de l'étiquette énergétique: {str(e)}"
-        )
+    except Exception:
+        raise erreur_interne("l'analyse de l'étiquette énergétique")
 @router.post("/process-hierarchy")
 def process_hierarchy(hierarchy_data: Dict[str, Any]):
     """
@@ -762,7 +741,6 @@ def process_hierarchy(hierarchy_data: Dict[str, Any]):
         payload = hierarchy_data or {}
         root = payload.get("hierarchy", {})
         nodes = root.get("hierarchy", [])
-        logger.info("payload received", payload)
         
 
         def to_number(value: Any) -> Optional[float]:
@@ -823,16 +801,9 @@ def process_hierarchy(hierarchy_data: Dict[str, Any]):
         for node in nodes:
             process_node(node)
 
-        logger.info(f"Hiérarchie traitée avec succès", payload)
-        print(payload)
+        logger.info("Hiérarchie traitée avec succès")
         return JSONResponse(content=payload)
         
-    except Exception as e:
-        logger.error(f"Erreur traitement hiérarchie: {type(e).__name__} - {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Erreur lors du traitement de la hiérarchie: {str(e)}"
-        )
+    except Exception:
+        raise erreur_interne("le traitement de la hiérarchie")
 
