@@ -1,0 +1,540 @@
+# Modules Mesures & IOT — Documentation technique
+
+> Plateforme SIMEE (CER2E) — Module 3 « Campagne de mesure »
+> Référence : formats supportés, architecture, contrats de données, algorithmes.
+> Dernière mise à jour : 16/09/2026 (chantier 1 clôturé, chantier 2 Sources IOT).
+> Guide utilisateur : [`guide-utilisateur-mesures.md`](./guide-utilisateur-mesures.md).
+
+## 1. Vue d'ensemble
+
+Le module importe les fichiers exportés par les appareils de mesure, les **normalise**
+dans un format unique (`timestamp` + grandeur principale + colonnes secondaires), puis
+fait **tout le calcul côté client** : indicateurs, filtrage par période, modèles
+d'analyse, comparaison de relevés, exports.
+
+Répartition des responsabilités :
+
+| Couche | Rôle | Ne fait pas |
+|---|---|---|
+| **Backend FastAPI** (`app/core/sensors.py`) | Parser un fichier selon son capteur, renvoyer **toutes** les mesures valides + métadonnées (unité, libellé, nature de la grandeur) | Aucune statistique, aucun sous-échantillonnage |
+| **Frontend** (`services/`, `lib/`) | KPIs, regroupement par jour, modèles d'analyse, alignement de deux relevés, rapports | Aucun stockage : les relevés vivent dans l'état React de l'onglet |
+| **Supabase** | Table `custom_sensors` (définitions de capteurs personnalisés, par organisation, RLS) | Les mesures elles-mêmes ne sont pas persistées (chantier ultérieur) |
+
+Onglets : **Upload → Analyse → Visualisation → Modèles → Comparaison**
+(`components/mesures/MeasurementWorkflow.tsx`). La **période** choisie est un état du
+workflow, par relevé, partagé entre Analyse, Visualisation et Modèles.
+
+## 2. Capteurs supportés
+
+| Clé `sensor_type` | Appareil | Entrée | Grandeur principale | `quantity_kind` | Colonnes secondaires |
+|---|---|---|---|---|---|
+| `CA8335_TREND` | C.A 8335 — Trend 10 min | xlsx (feuille *trend*) | Puissance active (W) | power | S (VA), Q (var), cos φ, fréquence, déséq. U, U et I par phase |
+| `CA8335_DEMAND` | C.A 8335 — Demand 5 min | xlsx | Énergie active (Wh) | energy | VAh, varh, I moyen, U par phase |
+| `AIR_STATION_M100` | Station IAQ M100 | xlsx (feuille *data*) | CO₂ (ppm) | other | PM2.5, PM10, T°, HR, AQI |
+| `PV_SOLAREDGE` | Portail SolarEdge | csv `;` (ligne « Période ») | Puissance produite (kW) | power | — |
+| `PV_HUAWEI` | FusionSolar — journalier | xlsx | Production (kWh) | energy | conso, injection/achat réseau, batterie, auto-conso |
+| `SHELLY` | Shelly cloud — journalier | csv par sections | Énergie consommée (Wh) | energy | phases A/B/C, retour réseau |
+| `CUSTOM` | Capteur personnalisé | csv/xlsx | définie par l'utilisateur | déduit de l'unité, modifiable | libres |
+
+`quantity_kind` (`power` / `energy` / `other`) est **la** métadonnée structurante : elle
+décide si un cumul a un sens et comment il se calcule (intégration trapèzes / somme /
+aucun). `lib/custom-sensor-service.ts › guessQuantityKind()` la propose d'après l'unité.
+
+### Détection du capteur à l'upload
+`MeasurementUploadStep.tsx › guessSensorType()` devine le type d'après le nom du fichier
+(`trend`, `demand`, `m100|iaq`, `solaredge|pv-`, `fusionsolar|huawei`, `shelly|consommation`).
+Le type est fixé par fichier, modifiable ligne par ligne ; le sélecteur global sert de
+valeur par défaut aux fichiers non reconnus.
+
+## 3. Backend
+
+> **Capteur personnalisé (`_parse_generic`, 17/09/2026)** : lecture Excel via openpyxl,
+> sinon texte via `_read_text_table` (séparateur tab/;/,/| = celui qui découpe le plus
+> régulièrement, en-tête = première ligne au nombre de séparateurs majoritaire, donc
+> préambule de logger sauté) ; `time_col` fusionné à `timestamp_col` ; sans
+> `timestamp_format`, l'ordre jour/mois est déduit par `_infer_dayfirst` (composante
+> > 12, sinon celle qui change le plus souvent est le jour, sinon jour-mois par défaut).
+> Table `custom_sensors` : colonnes `quantity_kind`, `time_col`, `columns_signature`
+> (migrations `20260917_custom_sensors_*`).
+
+> **Plusieurs séries dans un fichier (`series_col`, 02/11/2026)** : un export de table
+> (`shelly_cl`, portail multi-onduleurs…) range une ligne par horodatage **et** par
+> appareil. Lu comme une seule série, les valeurs de tous les appareils se suivaient dans
+> une même courbe (moyenne, maximum, énergie faux, sans message). Le capteur porte la
+> colonne d'appartenance `series_col` (identifiant de préférence, les noms changent) et
+> `series_label_col` (nom affiché, le plus récent gardé) ; `_process_series` découpe le
+> fichier **avant tout calcul** en un payload complet par série. Dans chaque série, les
+> colonnes supplémentaires vides pour cet appareil et celles qui l'identifient sont
+> retirées ; une série sans aucune valeur est écartée et listée (`skipped_series`).
+> **Garde-fou** (`_refuse_mixed_series`) : sans `series_col`, si ≥ 20 % des lignes
+> partagent leur horodatage et qu'une colonne rend chaque couple (horodatage, colonne)
+> unique (`series_candidates` : 2 à 500 valeurs, répétées, ni partie de la date — heure,
+> année, date — ni décimale),
+> le fichier est refusé avec la colonne à indiquer. Sans colonne distinctive, comportement
+> inchangé. Non-régression vérifiée sur 20 fichiers réels à une série (Shelly Ma Maison,
+> exports Shelly Cloud, loggers H&T et sonomètres Donsin, station météo) ; export
+> Ma Maison de 18 507 lignes / 29 appareils découpé en 2,6 s. Migration
+> `20261102_custom_sensors_series`.
+
+### 3.1 Registre et pipeline (`app/core/sensors.py`)
+
+```
+fichier (bytes) + sensor_type [+ sensor_config JSON si CUSTOM]
+   │  input "text" → décodage (chardet) · input "bytes" → openpyxl
+   ▼
+parser du registre  ──►  DataFrame normalisé : timestamp + value_col + colonnes secondaires
+   ▼
+_build_measurements()  ──►  toutes les lignes valides (timestamp et valeur non nuls),
+                            valeurs négatives conservées sauf keep_negative=False,
+                            valeurs NON arrondies (depuis le 03/11/2026 ; avant :
+                            3 décimales, fausses sur les petites valeurs en kWh)
+   ▼
+JSON : measurements, sensor_type, metric_label, unit, quantity_kind, processing_info
+       (capteur à series_col : { series: [ce JSON, un par série], processing_info })
+```
+
+`SENSOR_REGISTRY[key] = { label, input, parser, value_col, unit, metric_label,
+keep_negative, quantity_kind, extra_cols }`. Ajouter un capteur = un parser qui renvoie
+un DataFrame avec `timestamp` + une entrée dans le registre.
+
+Endpoint : `POST /api/V1/processing/process-file/measures`
+(`file`, `sensor_type`, `sensor_config` optionnel — JSON de la ligne `custom_sensors`).
+
+### 3.2 Contrat de réponse
+
+```json
+{
+  "sensor_type": "CA8335_TREND",
+  "metric_label": "Puissance active",
+  "unit": "W",
+  "quantity_kind": "power",
+  "measurements": [
+    { "timestamp": "2026-06-01 00:00:00", "consumption": 342.8,
+      "P apparente (VA)": 372.6, "Cos φ": 0.92, "U moy. A (V)": 230.0 }
+  ],
+  "processing_info": { "original_rows": 4002, "valid_measurements": 4002,
+                       "sensor_label": "…", "file_name": "…" }
+}
+```
+
+Conventions : `consumption` = grandeur principale ; les colonnes secondaires portent leur
+unité entre parenthèses en fin de libellé (exploitée par `extractUnit()` côté client) ;
+`timestamp` = `YYYY-MM-DD HH:MM:SS` en heure locale.
+
+### 3.3 Robustesse
+Dates ISO à virgule de millisecondes, US, FR, Huawei ; nombres au format français ;
+colonnes temporelles dupliquées (choix de celle qui se parse) ; feuille Trend lue en ne
+chargeant que les colonnes utiles. Fichier/capteur incohérent → 400 avec `detail`
+explicite, relayé tel quel par le front.
+
+Point d'attention connu : pour un **petit fichier texte**, `chardet` peut deviner un
+mauvais encodage et faire rater l'en-tête accentué (« Période » SolarEdge). Les exports
+réels ne sont pas affectés.
+
+## 4. Frontend
+
+### 4.1 Fichiers
+
+| Fichier | Rôle |
+|---|---|
+| `components/mesures/MeasurementWorkflow.tsx` | Onglets, alias, période partagée par relevé — état lu/écrit dans `services/measurementSession.ts` (survit à un passage par IOT ou un audit) |
+| `components/mesures/MeasurementUploadStep.tsx` | Dépôt multi-fichiers **et dossiers** (`lib/folder-import.ts`), capteur par fichier deviné par le nom ou par l'**empreinte des colonnes** (`findSensorBySignature`, lecture des seuls en-têtes en arrière-plan), liste « Relevés chargés », capteurs personnalisés |
+| `components/mesures/CustomSensorMapper.tsx`, `CustomSensorEditPanel.tsx` | Création / édition d'un capteur personnalisé : **pré-remplissage** (`suggestMapping`), colonne heure séparée (`time_col`), **« Une série par » / nom affiché** (`series_col`, `series_label_col`, détectés par `suggestSeries`), **aperçu des dates interprétées** (`previewTimestamps`, `inferDayFirst`) avec choix jour-mois / mois-jour qui écrit `timestamp_format`, colonnes supplémentaires proposées |
+| `components/mesures/MeasurementAnalysis.tsx` | KPIs, vue par jour, stats par colonne, table, export CSV, rapport PDF/Word |
+| `components/mesures/MeasurementCharts.tsx` | Courbe multi-axes, distribution, profil heure × jour, cumul par période, drill-down, export PNG |
+| `components/mesures/AnalysisModelsPanel.tsx` | Onglet Modèles (affichage seulement) |
+| `components/mesures/ModelComparisonPanel.tsx` | Deux relevés côte à côte |
+| `components/mesures/SensorComparisonPanel.tsx` | Compteur général / somme de sous-compteurs |
+| `components/mesures/MeasurementPeriodFilter.tsx` | Filtre de période (`DateRange`, `filterByRange`, navigation jour) |
+| `services/measurementService.ts` | Appel API, type `MeasurementData`, `measurementLabel()` (alias > nom de fichier > capteur) |
+| `services/measurementStats.ts` | KPIs, `integrateEnergy()`, `groupMeasurementsByDay()`, interprétation |
+| `services/measurementReportExport.ts` | Rapport PDF (jsPDF) et Word (docx) depuis un modèle unique |
+| `services/analysisModels/*` | Modèles d'analyse (§ 5) |
+| `lib/model-comparison.ts` | Alignement et comparaison de deux relevés (§ 6) |
+| `lib/sensor-comparison.ts` | Familles d'unités (W/VA/var, Wh/VAh/varh), conversions, comparaison maître/esclaves |
+| `lib/custom-sensor-service.ts` | CRUD `custom_sensors`, `guessQuantityKind()`, `columnsSignature()`, `suggestMapping()`, `suggestSeries()` (fichier long → « Une série par », mêmes règles que le backend), `inferDayFirst()`, `previewTimestamps()` |
+| `lib/folder-import.ts` | Import de dossiers (input `webkitdirectory` + `webkitGetAsEntry` récursif), filtre `isImportable` (extensions + exclusion `._*`, `~$*`, `.DS_Store`) — partagé avec IOT › Fichiers |
+| `lib/excel-utils.ts` | `parseExcelBuffer` : xlsx (ExcelJS), CSV/TSV (préambule sauté, `meta` = paires clé/valeur du préambule), refus explicite du `.xls` binaire |
+| `lib/chart-export.ts` | Filtre html2canvas (exclut infobulle, curseur, points actifs, `data-no-export`) |
+
+### 4.3 Persistance des relevés (17/09/2026)
+
+- **Session** (`services/measurementSession.ts`) : store au niveau du module JS + `useSyncExternalStore`. Le workflow n'a plus de `useState` pour les relevés : passer par IOT ou un audit ne perd rien.
+- **Serveur** (migration `20260917_measurement_files.sql`) : table `measurement_files` (`file_name`, `alias`, `sensor_type`, `sensor_label`, `metric_label`, `unit`, `quantity_kind`, `measurement_count`, `period_start/end`, `storage_path`) + bucket privé `measurement-files` (contenu = mesures normalisées du backend, JSON gzippé, chemin `{uid}/{id}.json.gz`). Isolation **par utilisateur** (`created_by = auth.uid()`, policies storage sur le 1er segment du chemin) ; `organization_id` stocké, nullable. Même patron que `iot_files` ; helper commun `lib/storage-json.ts` (gzip navigateur, repli `identity`).
+- **Cycle** : `ensureMeasurementLibrary(userId)` à l'entrée du module → liste + contenus (4 téléchargements en parallèle), KPI recalculés (`computeMeasurementKpis`), ouverture directe sur Analyse s'il y a des relevés. `addMeasurements` (id `crypto.randomUUID()`, UI d'abord, `createMeasurementFile` ensuite), `renameMeasurement` → `alias`, `removeMeasurement` → **suppression définitive** (objet puis ligne), avec confirmation en ligne dans la liste « Mes relevés ». Tout échec serveur = toast destructif.
+- **Conséquences** : (1) « Retirer de la session » n'existe plus, retirer = supprimer ; (2) tout est chargé à l'entrée — au-delà de quelques dizaines de relevés volumineux, prévoir une bibliothèque avec chargement à la demande (comme IOT) ; (3) un relevé dont l'envoi a échoué garde `storage_path NULL` et est signalé illisible au chargement suivant : le réimporter.
+
+### 4.2 Statistiques (`measurementStats.ts`)
+- Percentiles par interpolation linéaire (identique à pandas `.quantile()`), écart-type
+  d'échantillon (ddof = 1).
+- `avgConsumption` = moyenne **hors zéros** (les zéros sont le plus souvent des trous).
+- Cumul : `energy` → somme ; `power` → intégration trapèzes en unité·h ; `other` → `null`.
+- `groupMeasurementsByDay()` : clé jour locale, `total` non nul seulement pour la grandeur
+  principale.
+
+### 4.4 Réglages de graphiques, communs aux deux modules (22/09/2026)
+
+Demande du manager (réunions du 18/09) : « pas seulement la carte de chaleur, mais pour tous
+types de graphiques choisir les couleurs, pouvoir éditer le titre, et ne pas oublier les
+légendes — que ce soit dans IOT ou dans Mesures ».
+
+- **`lib/chart-preferences.ts`** : 6 palettes (Par défaut, Chaud, Froid, Contrasté, Daltonisme
+  Okabe-Ito, Sobre impression), `showLegend`, et un titre par graphique (`titles['module:vue']`).
+  Store module + `useSyncExternalStore`, persisté en `localStorage` (`sime-chart-prefs-v1`) :
+  préférence d'affichage propre au poste, quelques octets, lectures/écritures protégées.
+  `seriesColor()` attribue par rang ; `heatColor()` interpole les trois teintes `heat`.
+  **Convention des dégradés** : valeur faible = sombre et peu saturée, valeur forte = vive
+  (l'interface est sombre, c'est la valeur forte qui doit ressortir) — d'où la légende
+  « plus la couleur est vive, plus la valeur est élevée », corrigée le 22/09.
+- **`components/shared/ChartOptions.tsx`** : la barre Titre · Légendes · Palette, posée dans
+  `MeasurementCharts` et dans la barre de vues d'`AnalyseTab`.
+- **IOT** : les couleurs étaient écrites en dur à 124 endroits. `colorForMetric(palette, key)`
+  les remplace au point d'usage (barres, lignes, aires, camembert, capteurs d'ambiance) ;
+  `METRIQUES[].color` / `METRIQUES_ENV[].color` restent le repli pour les pastilles hors
+  graphique. Les 4 légendes de `TcdChart` suivent `showLegend`.
+- **Mesures** : nouvelle vue **Répartition** (le camembert existait dans IOT, pas ici). Comme un
+  relevé = un appareil, la lecture utile est **par appareil** (part de chaque relevé cumulable
+  de la session, via la prop `siblings`), avec bascule « Par grandeur » quand un relevé porte
+  plusieurs colonnes cumulables. Garde-fous : refus explicite si la grandeur n'est pas cumulable
+  (°C, dB, %), si un seul relevé, ou si les unités diffèrent — on ne mélange pas des Wh et des kWh.
+  Son titre automatique ne mentionne pas la grandeur du relevé courant, puisqu'elle compare les relevés.
+
+### 4.5 Cartes de chaleur — regroupement par jour (22/09/2026)
+
+Le « Profil journalier » de Mesures groupait par **jour de semaine × heure**, ce qui suppose
+plusieurs semaines de relevés. Inutilisable pour une campagne courte : les trois relevés
+sonores de Donsin couvrent 1 à 2 h sur une seule journée — la grille n'affichait qu'une ligne
+de trois cases, les autres jours vides.
+
+`DailyProfileView` calcule désormais les deux grilles et propose une bascule
+**Par jour** (jour calendaire × heure, comme `EnvHeatmapView` d'IOT) / **Jour de semaine**.
+Le défaut est automatique : jour calendaire à 14 jours de mesure ou moins, jour de semaine
+au-delà. Chaque grille a ses propres min/max, sinon l'échelle de couleur d'une campagne
+courte serait écrasée par les jours absents.
+
+`EnvHeatmapView` (IOT) suivait encore une échelle HSL 220 → 10 codée en dur ; elle passe sur
+le dégradé de la palette, comme le reste (oubli du lot 1).
+
+### 4.6 Quarantaine des mesures aberrantes (24/09/2026)
+
+Demande du manager (18/09), reprise mot pour mot : « il ne va pas l'éliminer dans la base,
+pour la base les données doivent rester telles quelles ; mais dans ce qu'on va analyser, il
+faut qu'on puisse le filtrer » — et le terme qu'il a proposé, **mettre en quarantaine**.
+
+- **`services/measurementQuarantine.ts`** : réglage persistant (`sime-quarantine-v1`) et
+  `applyQuarantine()` qui s'appuie sur les épisodes déjà détectés par `computeAnomalies`.
+  Trois familles activables séparément : **zéros**, **valeurs figées**, **écarts au profil**.
+  Les *trous de collecte* sont exclus du dispositif : il n'y a pas de point à écarter d'une
+  moyenne quand la mesure est absente.
+- **`components/mesures/QuarantineBar.tsx`** : bandeau présent sur Analyse, Visualisation et
+  Modèles. Rien n'est écarté en silence — il affiche le décompte par famille et le détail des
+  épisodes. La note est reportée dans le sous-titre du rapport exporté (`quarantineNote`),
+  sans quoi deux moyennes différentes sur le même fichier seraient inexplicables.
+- Le calcul est fait **une fois** dans `MeasurementWorkflow` et partagé par les trois vues,
+  pour qu'un même relevé donne partout les mêmes chiffres.
+
+**Défaut prudent, établi par mesure et non par principe** : seules les *valeurs figées non
+nulles* sont cochées d'office. Écarter les zéros a été testé sur `shelly_Clim_Salon.csv` :
+2 312 mesures sur 2 948 écartées, **écart-type porté de 166 à 326 Wh** et durée couverte
+tombée de 123 à 79 jours. Une clim éteinte n'est pas une anomalie. La famille « zéros » ne
+vaut que sur un **compteur d'arrivée**, où un zéro prolongé signale une coupure ; l'infobulle
+le dit. À noter que la moyenne principale s'appelle déjà « Moyenne (hors zéros) » : la
+plainte initiale du manager était donc déjà traitée de ce côté.
+
+### 4.7 Attribution des extremums (24/09/2026)
+
+« On ne sait pas c'est quel usage qui est à 18,7 Wh — on l'a, mais on ne l'affiche pas. »
+Complété par l'utilisateur : « faudrait pas que ce soit le talon seulement. »
+
+- **IOT › Analyse** : les cartes Maximum et Minimum (celle-ci ajoutée) portent désormais
+  *appareil · date et heure*. C'est là que ça compte : quand plusieurs appareils sont chargés
+  depuis Supabase, la valeur affichée est une somme, sans rattachement possible sans cela.
+- **Mesures › Analyse** : un relevé = un appareil, donc l'attribution utile est le **moment** :
+  les cartes Maximum et Minimum indiquent quand l'extremum a été atteint.
+
+### 4.8 Écriture des valeurs et des unités (24/09/2026)
+
+Demande du manager (18/09) : choisir l'unité d'affichage et passer aux multiples au-delà du
+millier. **`lib/unit-format.ts`** est désormais la source unique.
+
+**Distinction qui commande tout le module** : le **préfixe** (Wh → kWh → MWh) est de la
+présentation — conversion exacte, jamais fausse. La **famille** (W → VA → A) désigne des
+grandeurs physiques différentes : passer de W à VA demande le cos φ, de W à A demande en plus
+la tension. Le logiciel du manager peut le faire parce qu'il *dimensionne* (il connaît U, I,
+cos φ) ; nous *mesurons*. Ces conversions ne sont donc pas proposées — si l'utilisateur veut
+des VA, la mesure doit exister dans le fichier (`lib/sensor-comparison.ts` tient déjà la table
+des familles et refuse de les mélanger).
+
+**Défaut corrigé au passage** : les graphiques mettaient à l'échelle au-delà de 1 000, les
+cartes d'indicateurs non — le même relevé s'écrivait « 3 899,1 Wh » dans une carte et
+« 3,90 kWh » dans un graphique. Tout passe maintenant par `formatQuantity()`.
+
+- Trois modes, dans la barre `ChartOptions` (même persistance que les couleurs,
+  `sime-unit-display-v1`) : **Auto** (k au-delà de 1 000, M au-delà d'un million), **Unité du
+  fichier** (jamais de multiple, pour comparer des chiffres bruts), **Forcé** (préfixe imposé
+  dans la famille du relevé).
+- **Jamais de préfixe sur °C, dB, %, ppm** (`PREFIXABLE`) : le CO₂ dépasse régulièrement
+  1 000 ppm et « 1,2 kppm » n'a aucun sens.
+- **Chiffres significatifs, pas décimales fixes** (5 par défaut, plafond 4 décimales) : 207,97
+  reste 207,97 au lieu de devenir 208, et 0,0043 ne devient pas 0.
+- **Les exports CSV gardent les nombres bruts** (une valeur, une unité en en-tête) : « 3,9 kWh »
+  en texte ne serait pas calculable dans Excel. Le réglage ne concerne que l'affichage et les
+  rapports PDF/Word.
+
+## 5. Modèles d'analyse (`services/analysisModels/`)
+
+Principe : un modèle répond à une question d'audit et se choisit d'après la **nature des
+données** (`quantity_kind`, pas de temps natif, nombre de jours), jamais d'après
+l'appareil. `index.ts` expose le registre `ANALYSIS_MODELS` avec, pour chaque modèle, sa
+condition d'applicabilité (message explicatif sinon).
+
+Socle commun (`types.ts`) : `SeriesContext` (mesures + `metricKey` + unité + nature),
+`toPoints()`, `detectStepMs()` (médiane des intervalles), `groupDays()` (par jour
+calendaire, avec valeur journalière et profil horaire), `dailyValue()` / `hourlyValue()`
+(somme pour une énergie, moyenne sinon, intégration pour une puissance au jour),
+`quantile()`, `mad()`, `totalOf()`.
+
+| Modèle | Fichier | Applicable si | Méthode |
+|---|---|---|---|
+| **Profil type** | `profilType.ts` | ≥ 2 jours | Classe de jour = férié (dates fixes `JOURS_FERIES_FIXES`) / week-end / ouvré. Par classe et par heure : médiane, P10, P90, moyenne. Jour « typique » = distance RMS minimale au profil médian ; jours atypiques = écart journalier > 20 % à la médiane de classe (3 max par classe, 8 au total). |
+| **Talon** | `talon.ts` | power ou energy, infra-journalier | Talon du jour = min horaire sur 00h–05h (P5 des points si pas de nuit). Talon retenu = médiane des talons. Pointe = P95 horaire. Part = talon × heures / cumul. Annuel = talon × 8 760. Talon par classe de jour. |
+| **Anomalies** | `anomalies.ts` | toujours | (1) Trous : intervalle > 3 pas natifs. (2) Figé : ≥ 12 points identiques sur ≥ 2 h. (3) Écarts au profil : par classe × heure (≥ 3 jours de la classe), référence médiane et σ = max(1,4826·MAD, 10 % de la médiane) ; tranche signalée si \|z\| ≥ 3,5 **et** \|écart\| ≥ 20 % ; heures contiguës fusionnées en épisode ; critique si z ≥ 6 et écart ≥ 50 %. Complétude = points / (durée ÷ pas + 1). |
+| **Avant / Après** | `avantApres.ts` | ≥ 2 jours | Coupure à minuit du jour choisi (le jour de l'action est « après »). Par classe : moyenne et écart-type journaliers de chaque côté, delta, delta %, robuste si \|delta\| > 2 × erreur-type (≥ 3 j de chaque côté). Écart global = moyenne des deltas de classe pondérée par le mélange de jours « après ». Gain après = −delta × jours après ; annuel = Σ −delta_c × {255, 104, 6}. Profil horaire médian avant/après sur les jours ouvrés (sinon tous). |
+
+Tous les calculs sont purs (pas de React) et testables en Node/Bun avec un
+`SeriesContext` construit à la main.
+
+## 6. Comparaison de deux relevés (`lib/model-comparison.ts`)
+
+1. **Pas commun** : le plus grossier des deux pas natifs, arrondi à un pas standard
+   (5 min → 1 jour) ; forçable.
+2. **Recouvrement** : période commune (sinon erreur explicite), restreignable.
+3. **Ré-échantillonnage** par famille : puissances de même famille → moyenne par pas en
+   unité de base ; énergies → somme en Wh/VAh/varh ; puissance contre énergie → la
+   puissance est intégrée ; autres grandeurs → moyenne, unités identiques exigées
+   (sinon avertissement).
+4. **Décalage d'horloge** de B (`detectClockOffset()`) : recherche dans ± N minutes, au
+   pas le plus fin des deux natifs, du décalage maximisant la corrélation.
+5. **Sorties** : lignes `{t, a, b, delta, deltaPct}`, statistiques A/B (moyenne, min,
+   max, σ, cumul), biais, écart absolu moyen, RMSE, corrélation, **régression B = a·A + b**
+   (R²) avec diagnostic textuel ; tolérance ± % appliquée à l'affichage.
+6. **Exports** (`ModelComparisonPanel.tsx`) : PNG du graphique, CSV du tableau, Excel
+   3 feuilles (Résumé, Indicateurs, Écarts) via `lib/excel-utils.ts`.
+
+Le mode **Compteur général / sous-compteurs** (`SensorComparisonPanel.tsx`,
+`lib/sensor-comparison.ts`) compare un relevé de référence à la somme de plusieurs relevés
+après conversion dans une unité commune.
+
+## 7. Exports d'images
+
+Tous les graphiques passent par `html2canvas` (échelle 2, fond `#0f111a`) avec le filtre
+`lib/chart-export.ts › isHoverArtifact()` qui exclut l'infobulle Recharts, le curseur de
+survol, les points actifs et tout élément marqué `data-no-export` (sélecteurs, boutons).
+Nom de fichier : slug du relevé + vue.
+
+## 8. Sécurité des données (audit du 15/09/2026)
+
+Migration `supabase/migrations/20260915_security_audit_app_tables.sql` (appliquée) :
+- RLS actif sur **toutes** les tables `public` ; isolation par organisation via
+  `organization_users` (helpers `SECURITY DEFINER` non récursifs `user_org_ids()`,
+  `user_admin_org_ids()`, `is_org_creator()`).
+- `organization_users` : lecture = membres ; modification/suppression = admins ;
+  insertion directe = créateur de l'organisation ; toute autre adhésion passe par la RPC
+  `accept_invitation(code)` (vérifie code, expiration, e-mail invité).
+  `get_invitation_by_code(code)` renvoie une invitation sans permettre l'énumération.
+- Rôle `anon` : aucun accès aux tables (sauf `auth_events INSERT`), privilèges par défaut
+  corrigés. Rôle `authenticated` : sans TRUNCATE / REFERENCES / TRIGGER ; Shelly en
+  lecture seule ; `fn_aggregate_*` réservées à `service_role`.
+- Invitations : générées côté front (`createInvitation`, code 12 caractères, 7 jours),
+  acceptées via RPC ; l'ancien endpoint backend `/auth/invite` n'existe plus.
+- Restent à traiter : e-mail super-admin codé en dur dans `join_requests`,
+  `building_type_params` modifiable par tout utilisateur connecté, bucket
+  `audit-documents` sans isolation par organisation.
+
+## 9. Module IOT — Sources et rôles des appareils (chantier 2, 16/09/2026)
+
+### Modèle
+- **Table `shelly_device_roles`** (migration `SHELLY_GCP_00/.../20260901_create_shelly_device_roles.sql`) :
+  `device_id` (clé — jamais le nom, qui change côté Shelly Cloud) → `role`
+  (`M1_RESEAU | M2_SELECTEUR | M3_CHARGE | M4_GROUPE | M5_PV | BESS | DEPART | AMBIANCE | AUTRE`),
+  `libelle`, `sens_inverse` (TC monté à l'envers), `origine` (`auto | manuel`),
+  `confirme_at` (`NULL` = proposition non validée, jamais présentée comme acquise).
+  Règle : **aucun distributeur ni pays dans le vocabulaire** (`M1_SENELEC` a été renommé).
+- **Une source = un rôle sur un site.** Le catalogue des appareils vient de la vue
+  `shelly_devices_catalog` (`fetchDisponibles()`), les rôles de `fetchDeviceRoles()`
+  (`lib/shelly-device-role-service.ts`). Plus rien n'est stocké en localStorage pour les
+  sources ; l'ancien modèle riche (`Source`, `SourceType`, modes A–F, transfert, tableaux,
+  `ProfilMi`, liens) a été supprimé de `components/iot/shared.ts` et du contexte
+  (`STORAGE_KEY` `sime-iot-v2` → `v3`, reset propre).
+
+### Écrans
+| Fichier | Rôle |
+|---|---|
+| `components/iot/ShellyDeviceRolesPanel.tsx` | Paramètres → Rôles : propositions à confirmer, appareils sans rôle par site avec pré-remplissage par famille (`ENERGIE_1PH/LUMIERE → DEPART`, `CAPTEUR_ENV → AMBIANCE`, `ETAT → AUTRE` ; 3PH/2PH/INCONNU sans suggestion), rattachements confirmés, `sens_inverse` |
+| `components/iot/SourcesTab.tsx` | Lecture : `buildSites()` regroupe le catalogue par site puis par rôle (`SOURCE_ORDER`), rôles non confirmés à part, `NON_CLASSE` pour les appareils sans rôle ; légende (9 rôles + schémas A–F `public/images/modes/*.png`, aperçu au survol) |
+| `components/iot/IOTContext.tsx` | `analysePreset: { label, site, deviceIds } \| null` (non persisté) posé par **Analyser** |
+| `components/iot/AnalyseTab.tsx › SupabaseExportPanel` | Consomme le préréglage : `site` posé, `deviceFamily = ''`, appareils pré-cochés, bandeau « Pré-sélection depuis la source … modifiable » |
+
+### Règle de conception (posée par l'utilisateur)
+Une source est un **raccourci, jamais un préalable** : `exporterDonneesSupabase()` ne connaît
+que site / famille / appareils / période ; un appareil sans rôle reste extractible ; les rôles
+non confirmés ne sont jamais utilisés silencieusement.
+
+### Piège d'implémentation
+La pré-sélection doit être appliquée par un effet **déclaré après** l'effet de purge de
+`selectedDeviceIds` (qui retire tout appareil absent des filtres courants) et **seulement
+une fois le catalogue reçu** (`metaLoaded`) ; sinon la purge, exécutée dans le même commit
+avec les filtres de l'ancien rendu, vide la sélection. D'où `pendingPresetIds` appliqué au
+rendu suivant.
+
+### Câblage réel des sites (réponses de l'utilisateur, 17/09/2026)
+Consigné dans `shelly_device_roles.notes` (migration `20260917_wiring_answers_notes.sql`) ;
+les 75 propositions auto du 17/09 (`20260917_propose_device_roles.sql`) restent à confirmer.
+
+| Site / lieu | Câblage | Conséquence pour le modèle |
+|---|---|---|
+| **Ma Maison** | Schéma A. SHEM 2 canaux : canal 1 = arrivée SENELEC (M1 = M3), canal 2 = circuit d'éclairage. Les 10 prises 1PH couvrent 87 % de l'arrivée sur 30 j. | Rien à trancher. |
+| **Donsin** | **PV en aval** de l'« Arrivée générale » (Pro 3EM) : le compteur ne voit que le complément SONABEL. PC1 + PC2 = 0,9 % de l'arrivée. | Schéma B **sans M3 ni M5** : aucun bilan possible tant qu'un compteur n'est pas posé côté PV/charge. |
+| **Académie — Building communal 50 kW** | Schéma B : M1 (Pro 3EM 400 A) → M2 sélecteur → M3 charge ; PV 50 kW en amont du sélecteur, TC inversé (`sens_inverse`). Surplus PV de midi **injecté au réseau**. **M4 (groupe), Cafétéria_TD, Charges_TD : capteurs désactivés** (pas une panne). | M2 ≈ M3 vérifié (corr. 0,99). **Anomalie ouverte** : M1 ne remonte aucune injection (0 kWh, p_min −8 W mai→juil) alors que M2/M3 voient jusqu'à −2,2 kW ; et M1 + PV − M3 ≈ −40 kWh/j. Config du Pro 3EM ou rapport de TC du PV à vérifier (chantier qualité des données). |
+| **Académie — EPT Thiès** | `TGBT_EPT Thiès` : **compteur SENELEC séparé, sans PV**. Les données le confirmaient (dépasse M3 sur 313 h). | Rôle `AUTRE` faute de « second site » ; deviendra M1/M3 de son propre lieu quand Paramètres distinguera les lieux d'un compte. |
+| **Académie — Bureau CER2E-Thiès** | **Compteur Woyofal (prépayé) propre** : prises 1–4, Box Wifi, Télé, Caméra, éclairages, frigo, PC, ventilo, ECL Salle Formation, Wifi & Télé 2. | Départs **hors bilan M1–M5** (`DEPART` est déjà `bilan: false`). |
+| **Académie — Maquette résidentiel** | Capteurs pédagogiques (H&T, eau, fumée, mouvement, porte), aucune puissance. | `AMBIANCE` / `AUTRE`. |
+
+**Point structurel** : le modèle fait *site = compte Shelly* (`shelly_accounts.site` UNIQUE) alors
+que le compte Académie couvre au moins trois arrivées SENELEC distinctes (building communal,
+EPT, bureau Woyofal). À traiter au chantier Paramètres (un « lieu » sous le compte), sinon les
+bilans M1–M5 de l'Académie mélangent des bâtiments sans arrivée commune.
+
+### Onglet Paramètres — deux niveaux (chantier 3, 22/09/2026)
+
+Constat de l'inventaire : sur les 7 situations où l'on ouvre Paramètres, 3 marchaient déjà
+(connecter un compte, voir un appareil apparaître, lui donner un rôle), 2 sont techniques par
+nature (modèle de matériel inconnu, appareil multi-prises), 2 manquent encore (les **lieux**
+sous un site — l'Académie a 3 arrivées SENELEC — et le **calendrier / jours fériés** par site,
+aujourd'hui figés dans le code pour le Sénégal).
+
+Livré (version minimale) :
+- **Réglages courants** : `Connexions Shelly` + `Rôle des appareils`. **Réglages avancés**
+  (`Types de matériel`, `Appareils multi-prises`) repliés derrière un bouton, avec un bandeau
+  ambre expliquant quand y toucher.
+- **Connecter un site** : bandeau « les appareils se créent dans l'app Shelly, ici vous donnez
+  le droit de les lire » ; aide dépliable « Où trouver la clé ? » (3 étapes) ; le serveur se
+  choisit parmi ceux **déjà utilisés** par les sites connectés (`shelly-88-eu`, `shelly-97-eu`,
+  `shelly-271-eu`…) ou se saisit en nom court, `normalizeServer()` reconstruisant l'URL.
+  *Le numéro de serveur n'est PAS déductible de la clé* (vérifié : le base64 de la clé ne
+  contient pas le nom d'hôte) — ne pas réintroduire d'heuristique là-dessus.
+- **Appareils multi-prises** : l'appareil se choisit dans le catalogue (groupé par site) au lieu
+  de taper un `device_id` ; le site est repris de l'appareil ; la liste affiche le nom.
+- **Vocabulaire** : compte → connexion / site, poll → relevé, auth key → clé de connexion,
+  famille `ENERGIE_3PH` → « Énergie triphasée », « supprimer le compte » → « déconnecter le site »
+  (avec la précision que les appareils ne sont pas touchés côté Shelly).
+
+Reste à trancher pour la version complète : **lieux** (~1 j) et **calendrier/fériés en base**.
+
+### Détection des feuilles Excel « profil Mi »
+`UploadTab.tsx` garde un type local `ProfilMi` (`M1_RESEAU`…) et des motifs
+(`RESEAU|SENELEC|M1`, …) uniquement pour reconnaître les feuilles M1..M5 des anciens
+classeurs ; c'est du parsing, pas un modèle de source.
+
+## 9 bis. Module IOT — Persistance serveur des fichiers (16/09/2026)
+
+### Avant
+Tout l'état du module (`files` avec `rawData`, `shellyRows`, calendriers…) était sérialisé
+en `localStorage` (`sime-iot-v3`) : aucune reprise sur un autre poste, aucune isolation entre
+utilisateurs d'un même navigateur, et **perte silencieuse** au-delà du quota (~5 Mo, soit
+~4 000 lignes nettoyées à ~1,3 Ko la `ShellyRow` sérialisée — `saveToStorage` avalait
+l'erreur).
+
+### Modèle (migration `sime-front/supabase/migrations/20260916_iot_files.sql`)
+- **Table `iot_files`** : métadonnées (`name`, `type`, `statut`, `row_count`, `columns`,
+  `preview` = 10 lignes, `taille`, `parent_id` nettoyé → original en `on delete set null`,
+  `device_location`, `device_room`) + `storage_path` / `content_encoding`.
+  `id` est un **uuid généré côté client** (`crypto.randomUUID()`) pour que les onglets
+  puissent référencer le fichier avant la réponse serveur.
+- **Bucket privé `iot-files`** : le contenu (`rawData`) en JSON **gzippé dans le navigateur**
+  (`CompressionStream`, repli `identity` si l'API manque), chemin `{auth.uid()}/{id}.json.gz`.
+  Ordre de grandeur : 240 `ShellyRow` = 5,3 Ko au lieu de ~310 Ko.
+- **Isolation par utilisateur** (décision manager du 27/08) : policies `created_by = auth.uid()`
+  sur la table, `(storage.foldername(name))[1] = auth.uid()` sur les objets. `organization_id`
+  est stocké (nullable) pour un partage d'équipe futur sans migration de données. `anon` n'a
+  rien, `authenticated` n'a pas TRUNCATE.
+
+### Front
+| Fichier | Rôle |
+|---|---|
+| `lib/iot-file-service.ts` | `listFiles`, `createFile` (ligne puis objet ; un envoi interrompu laisse `storage_path NULL`, signalé à l'ouverture), `updateFile` (métadonnées, et contenu si `rawData` fourni), `deleteFile` (objet puis ligne), `fetchFileContent` (+ `dateReviver`, même convention que l'ancien localStorage) |
+| `components/iot/IOTContext.tsx` | Liste chargée à la connexion (`filesLoading` / `filesLoaded`) ; `addFile` / `updateFile` / `removeFile` mettent l'UI à jour immédiatement puis persistent — un échec remonte en **toast destructif**, jamais silencieux ; **`ensureFileContent(id)`** télécharge `rawData` à la demande (dédoublonné via `pendingContent`) et pose `contentLoaded` ; `STORAGE_KEY` `v3 → v4`, le localStorage ne garde plus que `selectedFileId`, `donneesTechniques`, `joursFerier`, `calendriers`, `activeTab` |
+| `components/iot/shared.ts` | `ImportedFile.contentLoaded?: boolean` — ne pas tester `rawData.length` pour savoir si un fichier est vide |
+| `NettoyageTab` / `AnalyseTab` / `StockageTab` | Tous les chemins qui lisent `rawData` passent par `ensureFileContent` (bouton Charger, Procéder au Nettoyage, effet sur `selectedFileId`, panneau « Voir » qui affiche `preview` en attendant) ; `NettoyageTab` réagit désormais à un fichier choisi depuis la bibliothèque (une fois par sélection, seulement si l'onglet est visible — pas de rechargement après « Sauvegarder et stocker ») ; spinner de chargement dans la bibliothèque ; filtre « Facturation » corrigé (`type === 'facture'`) |
+
+### Conséquence assumée
+`shellyRows` (jeu actif) n'est plus persisté : après rechargement, le fichier sélectionné est
+rechargé par Analyse et Nettoyage depuis la base ; le badge « jours » de l'en-tête n'apparaît
+qu'une fois un fichier ouvert.
+
+### Validation (16/09/2026, localhost)
+Import xlsx 240 lignes → ligne + objet gzip (931 o) ; rechargement → liste depuis la base,
+localStorage à 1 Ko ; Nettoyer → téléchargement du contenu, 240 lignes parsées ;
+« Sauvegarder et stocker » → fichier nettoyé créé (`parent_id` posé, 5,3 Ko) puis **mis à jour
+en place** au second enregistrement ; Analyse après rechargement → dates restaurées ;
+suppression → ligne et objet retirés.
+
+### Formats lus par `parseExcelBuffer` (corrigé 17/09/2026)
+Régression du 17/06 (`a9cee302`, SheetJS → ExcelJS pour deux CVE) : seul le `.xlsx` (zip)
+était lu ; CSV et `.xls` échouaient avec « Can't find end of central directory ». Depuis le
+17/09, `lib/excel-utils.ts` reconnaît le format **au contenu** : `PK` → xlsx (ExcelJS) ;
+`D0 CF 11 E0` → `.xls` binaire 97-2003, refusé avec un message clair (« enregistrez en
+.xlsx ») — SheetJS n'est pas réintroduit ; sinon → texte CSV/TSV (BOM, UTF-8 ou
+windows-1252, séparateur `;` `,` tab `|` détecté, guillemets RFC 4180, nombres « 1 234,5 »
+convertis), rendu comme une feuille unique « CSV ». Un export de logger nommé `.xls` mais
+en texte (cas fréquent) passe donc directement ; une page HTML déguisée est refusée avec
+un message explicite. Bénéficie aussi à `AnalyseTab` et `CustomSensorMapper`.
+
+## 10. Limites connues / hors périmètre du chantier 1
+
+- ~~Pas de persistance des relevés~~ **Réglé le 17/09** : voir § 4.3 — relevés enregistrés sur le serveur par utilisateur.
+- Les modèles d'analyse portent sur la **grandeur principale** ; l'extension aux colonnes
+  secondaires (phases, T°…) n'est pas faite.
+- Jours fériés = dates fixes du Sénégal uniquement (pas les fêtes mobiles).
+- Backend : encodage `chardet` fragile sur les très petits fichiers texte.
+- ESLint : 3 erreurs préexistantes dans `MeasurementCharts.tsx` (`any`, expression
+  inutilisée), sans effet fonctionnel.
+
+## 11. Validation (15/09/2026)
+
+- Modèles : jeu synthétique de 28 jours (talon 300 W, trou de 5 h, pic, valeur figée,
+  action à J+14) passé par l'API réelle (`PV_SOLAREDGE`, 2 668 mesures) : les 4 modèles
+  retrouvent exactement les événements injectés (talon 0,29 kW, complétude 99,3 %,
+  3 anomalies, −14,9 % ouvré / −1 % week-end, écart jugé net).
+- Comparaison : C.A 8335 (xlsx, 10 min, W) contre SolarEdge (csv, 15 min, kW) avec un
+  biais injecté A = 1,03·B + 15 W : pas auto 15 min, biais −32,9 W, a = 0,971,
+  b = −14,6 W, exports PNG + Excel vérifiés dans le navigateur.
+- `tsc --noEmit`, `eslint` (hors erreurs préexistantes), `bun run build` : OK.
+
+## Analyse IOT : plusieurs sites et tous les capteurs (6 novembre 2026)
+
+**Choix des sites.** La barre de périmètre coche un, plusieurs ou tous les sites (`PerimetreBar.tsx`). Un seul site reste dans `SupabaseExportOptions.site` : même requête et mêmes nettoyages enregistrés qu'avant. Plusieurs sites vont dans `sites`.
+
+**Règles avec plusieurs sites.**
+
+- Énergie : la série principale de chaque site, puis un total. Jamais d'addition entre arrivée et départs.
+- Température, humidité, météo : jamais de moyenne entre sites ni entre capteurs. Une ligne par capteur ; à l'écran, un site affiché à la fois.
+- Pics : un par compteur de référence. Les pics ne s'additionnent pas.
+- Phases : non données sur plusieurs sites.
+
+**Rapport.** `ProfilChargeTab.tsx` porte le rapport dès qu'il y a de l'énergie ; `RapportCapteursDialog.tsx` prend le relais quand il n'y en a pas. Le contenu suit ce qui est chargé :
+
+| Fichier | Rôle |
+|---|---|
+| `lib/iot-rapport-service.ts` | Lectures : `fn_profil_horaire`, `fn_voie_minute`, `fn_pics_minute`, `fn_coherence_circuits`, `fn_capteurs_horaire`, `fn_etats_appareil` |
+| `services/iotRapportAnalyses.ts` | Énergie : tranches, circuits, pics, tableau croisé, comparaison des sites |
+| `services/iotRapportCapteurs.ts` | Capteurs : grandeurs, états, santé, croisements |
+| `services/iotRapportExcel.ts`, `iotRapportPdf.ts` | Sorties, sans aucun calcul |
+
+**Nature des grandeurs** (`GRANDEURS` dans `iotRapportCapteurs.ts`) : la pluie se lit en total, le reste en moyenne. Une nouvelle grandeur s'ajoute là. Une colonne libre d'un fichier importé est résumée en moyenne.
+
+**États.** Comptés sur les relevés bruts (`fn_etats_appareil`), un appareil à la fois : le dernier état de l'heure ne suffit pas à compter des ouvertures. Un écart de plus de 15 minutes sans relevé n'entre pas dans les durées et est donné à part. Un relais donne une durée allumée, pas une énergie.
+
+**Aucun seuil de confort ou d'alerte** : le rapport décrit les mesures. Les pistes « à vérifier » restent des pistes : température, humidité ou pression figée, pile basse (une pile à 0 % qui émet encore n'est pas signalée), porte toujours ouverte.
+
+**Non-régression.** Tout rapport énergie sur un seul site doit rester identique, cellule par cellule. Seule la page Lisez-moi gagne une section quand des capteurs sont chargés.

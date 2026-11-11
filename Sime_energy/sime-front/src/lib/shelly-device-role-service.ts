@@ -33,6 +33,8 @@ export interface ShellyDeviceRole {
   libelle: string | null;
   /** TC monté à l'envers : les compteurs soutirage/injection sont permutés. */
   sens_inverse: boolean;
+  /** Compteur qui alimente ce circuit ; null = pas de compteur amont déclaré. */
+  parent_device_id: string | null;
   origine: 'auto' | 'manuel';
   /** null = proposition non validée par un humain, à ne pas présenter comme acquise. */
   confirme_at: string | null;
@@ -41,7 +43,7 @@ export interface ShellyDeviceRole {
 export async function fetchDeviceRoles(): Promise<ShellyDeviceRole[]> {
   const { data, error } = await supabase
     .from('shelly_device_roles')
-    .select('device_id,role,libelle,sens_inverse,origine,confirme_at');
+    .select('device_id,role,libelle,sens_inverse,parent_device_id,origine,confirme_at');
   if (error) throw error;
   return (data ?? []) as ShellyDeviceRole[];
 }

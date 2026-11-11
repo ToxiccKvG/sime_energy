@@ -16,6 +16,7 @@
 // ============================================================
 
 import { supabase } from '@/lib/supabase';
+import { fetchDevicePeriodes, periodeAt } from '@/lib/shelly-device-period-service';
 import { COLONNES_PROFIL_SHELLY } from '@/components/iot/shared';
 
 // ── Nom de la table ───────────────────────────────────────────
@@ -25,6 +26,7 @@ const SHELLY_TABLE = 'shelly_cl' as const;
 interface ShellyRow {
   id?: number;
   ts: string;                        // horodatage du poll
+  measured_at?: string | null;       // heure RÉELLE de la mesure (≠ ts : le poll relit la dernière valeur si la station est muette)
 
   // Localisation
   site: string;
@@ -80,6 +82,8 @@ interface ShellyRow {
   pressure_hpa?: number | null;
   pressure_slope?: string | null;
   precipitation_mm?: number | null;
+  /** Pluie tombée (mm) : depuis le relevé précédent (brut) ou dans l'heure (horaire). */
+  pluie_mm?: number | null;
   moisture_alarm?: boolean | null;
   wind_speed_ms?: number | null;
   wind_gust_ms?: number | null;
@@ -103,6 +107,8 @@ export interface SupabaseExportOptions {
   granularite?: 'horaire' | 'minute';
   /** Filtrer par site */
   site?: string;
+  /** Plusieurs sites (au moins 2). Un seul site reste dans `site`. */
+  sites?: string[];
   /** Filtrer par device_family (ENERGIE_3PH, ENERGIE_1PH, LUMIERE…) */
   deviceFamily?: string;
   /** Filtrer par device_type exact (code Shelly : SHEM-3, SHPLG-S…) */
@@ -155,6 +161,8 @@ interface ShellyHoraireRow {
   pressure_hpa_moy?: number | null;
   pressure_slope_dernier?: string | null;
   precipitation_mm?: number | null;
+  /** Pluie tombée (mm) : depuis le relevé précédent (brut) ou dans l'heure (horaire). */
+  pluie_mm?: number | null;
   moisture_alarm?: boolean | null;
   wind_speed_ms_moy?: number | null;
   wind_gust_ms_max?: number | null;
@@ -267,7 +275,7 @@ export function transformRowsToProfilMi(
     const kW_RC   = Math.abs(Math.min(0, pC_W))   / 1000;
     const kW_RTot = Math.abs(Math.min(0, pTot_W)) / 1000;
 
-    // ── Montant énergie (tarif SENELEC 140,74 F CFA / kWh) ────
+    // ── Énergie en kWh ────
     const kwhTot  = whTot  / 1000;
     const kwhRTot = whRTot / 1000;
 
@@ -323,6 +331,14 @@ export function transformRowsToProfilMi(
       Pression:           m.pressure_hpa ?? null,
       Tendance_Pression:  m.pressure_slope ?? null,
       Precipitation:      m.precipitation_mm ?? null,
+      // Le pluviomètre renvoie un CUMUL : la pluie d'un intervalle est la différence avec la mesure précédente
+      // du même appareil. Un recul du compteur (remise à zéro) ne fabrique pas de pluie négative : 0.
+      // pluie_mm (calculée en base à la collecte) fait foi ; le calcul local ne sert que de secours.
+      Precipitation_Incr: typeof m.pluie_mm === 'number' ? m.pluie_mm
+        : typeof m.precipitation_mm === 'number'
+        ? (prev && typeof prev.precipitation_mm === 'number' ? Math.max(0, Math.round((m.precipitation_mm - prev.precipitation_mm) * 1000) / 1000) : 0)
+        : null,
+      Mesure_Le:          m.measured_at ?? null,
       Alarme_Humidite:    m.moisture_alarm ?? null,
       Vent_Vitesse:       m.wind_speed_ms ?? null,
       Vent_Rafale:        m.wind_gust_ms ?? null,
@@ -366,10 +382,15 @@ export function transformRowsToProfilMi(
       Semaine_mesures: getWeekNumber(date),
     };
 
-    return colonnes.reduce<Record<string, unknown>>((acc, key) => {
+    const out = colonnes.reduce<Record<string, unknown>>((acc, key) => {
       acc[key] = fullRow[key] ?? null;
       return acc;
     }, {});
+    // Identifiant de l'appareil, toujours transmis (hors colonnes choisies) :
+    // le moteur de qualité signale par device_id, le nom ne suffit pas
+    // (capteur renommé, homonymes).
+    out.__deviceId = m.device_id;
+    return out;
   });
 }
 
@@ -457,6 +478,8 @@ export function transformHoraireToProfilMi(
       Pression:           m.pressure_hpa_moy ?? null,
       Tendance_Pression:  m.pressure_slope_dernier ?? null,
       Precipitation:      m.precipitation_mm ?? null,
+      Precipitation_Incr: m.pluie_mm ?? null,
+      Mesure_Le:          null,
       Alarme_Humidite:    m.moisture_alarm ?? null,
       Vent_Vitesse:       m.wind_speed_ms_moy ?? null,
       Vent_Rafale:        m.wind_gust_ms_max ?? null,
@@ -493,10 +516,15 @@ export function transformHoraireToProfilMi(
       Semaine_mesures: getWeekNumber(date),
     };
 
-    return colonnes.reduce<Record<string, unknown>>((acc, key) => {
+    const out = colonnes.reduce<Record<string, unknown>>((acc, key) => {
       acc[key] = fullRow[key] ?? null;
       return acc;
     }, {});
+    // Identifiant de l'appareil, toujours transmis (hors colonnes choisies) :
+    // le moteur de qualité signale par device_id, le nom ne suffit pas
+    // (capteur renommé, homonymes).
+    out.__deviceId = m.device_id;
+    return out;
   });
 }
 
@@ -611,18 +639,90 @@ async function fetchAllDevicesKeyset<T extends { ts?: string }>(
 
 /** Liste des appareils concernés — nécessaire pour interroger appareil par appareil. */
 async function resolveDeviceIds(opts: {
-  deviceIds?: string[]; site?: string; deviceFamily?: string;
+  deviceIds?: string[]; site?: string; sites?: string[]; deviceFamily?: string;
   deviceType?: string; deviceName?: string;
 }): Promise<string[]> {
   if (opts.deviceIds && opts.deviceIds.length > 0) return opts.deviceIds;
-  let q = supabase.from('shelly_devices_catalog').select('device_id');
+  let q = supabase.from('shelly_devices_catalog_visible').select('device_id');
   if (opts.site)         q = q.eq('site', opts.site);
+  if (opts.sites?.length) q = q.in('site', opts.sites);
   if (opts.deviceFamily) q = q.eq('device_family', opts.deviceFamily);
   if (opts.deviceType)   q = q.eq('device_type', opts.deviceType);
   if (opts.deviceName)   q = q.eq('name', opts.deviceName);
   const { data, error } = await q;
   if (error) throw error;
   return (data ?? []).map(d => (d as { device_id: string }).device_id);
+}
+
+/**
+ * Date de fin saisie dans l'écran (« 2026-08-31 », sans heure) : elle désigne le JOUR entier.
+ * Transmise telle quelle, la requête `ts <= '2026-08-31'` s'arrêtait à 00:00 et excluait tout le dernier jour.
+ */
+function finDeJour(d?: string): string | undefined {
+  return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T23:59:59.999Z` : d;
+}
+
+/**
+ * Message lisible pour une erreur Supabase. Les erreurs PostgREST sont des objets simples, PAS des `Error` :
+ * le test `instanceof Error` les réduisait à « Erreur inconnue ».
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; code?: string };
+    if (e.code === '57014') return "La base a interrompu la requête (délai dépassé). Réduisez la période ou le nombre d'appareils, puis réessayez.";
+    if (e.message) return e.code ? `${e.message} (code ${e.code})` : e.message;
+  }
+  return 'Erreur inconnue';
+}
+
+// ── Appareil réellement mesuré par chaque relevé ──────────────
+/**
+ * Chaque relevé de la base garde le nom (et le site) en vigueur à sa date : un appareil renommé
+ * (« Lampe Chevet_Chambre » → « Lampe chevet ») ou nommé un temps par son identifiant brut
+ * apparaissait en plusieurs appareils dans le TCD et le profil de charge, totaux éclatés.
+ * On rattache donc chaque relevé à l'appareil réellement mesuré à sa date :
+ *  1. période d'affectation (shelly_device_periodes) si le capteur a été déplacé ;
+ *  2. sinon nom et site actuels du catalogue ;
+ *  3. capteur retiré du catalogue : son nom le plus fréquent (hors identifiant brut).
+ * La base n'est pas modifiée. En cas d'échec de lecture, les relevés restent tels quels.
+ */
+async function reconcilierAppareils<T extends { device_id: string; name?: string | null; site?: string | null }>(
+  rows: T[],
+  tsOf: (r: T) => string | undefined,
+): Promise<T[]> {
+  if (rows.length === 0) return rows;
+  try {
+    const [{ data: catalogue, error }, periodes] = await Promise.all([
+      supabase.from('shelly_devices_catalog_visible').select('device_id,name,site'),
+      fetchDevicePeriodes(),
+    ]);
+    if (error) throw error;
+    const parId = new Map((catalogue ?? []).map(c => [c.device_id as string, c as { name: string | null; site: string | null }]));
+    const deplaces = new Set(periodes.map(p => p.device_id));
+
+    // Capteurs absents du catalogue : nom le plus fréquent dans les relevés chargés.
+    const frequences = new Map<string, Map<string, number>>();
+    for (const r of rows) {
+      if (parId.has(r.device_id) || !r.name || r.name === r.device_id) continue;
+      const f = frequences.get(r.device_id) ?? new Map<string, number>();
+      f.set(r.name, (f.get(r.name) ?? 0) + 1);
+      frequences.set(r.device_id, f);
+    }
+    const nomRetenu = new Map(Array.from(frequences, ([id, f]) => [id, [...f].sort((a, b) => b[1] - a[1])[0][0]]));
+
+    return rows.map(r => {
+      const t = tsOf(r);
+      const p = deplaces.has(r.device_id) && t ? periodeAt(periodes, r.device_id, new Date(t)) : null;
+      if (p) return { ...r, name: p.libelle, site: p.site };
+      const c = parId.get(r.device_id);
+      if (c) return { ...r, name: c.name ?? r.name, site: c.site ?? r.site };
+      const nom = nomRetenu.get(r.device_id);
+      return nom ? { ...r, name: nom } : r;
+    });
+  } catch {
+    return rows;
+  }
 }
 
 // ── Fonction principale d'export ──────────────────────────────
@@ -633,14 +733,16 @@ export async function exporterDonneesSupabase(
     colonnes,
     granularite = 'horaire',
     site,
+    sites,
     deviceFamily,
     deviceType,
     deviceName,
     deviceIds,
     dateDebut,
-    dateFin,
+    dateFin: dateFinSaisie,
     limit,
   } = options;
+  const dateFin = finDeJour(dateFinSaisie);
 
   const colonnesValides = colonnes.filter(c => ALL_AVAILABLE_KEYS.has(c));
   if (colonnesValides.length === 0) {
@@ -654,9 +756,12 @@ export async function exporterDonneesSupabase(
         let query = supabase
           .from('shelly_cl_horaire')
           .select('*')
-          .order('ts_heure', { ascending: true });
+          .order('ts_heure', { ascending: true })
+          // Tri stable : sinon des lignes de la même heure sont lues deux fois ou perdues entre deux pages
+          .order('device_id', { ascending: true });
 
         if (site)         query = query.eq('site', site);
+        if (sites?.length) query = query.in('site', sites);
         if (deviceFamily) query = query.eq('device_family', deviceFamily);
         if (deviceType)   query = query.eq('device_type', deviceType);
         if (deviceName)   query = query.eq('name', deviceName);
@@ -674,6 +779,7 @@ export async function exporterDonneesSupabase(
         .order('ts', { ascending: false })
         .limit(5000);
       if (site)                              roomQuery = roomQuery.eq('site', site);
+      if (sites?.length)                     roomQuery = roomQuery.in('site', sites);
       if (deviceIds && deviceIds.length > 0) roomQuery = roomQuery.in('device_id', deviceIds);
 
       const [data, { data: roomData }] = await Promise.all([
@@ -685,7 +791,7 @@ export async function exporterDonneesSupabase(
       for (const r of roomData ?? []) {
         if (r.room && !roomMap.has(r.device_id)) roomMap.set(r.device_id, r.room);
       }
-      const enriched = data.map(m => ({
+      const enriched = (await reconcilierAppareils(data, m => m.ts_heure)).map(m => ({
         ...m,
         room: m.room ?? roomMap.get(m.device_id) ?? null,
       }));
@@ -705,18 +811,17 @@ export async function exporterDonneesSupabase(
         return query;
       };
 
-      const ids = await resolveDeviceIds({ deviceIds, site, deviceFamily, deviceType, deviceName });
+      const ids = await resolveDeviceIds({ deviceIds, site, sites, deviceFamily, deviceType, deviceName });
       if (ids.length === 0) {
         return { rows: [], total: 0, erreur: 'Aucun appareil ne correspond aux filtres sélectionnés' };
       }
       const data = await fetchAllDevicesKeyset<ShellyRow>(buildMinuteQuery, ids, limit, dateDebut);
 
-      const rows = transformRowsToProfilMi(data, colonnesValides);
+      const rows = transformRowsToProfilMi(await reconcilierAppareils(data, m => m.ts), colonnesValides);
       return { rows, total: rows.length };
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Erreur inconnue';
-    return { rows: [], total: 0, erreur: msg };
+    return { rows: [], total: 0, erreur: describeError(err) };
   }
 }
 
@@ -811,7 +916,7 @@ export async function fetchDisponibles(): Promise<DisponiblesResult> {
     // suit ni les renommages ni les changements de site côté Shelly Cloud
     // (ex. 441d6475d44c = "Arrivée générale"/Donsin, listé "Compteur 2"/Académie).
     const { data: catalogData, error: catalogError } = await supabase
-      .from('shelly_devices_catalog')
+      .from('shelly_devices_catalog_visible')
       .select('device_id,name,site,room,device_family');
     if (catalogError) throw catalogError;
 
@@ -852,4 +957,80 @@ export function getColonnesParGroupe() {
     calcule:     COLONNES_PROFIL_SHELLY.filter(c => c.groupe === 'calcule'),
     classifieur: COLONNES_PROFIL_SHELLY.filter(c => c.groupe === 'classifieur'),
   };
+}
+
+// ── Courbe de charge : une ligne par appareil et par jour ─────
+// RPC fn_profil_charge (migrations 20261015 puis 20261016_fn_profil_charge_qualite) :
+// agrégée côté serveur, sur une plage horaire appliquée CHAQUE jour, avec la
+// part en quarantaine décidée par fn_qualite. Lue par pages : PostgREST
+// plafonne à 1000 lignes et l'ancienne lecture de shelly_cl_horaire était
+// coupée sans avertissement au-delà de ~2 jours à Ma Maison.
+export interface ProfilChargeJour {
+  jour: string;
+  site: string;
+  device_id: string;
+  name: string | null;
+  device_family: string | null;
+  role: string | null;
+  sens_inverse: boolean;
+  wh_conso: number | null;
+  wh_inj: number | null;
+  wh_a: number | null;
+  wh_b: number | null;
+  wh_c: number | null;
+  nb_heures: number;
+  nb_mesures: number;
+  wh_conso_exclu: number;
+  wh_inj_exclu: number;
+  wh_a_exclu: number;
+  wh_b_exclu: number;
+  wh_c_exclu: number;
+  nb_h_exclues: number;
+  regles_exclues: string[] | null;
+}
+
+export async function fetchProfilCharge(params: {
+  dateDebut: string;
+  dateFin: string;
+  heureDebut: number;
+  heureFin: number;
+  sites: string[];
+  deviceIds?: string[];
+}): Promise<ProfilChargeJour[]> {
+  const PAGE = 1000;
+  const lignes: ProfilChargeJour[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .rpc('fn_profil_charge', {
+        p_date_debut: params.dateDebut,
+        p_date_fin: params.dateFin,
+        p_heure_debut: params.heureDebut,
+        p_heure_fin: params.heureFin,
+        p_sites: params.sites,
+        p_device_ids: params.deviceIds ?? null,
+      })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    lignes.push(...((data ?? []) as ProfilChargeJour[]));
+    if (!data || data.length < PAGE) break;
+  }
+  return lignes;
+}
+
+// ── Méthode de consommation de chaque site (table site_bilan) ─
+// Les sites sont câblés différemment (PV en aval non mesuré à Donsin,
+// arrivées séparées à l'Académie) : la façon d'obtenir la consommation est
+// déclarée en base, jamais déduite ni écrite dans le code.
+export type MethodeConsommation = 'arrivee' | 'charge_M3' | 'departs' | 'indeterminee';
+
+export interface SiteBilan {
+  site: string;
+  methode: MethodeConsommation;
+  explication: string;
+}
+
+export async function fetchSiteBilan(): Promise<SiteBilan[]> {
+  const { data, error } = await supabase.from('site_bilan').select('site,methode,explication');
+  if (error) throw error;
+  return (data ?? []) as SiteBilan[];
 }

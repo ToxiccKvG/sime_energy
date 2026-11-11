@@ -21,11 +21,18 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useIOT } from './IOTContext';
+import { findFrozenRows, fmtDuration, BLANKABLE_ENV_KEYS } from '@/lib/iot-frozen';
+import { usePinnedColumns } from './tablePrefs';
 import type { ShellyRow } from './shared';
 import { COLONNES_PROFIL_SHELLY } from './shared';
 import { parseShellyRow, profilMiToShellyRow, detecterFormatShelly, parseShellySectionCSV, ajouterCumulatifs } from '@/lib/iot-profil-engine';
 import { transformRowsToProfilMi, transformHoraireToProfilMi } from '@/lib/iot-supabase-service';
 import { GenericNettoyage } from './GenericNettoyage';
+import { lireFichierImporte } from '@/lib/iot-lecture-fichier';
+import { useQualiteMoteur, QualiteMoteurPanel, RecettesPanel, nomChargement, type RecettesPanelHandle } from './QualiteMoteurPanel';
+import { ID_NETTOYAGES_ENREGISTRES } from './FichiersTab';
+import type { SupabaseExportOptions } from '@/lib/iot-supabase-service';
+import { useOrganization } from '@/context/OrganizationContext';
 import { supabase } from '@/lib/supabase';
 
 // ============================================================
@@ -65,8 +72,7 @@ function buildCleanedFileName(rows: IdentiteRow[], fallback: string): string {
 }
 
 type ColType = 'date' | 'num' | 'text';
-type IssueType = 'duplicates_day' | 'duplicates_exact' | 'zeros' | 'outliers' | 'gaps' | 'negatives' | 'phase_mismatch';
-type FillMethod = 'zero' | 'mean' | 'forward' | 'linear';
+type IssueType = 'duplicates_day' | 'duplicates_exact' | 'frozen' | 'zeros' | 'outliers' | 'gaps' | 'negatives' | 'phase_mismatch';
 type NumOp  = 'round' | 'multiply' | 'add' | 'clamp_min' | 'clamp_max' | 'abs' | 'zero_neg' | 'normalize';
 type TextOp = 'trim' | 'uppercase' | 'lowercase' | 'dot_comma' | 'comma_dot' | 'replace';
 
@@ -103,7 +109,7 @@ interface EditCell { filteredIdx: number; col: keyof ShellyRow }
 // CONSTANTES
 // ============================================================
 
-const COLUMNS: ColDef[] = [
+const COLONNES_FIXES: ColDef[] = [
   { key: 'date',                label: 'Date',          type: 'date', editable: true,  defaultVisible: true,  width: 100 },
   { key: 'nomAppareil',         label: 'Appareil',      type: 'text', editable: false, defaultVisible: true,  width: 120 },
   { key: 'deviceLocation',      label: 'Emplacement',   type: 'text', editable: true,  defaultVisible: true,  width: 110 },
@@ -144,7 +150,9 @@ const COLUMNS: ColDef[] = [
   { key: 'luminosite',          label: 'Luminosité',    type: 'num',  editable: true,  defaultVisible: false, width: 95  },
   { key: 'pression',            label: 'Pression',      type: 'num',  editable: true,  defaultVisible: false, width: 85  },
   { key: 'tendancePression',    label: 'Tend. Press.',  type: 'text', editable: false, defaultVisible: false, width: 100 },
-  { key: 'precipitation',       label: 'Précip.',       type: 'num',  editable: true,  defaultVisible: false, width: 80  },
+  { key: 'precipitation',       label: 'Pluie cumulée', type: 'num',  editable: false, defaultVisible: false, width: 95  },
+  { key: 'precipitationIncr',   label: 'Pluie (mm)',    type: 'num',  editable: false, defaultVisible: false, width: 85  },
+  { key: 'mesureAt',            label: 'Mesure réelle', type: 'date', editable: false, defaultVisible: false, width: 130 },
   { key: 'alarmeHumidite',      label: 'Alarme Pluie',  type: 'text', editable: false, defaultVisible: false, width: 100 },
   { key: 'ventVitesse',         label: 'Vent',           type: 'num',  editable: true,  defaultVisible: false, width: 75  },
   { key: 'ventRafale',          label: 'Rafale',        type: 'num',  editable: true,  defaultVisible: false, width: 75  },
@@ -247,8 +255,12 @@ const COL_TYPE_COLOR = {
 // ANALYSEUR — détecte les problèmes dans les données
 // ============================================================
 
-// Identité appareil pour les déduplications multi-devices
+// Identité appareil pour les déduplications multi-devices. Le device_id
+// d'abord quand il est connu : deux homonymes dans la même pièce (deux
+// « Ventilo salon » à Ma Maison) fusionnaient, et leurs heures communes
+// passaient pour des doublons exacts — supprimés.
 function deviceKey(r: ShellyRow): string {
+  if (r.deviceId) return `id:${r.deviceId}`;
   return `${r.nomAppareil ?? ''}|${r.deviceLocation ?? ''}|${r.deviceRoom ?? ''}`;
 }
 
@@ -324,6 +336,21 @@ function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
       id: 'duplicates_exact',
       count: dupExact,
       description: `${dupExact} doublon${dupExact > 1 ? 's' : ''} exacts (même date et heure)`,
+    });
+  }
+
+  // 2 bis. Données figées d'un capteur environnemental : la collecte relit la dernière mesure quand la
+  //        station ne transmet pas (nuit, pile…). Ce ne sont pas des mesures.
+  const frozen = findFrozenRows(rows);
+  if (frozen.rows.length > 0) {
+    const pct = Math.round((frozen.rows.length / rows.length) * 100);
+    issues.push({
+      id: 'frozen',
+      count: frozen.rows.length,
+      description: `${frozen.rows.length} ligne${frozen.rows.length > 1 ? 's' : ''} figée${frozen.rows.length > 1 ? 's' : ''} — la dernière mesure relue (${pct} % des lignes)`,
+      detail: `${frozen.sequences} séquence${frozen.sequences > 1 ? 's' : ''}, la plus longue ${fmtDuration(frozen.longestMs)}`
+        + (frozen.longestStart ? ` à partir du ${frozen.longestStart.toLocaleDateString('fr-FR')} ${frozen.longestStart.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : '')
+        + (frozen.exact ? " · repérées d'après l'heure réelle de mesure" : ' · repérées par des valeurs identiques pendant 30 min ou plus'),
     });
   }
 
@@ -418,7 +445,7 @@ function analyserRows(rows: ShellyRow[]): Omit<Issue, 'ignored'>[] {
 // ============================================================
 
 export function NettoyageTab() {
-  const { state, setShellyRows, addFile, updateFile, setSelectedFile, setActiveTab } = useIOT();
+  const { state, setShellyRows, addFile, updateFile, ensureFileContent, setSelectedFile, setActiveTab } = useIOT();
   const { shellyRows } = state;
 
   // ---- Source de données ----
@@ -429,6 +456,34 @@ export function NettoyageTab() {
   // Fallback sur shellyRows du contexte quand pas de données locales
   const hasLocalData = localRows.length > 0;
   const activeRows: ShellyRow[] = hasLocalData ? localRows : shellyRows;
+
+  // Colonnes : les fixes + une par grandeur d'un fichier importé quelconque
+  // (PM2.5, tension U1…), portée par la ligne sous la clé « g:<grandeur> »
+  const COLUMNS = useMemo<ColDef[]>(() => {
+    const cles = new Set<string>();
+    for (const r of activeRows.slice(0, 500)) for (const k of Object.keys(r)) if (k.startsWith('g:')) cles.add(k);
+    return [
+      ...COLONNES_FIXES,
+      ...[...cles].map(k => ({ key: k as keyof ShellyRow, label: k.slice(2), type: 'num' as ColType, editable: true, defaultVisible: true, width: 110 })),
+    ];
+  }, [activeRows]);
+
+  // ---- Moteur de qualité (données chargées depuis Supabase) ----
+  // Les lignes venues d'Analyse portent leur périmètre de chargement et
+  // l'identifiant de chaque appareil : le diagnostic vient alors de
+  // fn_qualite (règles en base), plus de l'analyseur local, et on enregistre
+  // une recette au lieu d'une copie. Fichier importé : ancien diagnostic.
+  const { organization } = useOrganization();
+  const chargementShelly = hasLocalData ? null : state.chargementShelly;
+  const modeMoteur = chargementShelly !== null && activeRows.some(r => r.deviceId);
+  const qualite = useQualiteMoteur(activeRows, modeMoteur, state.reglesShelly);
+  const ouvrirRecette = (rows: ShellyRow[], ch: SupabaseExportOptions, regles: string[]) => {
+    setSelectedFile(null); // sinon Analyse rouvrirait ce fichier plutôt que la recette
+    setShellyRows(rows, ch, { reglesExclues: regles });
+  };
+  // Mesures de la base : lecture seule (les règles excluent, rien n'est réécrit).
+  // Une retouche créerait une copie locale et ferait basculer l'écran en mode fichier.
+  const recettesRef = useRef<RecettesPanelHandle>(null);
 
   const [genericRows, setGenericRows] = useState<Record<string, unknown>[]>([]);
   const [genericFileName, setGenericFileName] = useState<string | null>(null);
@@ -561,6 +616,9 @@ export function NettoyageTab() {
   const [frCol, setFrCol]             = useState<string>('all');
   const [frCase, setFrCase]           = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
+  // Colonnes figées à gauche : case à cocher, #, Date, Appareil
+  const tableWrapRef = useRef<HTMLDivElement>(null);
+  usePinnedColumns(tableWrapRef, 4);
   const sortedRef    = useRef<ShellyRow[]>([]);
 
   // ---- Colonnes pertinentes selon le contenu réel des données chargées ----
@@ -583,8 +641,11 @@ export function NettoyageTab() {
         present.add(key);
       }
     }
+    // La pluie par intervalle est presque toujours à 0 au début d'une série : sans cette règle elle serait
+    // masquée alors que le cumul, lui, est affiché.
+    if (present.has('precipitation')) present.add('precipitationIncr');
     return present;
-  }, [activeRows]);
+  }, [activeRows, COLUMNS]);
 
   useEffect(() => {
     if (!colsAutoNettoyage || activeRows.length === 0) return;
@@ -603,7 +664,6 @@ export function NettoyageTab() {
 
   // ---- Charger fichier importé ----
   const loadFromImported = useCallback((f: import('./shared').ImportedFile) => {
-    console.log('[NettoyageTab] loadFromImported', f.name, 'rawData:', f.rawData.length, 'shellyRows:', shellyRows.length);
     // reset other mode
     setGenericRows([]);
     setGenericFileName(null);
@@ -614,9 +674,17 @@ export function NettoyageTab() {
       try {
         if (f.statut === 'nettoyé') {
           rows = f.rawData.map(r => ({ ...r, date: toDate(r.date) })) as ShellyRow[];
+        } else if (f.type === 'autre' && lireFichierImporte(f, state.joursFerier)) {
+          // Fichier quelconque : même lecture que dans l'Analyse (choisie à l'import)
+          rows = lireFichierImporte(f, state.joursFerier)!.rows.map(r => {
+            // Grandeurs à plat (« g:PM2.5 (ug/m³) ») : une colonne chacune dans le tableau
+            if (!r.grandeurs) return r;
+            const plat: Record<string, number> = {};
+            for (const [k, v] of Object.entries(r.grandeurs)) plat[`g:${k}`] = v;
+            return { ...r, ...plat };
+          });
         }
         const detect = detecterFormatShelly(f.columns);
-        console.log('[NettoyageTab] detected format:', detect.format, 'cols:', f.columns.slice(0, 5));
         let parsed: ShellyRow[] = [];
         if (!rows && (detect.format === 'shelly_excel' || detect.format === 'generic')) {
           parsed = f.rawData.map(r => parseShellyRow(r, state.joursFerier)).filter((r): r is ShellyRow => r !== null);
@@ -637,7 +705,6 @@ export function NettoyageTab() {
         if (!rows && parsed.length === 0) {
           parsed = f.rawData.map(r => parseShellyRow(r, state.joursFerier)).filter((r): r is ShellyRow => r !== null);
         }
-        console.log('[NettoyageTab] parsed rows:', parsed.length);
         if (!rows && parsed.length > 0) rows = parsed;
       } catch (e) {
         console.warn('[NettoyageTab] loadFromImported parse error:', e);
@@ -645,7 +712,6 @@ export function NettoyageTab() {
     }
     // Fallback final : données du contexte global (ex. après rechargement de page)
     if (!rows || rows.length === 0) {
-      console.log('[NettoyageTab] using shellyRows fallback, count:', shellyRows.length);
       if (shellyRows.length > 0) rows = [...shellyRows];
     }
     if (!rows || rows.length === 0) {
@@ -680,6 +746,22 @@ export function NettoyageTab() {
     setIssues([]);
     setShowGapDates(false);
   }, [shellyRows, state.joursFerier]);
+
+  // Fichier choisi ailleurs (bouton « Nettoyer » de la bibliothèque, ou
+  // reprise de session) : le charger ici, une seule fois par sélection et
+  // seulement si l'onglet est visible — après « Sauvegarder et stocker »
+  // la sélection change mais l'onglet bascule sur Fichiers, on ne recharge pas.
+  const handledSelectionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const { selectedFileId, activeTab, filesLoaded } = state;
+    if (!selectedFileId || !filesLoaded) return;
+    if (handledSelectionRef.current === selectedFileId) return;
+    handledSelectionRef.current = selectedFileId;
+    if (activeTab !== 'nettoyage') return;
+    if (selectedFileId === localFileId || selectedFileId === genericFileId) return;
+    void ensureFileContent(selectedFileId).then(full => { if (full) loadFromImported(full); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.selectedFileId, state.activeTab, state.filesLoaded]);
 
   // ============================================================
   // UNDO
@@ -733,83 +815,21 @@ export function NettoyageTab() {
     setSelectedIndices(new Set());
   }, [activeRows, pushUndo, setActiveRows, ignoreIssue]);
 
-  const doFillZeros = useCallback((method: FillMethod) => {
-    const isZeroRow = (r: ShellyRow) => r.kwhTotal === 0 && r.kwhNet === 0;
-    const sortedRows = [...activeRows].sort((a, b) => toDate(a.date).getTime() - toDate(b.date).getTime());
-
-    if (method === 'zero') {
-      // déjà à zéro — on confirme juste (no-op mais undo possible)
-      pushUndo(activeRows);
-      setActiveRows([...activeRows]);
-    } else if (method === 'mean') {
-      const means: Partial<Record<keyof ShellyRow, number>> = {};
-      for (const col of NUM_COLS) {
-        const vals = activeRows.map(r => r[col] as number).filter(v => v > 0 && !isNaN(v));
-        means[col] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-      }
-      pushUndo(activeRows);
-      setActiveRows(activeRows.map(r => {
-        if (!isZeroRow(r)) return r;
-        const upd = { ...r };
-        for (const col of NUM_COLS) (upd as Record<string, unknown>)[col] = means[col] ?? 0;
-        return upd;
-      }));
-    } else if (method === 'forward') {
-      const result = [...sortedRows];
-      for (let i = 1; i < result.length; i++) {
-        if (!isZeroRow(result[i])) continue;
-        const prev = result[i - 1];
-        const upd  = { ...result[i] };
-        for (const col of NUM_COLS) (upd as Record<string, unknown>)[col] = prev[col];
-        result[i] = upd;
-      }
-      pushUndo(activeRows);
-      setActiveRows(result);
-    } else if (method === 'linear') {
-      const result = [...sortedRows];
-      for (const col of NUM_COLS) {
-        let i = 0;
-        while (i < result.length) {
-          const v = result[i][col] as number;
-          if (v === 0 || isNaN(v)) {
-            const start = i;
-            while (i < result.length && ((result[i][col] as number) === 0 || isNaN(result[i][col] as number))) i++;
-            const end = i;
-            if (start > 0 && end < result.length) {
-              const v0 = result[start - 1][col] as number;
-              const v1 = result[end][col] as number;
-              for (let j = start; j < end; j++) {
-                const t   = (j - start + 1) / (end - start + 1);
-                const upd = { ...result[j] };
-                (upd as Record<string, unknown>)[col] = v0 + t * (v1 - v0);
-                result[j] = upd;
-              }
-            }
-          } else {
-            i++;
-          }
-        }
-      }
-      pushUndo(activeRows);
-      setActiveRows(result);
-    }
-    ignoreIssue('zeros');
-    setSelectedIndices(new Set());
-  }, [activeRows, pushUndo, setActiveRows, ignoreIssue]);
-
-  const doFixOutliers = useCallback((action: 'delete' | 'mean') => {
-    const vals     = activeRows.map(r => r.kwhNet);
-    const { mean, std } = computeStats(vals);
-    const threshold = mean + OUTLIER_SIGMA * std;
+  // Données figées : on ne touche jamais au cumul de pluie (la première ligne de la séquence en garde la vraie valeur).
+  const doFixFrozen = useCallback((mode: 'delete' | 'blank') => {
+    const set = new Set(findFrozenRows(activeRows).rows);
     pushUndo(activeRows);
-    if (action === 'delete') {
-      setActiveRows(activeRows.filter(r => r.kwhNet <= threshold));
+    if (mode === 'delete') {
+      setActiveRows(activeRows.filter(r => !set.has(r)));
     } else {
-      setActiveRows(activeRows.map(r =>
-        r.kwhNet > threshold ? { ...r, kwhNet: mean, kwhTotal: mean } : r
-      ));
+      setActiveRows(activeRows.map(r => {
+        if (!set.has(r)) return r;
+        const c: ShellyRow = { ...r, precipitationIncr: 0 };
+        for (const k of BLANKABLE_ENV_KEYS) (c as unknown as Record<string, unknown>)[k] = undefined;
+        return c;
+      }));
     }
-    ignoreIssue('outliers');
+    ignoreIssue('frozen');
     setSelectedIndices(new Set());
   }, [activeRows, pushUndo, setActiveRows, ignoreIssue]);
 
@@ -839,15 +859,20 @@ export function NettoyageTab() {
   }, [activeRows, pushUndo, setActiveRows, ignoreIssue]);
 
   // ============================================================
-  // NETTOYAGE AUTOMATIQUE — enchaîne tous les correctifs applicables
-  // 1. Trim valeurs texte
-  // 2. Arrondi décimales (4 chiffres) sur colonnes numériques
-  // 3. Doublons exacts → suppression
-  // 4. Doublons par jour → garde la dernière
-  // 5. Valeurs négatives → valeur absolue
-  // 6. Outliers (kwhNet > moy + 2.5σ) → remplacé par moyenne
-  // 7. Lignes vides → forward fill (reporter valeur précédente)
-  // 8. Recalcul total si incohérence phases
+  // NETTOYAGE AUTOMATIQUE — uniquement ce qui est sans risque
+  // 1. Trim des valeurs texte
+  // 2. Doublons exacts (même appareil, même horodatage) → suppression
+  // 3. Doublons (jour, appareil) → seulement sur des données JOURNALIÈRES
+  //
+  // Retiré le 16/10/2026 après essai sur Ma Maison (08→15/10, 1 986 h,
+  // 54,34 kWh) : arrondi à 4 décimales (jusqu'à 30 % d'erreur sur des
+  // relevés à la minute), négatifs → valeur absolue (une injection devenait
+  // de la consommation), aberrants → moyenne (−16 kWh de clim réelle), zéros
+  // → report du précédent (consommation inventée), total ← somme des phases
+  // (le compteur, exact, remplacé par des puissances moyennes). Et l'étape 3
+  // s'appliquait aussi aux données horaires : 54,34 kWh → 1,33 kWh.
+  // Plus de sauvegarde automatique : le résultat s'affiche, « Annuler »
+  // reste possible, l'utilisateur sauvegarde lui-même.
   // ============================================================
   const [autoCleanReport, setAutoCleanReport] = useState<string[] | null>(null);
   const doAutoClean = useCallback(() => {
@@ -856,6 +881,7 @@ export function NettoyageTab() {
 
     const report: string[] = [];
     let rows: ShellyRow[] = [...activeRows];
+    const kwhAvant = rows.reduce((s, r) => s + (r.kwhTotal || 0), 0);
 
     // ── 1. Trim valeurs texte ────────────────────────────────────
     const TEXT_KEYS: (keyof ShellyRow)[] = [
@@ -878,22 +904,7 @@ export function NettoyageTab() {
     });
     if (trimmed > 0) report.push(`Trim : ${trimmed} valeur${trimmed > 1 ? 's' : ''} texte nettoyée${trimmed > 1 ? 's' : ''}`);
 
-    // ── 2. Arrondi décimales (4) sur colonnes numériques ─────────
-    let rounded = 0;
-    rows = rows.map(r => {
-      const upd = { ...r };
-      for (const col of NUM_COLS) {
-        const v = (r as unknown as Record<string, unknown>)[col];
-        if (typeof v === 'number' && isFinite(v)) {
-          const nv = Math.round(v * 10000) / 10000;
-          if (nv !== v) { (upd as Record<string, unknown>)[col] = nv; rounded++; }
-        }
-      }
-      return upd;
-    });
-    if (rounded > 0) report.push(`Arrondi : ${rounded} valeur${rounded > 1 ? 's' : ''} arrondie${rounded > 1 ? 's' : ''} à 4 décimales`);
-
-    // ── 3. Doublons exacts (timestamp + appareil identiques) → dédoublonnage ─
+    // ── 2. Doublons exacts (même appareil, même horodatage) ──────
     {
       const seen = new Set<string>();
       const uniq: ShellyRow[] = [];
@@ -909,8 +920,10 @@ export function NettoyageTab() {
       }
     }
 
-    // ── 4. Doublons par (jour, appareil) → garde la dernière ──────
-    {
+    // ── 3. Doublons (jour, appareil) — données journalières seulement ─
+    if (isSubDaily(rows)) {
+      report.push('Doublons par jour : non appliqué — données infra-journalières (plusieurs relevés par jour sont normaux)');
+    } else {
       const sorted = [...rows].sort((a, b) => toDate(a.date).getTime() - toDate(b.date).getTime());
       const byDayDevice = new Map<string, ShellyRow>();
       for (const r of sorted) {
@@ -924,143 +937,17 @@ export function NettoyageTab() {
       }
     }
 
-    // ── 5. Valeurs négatives → valeur absolue ────────────────────
-    {
-      let fixed = 0;
-      rows = rows.map(r => {
-        const upd = { ...r };
-        for (const col of NUM_COLS) {
-          const v = (r as unknown as Record<string, unknown>)[col];
-          if (typeof v === 'number' && v < 0) {
-            (upd as Record<string, unknown>)[col] = Math.abs(v);
-            fixed++;
-          }
-        }
-        return upd;
-      });
-      if (fixed > 0) report.push(`Négatives : ${fixed} valeur${fixed > 1 ? 's' : ''} convertie${fixed > 1 ? 's' : ''} en absolu`);
-    }
-
-    // ── 6. Outliers kwhNet > moy + 2.5σ par appareil → remplacé par moyenne du même appareil ─
-    {
-      // Grouper par appareil
-      const byDevice = new Map<string, ShellyRow[]>();
-      for (const r of rows) {
-        const k = deviceKey(r);
-        if (!byDevice.has(k)) byDevice.set(k, []);
-        byDevice.get(k)!.push(r);
-      }
-      const outlierMap = new Map<ShellyRow, number>(); // row → mean to use
-      for (const [, deviceRows] of byDevice) {
-        const vals = deviceRows.map(r => r.kwhNet).filter(v => isFinite(v) && v > 0);
-        if (vals.length < 5) continue; // pas assez de points pour des stats
-        const { mean, std } = computeStats(vals);
-        if (std <= 0) continue;
-        const threshold = mean + OUTLIER_SIGMA * std;
-        for (const r of deviceRows) {
-          if (r.kwhNet > threshold) outlierMap.set(r, mean);
-        }
-      }
-      if (outlierMap.size > 0) {
-        rows = rows.map(r => {
-          const m = outlierMap.get(r);
-          return m !== undefined ? { ...r, kwhNet: m, kwhTotal: m } : r;
-        });
-        report.push(`Outliers : ${outlierMap.size} valeur${outlierMap.size > 1 ? 's' : ''} aberrante${outlierMap.size > 1 ? 's' : ''} remplacée${outlierMap.size > 1 ? 's' : ''} par moyenne (par appareil)`);
-      }
-    }
-
-    // ── 7. Lignes vides → forward fill par appareil ──────────────
-    {
-      const isZero = (r: ShellyRow) => r.kwhTotal === 0 && r.kwhNet === 0;
-      const byDevice = new Map<string, ShellyRow[]>();
-      for (const r of rows) {
-        const k = deviceKey(r);
-        if (!byDevice.has(k)) byDevice.set(k, []);
-        byDevice.get(k)!.push(r);
-      }
-      const replacements = new Map<ShellyRow, ShellyRow>();
-      let filled = 0;
-      for (const [, deviceRows] of byDevice) {
-        const sorted = [...deviceRows].sort((a, b) => toDate(a.date).getTime() - toDate(b.date).getTime());
-        for (let i = 1; i < sorted.length; i++) {
-          if (!isZero(sorted[i])) continue;
-          const prev = sorted[i - 1];
-          if (isZero(prev)) continue; // pas de valeur précédente exploitable
-          const upd  = { ...sorted[i] };
-          for (const col of NUM_COLS) (upd as unknown as Record<string, unknown>)[col] = prev[col];
-          replacements.set(sorted[i], upd);
-          filled++;
-        }
-      }
-      if (filled > 0) {
-        rows = rows.map(r => replacements.get(r) ?? r);
-        report.push(`Lignes vides : ${filled} ligne${filled > 1 ? 's' : ''} remplie${filled > 1 ? 's' : ''} (forward fill par appareil)`);
-      }
-    }
-
-    // ── 8. Recalcul total si incohérence phases ──────────────────
-    {
-      let recalc = 0;
-      rows = rows.map(r => {
-        const sumPhases = r.kwhA + r.kwhB + r.kwhC;
-        if (Math.abs(sumPhases - r.kwhTotal) > 0.01) {
-          recalc++;
-          return { ...r, kwhTotal: sumPhases, kwhNet: sumPhases - r.kwhRetourTotal };
-        }
-        return r;
-      });
-      if (recalc > 0) report.push(`Phases : ${recalc} total${recalc > 1 ? 'aux' : ''} recalculé${recalc > 1 ? 's' : ''} depuis Σ(A+B+C)`);
-    }
+    const kwhApres = rows.reduce((s, r) => s + (r.kwhTotal || 0), 0);
+    const fmt = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+    report.unshift(`Avant : ${activeRows.length.toLocaleString('fr-FR')} lignes, ${fmt(kwhAvant)} kWh · Après : ${rows.length.toLocaleString('fr-FR')} lignes, ${fmt(kwhApres)} kWh`);
+    report.push("Zéros, valeurs aberrantes, négatifs et phases : à examiner au cas par cas ci-dessous — jamais corrigés automatiquement.");
 
     setActiveRows(rows);
     setSelectedIndices(new Set());
-    // Marquer toutes les issues comme traitées
-    setIssues(prev => prev.map(i => ({ ...i, ignored: true })));
-
-    // Si un fichier est chargé, sauvegarder automatiquement et rediriger vers fichiers
-    if (localFileName) {
-      const rowsRecalculees = ajouterCumulatifs(
-        rows.map(r => ({ ...r, kwhNet: Math.max(0, r.kwhTotal - r.kwhRetourTotal) }))
-      );
-      const serializedRows = rowsRecalculees.map(r => ({
-        ...r,
-        date: r.date instanceof Date ? r.date.toISOString() : r.date,
-      })) as unknown as Record<string, unknown>[];
-      const columns = serializedRows.length > 0 ? Object.keys(serializedRows[0]) : [];
-      const preview = serializedRows.slice(0, 10);
-      const sourceFile = localFileId ? state.files.find(f => f.id === localFileId) : null;
-      const fallbackName = sourceFile ? sourceFile.name.replace(/\.(csv|xlsx|xls)$/i, '') : localFileName;
-      const cleanedName = buildCleanedFileName(rowsRecalculees, fallbackName);
-      const existingCleaned = sourceFile
-        ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
-        : null;
-      const cleanedId = existingCleaned?.id ?? `clean-${Date.now()}`;
-      if (existingCleaned) {
-        updateFile(existingCleaned.id, {
-          name: cleanedName, rowCount: rowsRecalculees.length, columns, preview,
-          rawData: serializedRows, statut: 'nettoyé', uploadedAt: new Date(),
-        });
-      } else {
-        addFile({
-          id: cleanedId, name: cleanedName, type: sourceFile?.type ?? 'shelly',
-          sourceId: sourceFile?.sourceId, uploadedAt: new Date(),
-          rowCount: rowsRecalculees.length, columns, preview,
-          rawData: serializedRows, statut: 'nettoyé',
-          taille: sourceFile?.taille, parentId: sourceFile?.id,
-        });
-      }
-      setShellyRows(rowsRecalculees);
-      setSelectedFile(cleanedId);
-      setLocalRows([]);
-      setLocalFileName(null);
-      setLocalFileId(null);
-      setActiveTab('fichiers');
-      return;
-    }
-
-    setAutoCleanReport(report.length > 0 ? report : ['Aucune action nécessaire — données déjà propres']);
-  }, [activeRows, pushUndo, setActiveRows, localFileName, localFileId, state.files, updateFile, addFile, setShellyRows, setSelectedFile, setActiveTab]);
+    // Seuls les doublons sont traités : les autres signalements restent affichés
+    setIssues(prev => prev.map(i => (i.id === 'duplicates_exact' || i.id === 'duplicates_day') ? { ...i, ignored: true } : i));
+    setAutoCleanReport(report);
+  }, [activeRows, pushUndo, setActiveRows]);
 
   // ============================================================
   // OUTILS MANUELS
@@ -1119,7 +1006,7 @@ export function NettoyageTab() {
         return v.includes(q);
       }).length;
     }, 0);
-  }, [frFind, frCase, frCol, activeRows]);
+  }, [frFind, frCase, frCol, activeRows, COLUMNS]);
 
   const doFindReplace = useCallback(() => {
     if (!frFind) return;
@@ -1147,12 +1034,12 @@ export function NettoyageTab() {
       }
       return updated;
     }));
-  }, [frFind, frReplace, frCol, frCase, activeRows, pushUndo, setActiveRows]);
+  }, [frFind, frReplace, frCol, frCase, activeRows, pushUndo, setActiveRows, COLUMNS]);
 
   // ============================================================
   // TRANSFORMER
   // ============================================================
-  const trColDef  = useMemo(() => COLUMNS.find(c => c.key === trCol), [trCol]);
+  const trColDef  = useMemo(() => COLUMNS.find(c => c.key === trCol), [trCol, COLUMNS]);
   const trColType = trColDef?.type ?? 'num';
 
   const doTransform = useCallback(() => {
@@ -1271,7 +1158,7 @@ export function NettoyageTab() {
   // sortedRef est une ref (toujours à jour) ; visibleCols doit en revanche être
   // une dépendance, sinon l'export reste figé sur les colonnes du premier rendu.
    
-  }, [visibleCols]);
+  }, [visibleCols, COLUMNS]);
 
   // ============================================================
   // DONNÉES DÉRIVÉES
@@ -1292,7 +1179,7 @@ export function NettoyageTab() {
     if (filters.kwhMin !== '') rows = rows.filter(r => r.kwhNet >= parseFloat(filters.kwhMin));
     if (filters.kwhMax !== '') rows = rows.filter(r => r.kwhNet <= parseFloat(filters.kwhMax));
     return rows;
-  }, [activeRows, search, filters]);
+  }, [activeRows, search, filters, COLUMNS]);
 
   const sorted = useMemo(() => {
     const result = !sortConfig ? filtered : [...filtered].sort((a, b) => {
@@ -1328,9 +1215,10 @@ export function NettoyageTab() {
       {state.files.map(f => {
         const isExp  = expandedFileId === f.id;
         const pg     = expandedFilePage[f.id] ?? 0;
-        const totalPg = Math.ceil(f.rawData.length / FILE_PAGE_SIZE);
-        const pageRows = f.rawData.slice(pg * FILE_PAGE_SIZE, (pg + 1) * FILE_PAGE_SIZE);
-        const linkedSource = f.sourceId ? state.sources.find(s => s.id === f.sourceId) : null;
+        // Contenu pas encore téléchargé : on montre l'aperçu (10 lignes) en attendant
+        const viewRows = f.contentLoaded ? f.rawData : f.preview;
+        const totalPg = Math.ceil(viewRows.length / FILE_PAGE_SIZE);
+        const pageRows = viewRows.slice(pg * FILE_PAGE_SIZE, (pg + 1) * FILE_PAGE_SIZE);
         return (
           <div key={f.id} className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
             <div className="flex items-center gap-3 p-3">
@@ -1339,14 +1227,8 @@ export function NettoyageTab() {
                 <p className="text-white text-sm font-medium truncate">{f.name}</p>
                 <div className="flex items-center flex-wrap gap-2 mt-0.5">
                   <Badge variant="outline" className="text-xs border-white/20 text-slate-300 h-5">
-                    {f.type === 'shelly' ? 'Shelly 3EM' : f.type === 'facture' ? 'Facture PDF' : 'Autre'}
+                    {f.type === 'shelly' ? 'Shelly 3EM' : 'Autre'}
                   </Badge>
-                  {linkedSource && (
-                    <span className="text-xs" style={{ color: linkedSource.couleur }}>
-                      <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: linkedSource.couleur }} />
-                      {linkedSource.nom}
-                    </span>
-                  )}
                   <span className="text-slate-500 text-xs">{f.rowCount.toLocaleString('fr-FR')} lignes · {f.columns.length} col.</span>
                 </div>
               </div>
@@ -1362,7 +1244,7 @@ export function NettoyageTab() {
                       setLocalRows([]); setLocalFileName(null); setLocalFileId(null);
                       setGenericRows([]); setGenericFileName(null); setGenericFileId(null);
                     } else {
-                      loadFromImported(f);
+                      void ensureFileContent(f.id).then(full => { if (full) loadFromImported(full); });
                     }
                   }}
                 >
@@ -1370,7 +1252,11 @@ export function NettoyageTab() {
                 </Button>
                 <Button size="sm" variant="ghost"
                   className={`h-7 gap-1.5 text-xs ${isExp ? 'text-blue-400 bg-blue-500/10' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-                  onClick={() => { setExpandedFileId(isExp ? null : f.id); setExpandedFilePage(p => ({ ...p, [f.id]: 0 })); }}
+                  onClick={() => {
+                    setExpandedFileId(isExp ? null : f.id);
+                    setExpandedFilePage(p => ({ ...p, [f.id]: 0 }));
+                    if (!isExp && !f.contentLoaded) void ensureFileContent(f.id);
+                  }}
                 >
                   {isExp ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                   {isExp ? 'Masquer' : 'Voir'}
@@ -1378,7 +1264,7 @@ export function NettoyageTab() {
               </div>
             </div>
 
-            {isExp && f.rawData.length > 0 && (
+            {isExp && viewRows.length > 0 && (
               <>
                 <div className="overflow-auto border-t border-white/10" style={{ maxHeight: '40vh' }}>
                   <table className="min-w-full text-xs border-collapse">
@@ -1386,7 +1272,7 @@ export function NettoyageTab() {
                       <tr>
                         <th className="w-10 px-2 py-1.5 text-slate-600 text-right border-b border-r border-white/10 font-normal select-none bg-white/5">#</th>
                         {f.columns.map(col => {
-                          const ct = detectColType(col, f.rawData);
+                          const ct = detectColType(col, viewRows);
                           return (
                             <th key={col} className="px-3 py-1.5 text-left border-b border-r border-white/10 whitespace-nowrap font-medium bg-white/5">
                               <div className="flex items-center gap-1">{COL_TYPE_ICON[ct]}<span className={COL_TYPE_COLOR[ct]}>{col}</span></div>
@@ -1398,10 +1284,10 @@ export function NettoyageTab() {
                     <tbody>
                       {pageRows.map((row, ri) => (
                         <tr key={ri} className={`hover:bg-blue-500/5 ${ri % 2 === 0 ? '' : 'bg-white/[0.02]'}`}>
-                          <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none font-mono text-[10px]">{pg * FILE_PAGE_SIZE + ri + 1}</td>
+                          <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none font-mono text-[0.625rem]">{pg * FILE_PAGE_SIZE + ri + 1}</td>
                           {f.columns.map(col => {
                             const val = String(row[col] ?? '');
-                            const ct  = detectColType(col, f.rawData);
+                            const ct  = detectColType(col, viewRows);
                             return (
                               <td key={col} className={`px-3 py-1 border-r border-white/5 whitespace-nowrap max-w-[200px] truncate ${ct === 'number' ? 'text-right font-mono text-emerald-300/80' : ct === 'date' ? 'text-blue-300/80' : 'text-slate-400'}`} title={val.length > 30 ? val : undefined}>{val}</td>
                             );
@@ -1412,7 +1298,7 @@ export function NettoyageTab() {
                   </table>
                 </div>
                 <div className="flex items-center justify-between px-4 py-2 border-t border-white/10">
-                  <span className="text-slate-500 text-xs">{pg * FILE_PAGE_SIZE + 1}–{Math.min((pg + 1) * FILE_PAGE_SIZE, f.rawData.length)} / {f.rowCount.toLocaleString('fr-FR')} lignes</span>
+                  <span className="text-slate-500 text-xs">{pg * FILE_PAGE_SIZE + 1}–{Math.min((pg + 1) * FILE_PAGE_SIZE, viewRows.length)} / {f.rowCount.toLocaleString('fr-FR')} lignes{!f.contentLoaded && ' · aperçu'}</span>
                   <div className="flex items-center gap-2">
                     <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-slate-400 hover:text-white" disabled={pg === 0} onClick={() => setExpandedFilePage(p => ({ ...p, [f.id]: pg - 1 }))}><ChevronLeft className="h-4 w-4" /></Button>
                     <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-slate-400 hover:text-white" disabled={pg >= totalPg - 1} onClick={() => setExpandedFilePage(p => ({ ...p, [f.id]: pg + 1 }))}><ChevronRight className="h-4 w-4" /></Button>
@@ -1445,6 +1331,14 @@ export function NettoyageTab() {
             </button>
           </div>
         )}
+        <RecettesPanel
+          organizationId={organization?.id ?? null}
+          chargement={null}
+          reglesExclues={new Set()}
+          version={null}
+          joursFerier={state.joursFerier}
+          onOuvrir={ouvrirRecette}
+        />
         {fichiersPannel || (
           <div className="flex flex-col items-center justify-center py-24 text-slate-500">
             <Eraser className="h-16 w-16 opacity-20 mb-4" />
@@ -1483,7 +1377,7 @@ export function NettoyageTab() {
           const existingCleaned = sourceFile
             ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
             : null;
-          const cleanedId = existingCleaned?.id ?? `clean-${Date.now()}`;
+          const cleanedId = existingCleaned?.id ?? crypto.randomUUID();
 
           if (existingCleaned) {
             updateFile(existingCleaned.id, {
@@ -1500,7 +1394,6 @@ export function NettoyageTab() {
               id: cleanedId,
               name: cleanedName,
               type: sourceFile?.type ?? 'autre',
-              sourceId: sourceFile?.sourceId,
               uploadedAt: new Date(),
               rowCount: serialized.length,
               columns,
@@ -1541,11 +1434,16 @@ export function NettoyageTab() {
         <div className="flex items-center justify-between bg-green-500/10 border border-green-500/30 rounded-xl px-4 py-2.5">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="h-4 w-4 text-green-400 shrink-0" />
-            <span className="text-green-300 text-sm font-medium">Nettoyage : {localFileName ?? 'Données importées'}</span>
+            <span className="text-green-300 text-sm font-medium">Nettoyage : {modeMoteur && chargementShelly ? nomChargement(chargementShelly) : (localFileName ?? 'Données importées')}</span>
             <Badge className="bg-green-600/20 text-green-300 border-0 text-xs">{activeRows.length.toLocaleString('fr-FR')} lignes</Badge>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-500 text-white"
+            {modeMoteur && <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-500 text-white"
+              title="Enregistre le site, la période et les règles appliquées, visible par toute l'organisation"
+              onClick={() => recettesRef.current?.enregistrer()}>
+              Enregistrer et stocker
+            </Button>}
+            {!modeMoteur && <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-500 text-white"
               onClick={() => {
                 // 1. Recalculer kwhNet et cumuls sur les lignes nettoyées
                 const rowsRecalculees = ajouterCumulatifs(
@@ -1567,7 +1465,7 @@ export function NettoyageTab() {
                 const existingCleaned = sourceFile
                   ? state.files.find(f => f.parentId === sourceFile.id && f.statut === 'nettoyé')
                   : null;
-                const cleanedId = existingCleaned?.id ?? `clean-${Date.now()}`;
+                const cleanedId = existingCleaned?.id ?? crypto.randomUUID();
 
                 if (existingCleaned) {
                   updateFile(existingCleaned.id, {
@@ -1584,7 +1482,6 @@ export function NettoyageTab() {
                     id: cleanedId,
                     name: cleanedName,
                     type: sourceFile?.type ?? 'shelly',
-                    sourceId: sourceFile?.sourceId,
                     uploadedAt: new Date(),
                     rowCount: rowsRecalculees.length,
                     columns,
@@ -1604,7 +1501,7 @@ export function NettoyageTab() {
                 setActiveTab('fichiers'); // rediriger vers la bibliothèque après sauvegarde
               }}>
               Sauvegarder et stocker
-            </Button>
+            </Button>}
             <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-400 hover:text-white"
               onClick={() => {
                 setLocalRows([]); setLocalFileName(null); setLocalFileId(null);
@@ -1619,8 +1516,27 @@ export function NettoyageTab() {
       )}
 
       {/* ============================================================ */}
-      {/* SECTION DIAGNOSTIC — ASSISTANT GUIDÉ                         */}
+      {/* SECTION DIAGNOSTIC — moteur de qualité, ou assistant (fichiers) */}
       {/* ============================================================ */}
+      {modeMoteur ? (
+        <>
+          <QualiteMoteurPanel q={qualite} nbLignes={activeRows.length} />
+          <RecettesPanel
+            ref={recettesRef}
+            organizationId={organization?.id ?? null}
+            chargement={chargementShelly}
+            reglesExclues={qualite.exclues}
+            version={qualite.version}
+            joursFerier={state.joursFerier}
+            onOuvrir={ouvrirRecette}
+            onEnregistre={() => {
+              setActiveTab('fichiers');
+              // Le temps que l'onglet Fichiers s'affiche
+              setTimeout(() => document.getElementById(ID_NETTOYAGES_ENREGISTRES)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+            }}
+          />
+        </>
+      ) : (
       <div className="rounded-xl border border-white/10 overflow-hidden">
         {/* En-tête diagnostic */}
         <div className={`flex items-center justify-between px-4 py-3 ${nbProblems > 0 ? 'bg-amber-500/10 border-b border-amber-500/20' : hasAnalysed ? 'bg-green-500/10 border-b border-green-500/20' : 'bg-white/5 border-b border-white/10'}`}>
@@ -1694,7 +1610,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <Copy className="h-4 w-4 text-amber-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -1727,7 +1643,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <Copy className="h-4 w-4 text-amber-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-amber-500/20 text-amber-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -1745,6 +1661,39 @@ export function NettoyageTab() {
               );
             })()}
 
+            {/* Données figées */}
+            {activeIssues.find(i => i.id === 'frozen') && (() => {
+              const iss = activeIssues.find(i => i.id === 'frozen')!;
+              return (
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <Copy className="h-4 w-4 text-sky-400 shrink-0" />
+                        <span className="text-white text-sm font-medium">{iss.description}</span>
+                        <Badge className="bg-sky-500/20 text-sky-300 border-0 text-[0.625rem]">{iss.count}</Badge>
+                      </div>
+                      {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
+                      <p className="text-slate-500 text-xs ml-6 mt-0.5">Le cumul de pluie n'est jamais modifié : la première ligne de chaque séquence garde la vraie valeur.</p>
+                    </div>
+                    <button onClick={() => ignoreIssue('frozen')} className="text-slate-600 hover:text-slate-400 shrink-0"><X className="h-4 w-4" /></button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 mt-3 ml-6">
+                    <Button size="sm" className="h-7 text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30"
+                      onClick={() => doFixFrozen('delete')}>
+                      <Scissors className="h-3.5 w-3.5 mr-1" /> Supprimer les relectures
+                    </Button>
+                    <Button size="sm" className="h-7 text-xs bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/30"
+                      onClick={() => doFixFrozen('blank')}>
+                      <Eraser className="h-3.5 w-3.5 mr-1" /> Vider les valeurs (garder l'heure)
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500 hover:text-white"
+                      onClick={() => ignoreIssue('frozen')}>Ignorer</Button>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Lignes vides */}
             {activeIssues.find(i => i.id === 'zeros') && (() => {
               const iss = activeIssues.find(i => i.id === 'zeros')!;
@@ -1755,30 +1704,20 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <Square className="h-4 w-4 text-slate-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-slate-500/20 text-slate-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-slate-500/20 text-slate-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
                     <button onClick={() => ignoreIssue('zeros')} className="text-slate-600 hover:text-slate-400 shrink-0"><X className="h-4 w-4" /></button>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 mt-3 ml-6">
-                    <span className="text-slate-500 text-xs">Remplir par :</span>
-                    <Button size="sm" className="h-7 text-xs bg-slate-600/30 hover:bg-slate-600/50 text-slate-300 border border-slate-500/30"
-                      onClick={() => doFillZeros('zero')}>
-                      → 0 (laisser)
-                    </Button>
-                    <Button size="sm" className="h-7 text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30"
-                      onClick={() => doFillZeros('mean')}>
-                      → Moyenne
-                    </Button>
-                    <Button size="sm" className="h-7 text-xs bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-300 border border-cyan-500/30"
-                      onClick={() => doFillZeros('forward')}>
-                      → Reporter précédent
-                    </Button>
-                    <Button size="sm" className="h-7 text-xs bg-violet-600/20 hover:bg-violet-600/40 text-violet-300 border border-violet-500/30"
-                      onClick={() => doFillZeros('linear')}>
-                      → Interpolation linéaire
-                    </Button>
+                  {/* Plus de remplissage (moyenne, report, interpolation) : sur des
+                      données horaires multi-appareils il inventait de la consommation
+                      — +26 à +35 kWh sur 54 kWh réels à Ma Maison (08→15/10). */}
+                  <p className="text-slate-400 text-xs mt-2 ml-6">
+                    Un 0 sur un départ veut dire « appareil éteint » ; sur le compteur d'arrivée, il signale plutôt une coupure.
+                    Ces valeurs sont réelles : on ne les remplace pas.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-2 ml-6">
                     <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500 hover:text-white"
                       onClick={() => ignoreIssue('zeros')}>Ignorer</Button>
                   </div>
@@ -1796,20 +1735,23 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <TrendingDown className="h-4 w-4 text-orange-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-orange-500/20 text-orange-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-orange-500/20 text-orange-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
                     <button onClick={() => ignoreIssue('outliers')} className="text-slate-600 hover:text-slate-400 shrink-0"><X className="h-4 w-4" /></button>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 mt-3 ml-6">
-                    <Button size="sm" className="h-7 text-xs bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-500/30"
-                      onClick={() => doFixOutliers('delete')}>
-                      <Trash2 className="h-3.5 w-3.5 mr-1" /> Supprimer les lignes
-                    </Button>
-                    <Button size="sm" className="h-7 text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30"
-                      onClick={() => doFixOutliers('mean')}>
-                      → Remplacer par la moyenne
+                  {/* Plus de suppression ni de remplacement : le seuil est commun à
+                      tous les appareils, il désignait la clim ou le chauffe-eau en
+                      marche (−17 kWh de vraie consommation à Ma Maison, 08→15/10). */}
+                  <p className="text-slate-400 text-xs mt-2 ml-6">
+                    Seuil commun à tous les appareils : un appareil puissant en marche normale (clim, chauffe-eau) le dépasse.
+                    À vérifier dans le tableau, sans supprimer ni remplacer.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-2 ml-6">
+                    <Button size="sm" className="h-7 text-xs bg-orange-600/20 hover:bg-orange-600/40 text-orange-300 border border-orange-500/30"
+                      onClick={() => setHighlightOutliers(true)}>
+                      <Eye className="h-3.5 w-3.5 mr-1" /> Mettre en évidence dans le tableau
                     </Button>
                     <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500 hover:text-white"
                       onClick={() => ignoreIssue('outliers')}>Ignorer</Button>
@@ -1828,7 +1770,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <ArrowDown className="h-4 w-4 text-red-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-red-500/20 text-red-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-red-500/20 text-red-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -1860,13 +1802,13 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <GitBranch className="h-4 w-4 text-yellow-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-yellow-500/20 text-yellow-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-yellow-500/20 text-yellow-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                       {showGapDates && iss.gapDates && (
                         <div className="mt-3 ml-6 flex flex-wrap gap-1.5">
                           {iss.gapDates.slice(0, 30).map((d, i) => (
-                            <Badge key={i} className="bg-yellow-500/10 text-yellow-300 border border-yellow-500/20 text-[10px]">
+                            <Badge key={i} className="bg-yellow-500/10 text-yellow-300 border border-yellow-500/20 text-[0.625rem]">
                               {d.toLocaleDateString('fr-FR')}
                             </Badge>
                           ))}
@@ -1899,7 +1841,7 @@ export function NettoyageTab() {
                       <div className="flex items-center gap-2 mb-1">
                         <AlertTriangle className="h-4 w-4 text-purple-400 shrink-0" />
                         <span className="text-white text-sm font-medium">{iss.description}</span>
-                        <Badge className="bg-purple-500/20 text-purple-300 border-0 text-[10px]">{iss.count}</Badge>
+                        <Badge className="bg-purple-500/20 text-purple-300 border-0 text-[0.625rem]">{iss.count}</Badge>
                       </div>
                       {iss.detail && <p className="text-slate-400 text-xs ml-6">{iss.detail}</p>}
                     </div>
@@ -1926,6 +1868,7 @@ export function NettoyageTab() {
           </div>
         )}
       </div>
+      )}
 
       {/* ============================================================ */}
       {/* BARRE D'OUTILS MANUELLE                                       */}
@@ -1952,7 +1895,7 @@ export function NettoyageTab() {
           onClick={() => setShowFilters(v => !v)}>
           <Filter className="h-3.5 w-3.5 mr-1" /> Filtres
           {(filters.typeJour.length + (filters.dateFrom ? 1 : 0) + (filters.kwhMin || filters.kwhMax ? 1 : 0)) > 0 && (
-            <Badge className="ml-1 h-4 min-w-4 text-[10px] bg-white/20 border-0 px-1">
+            <Badge className="ml-1 h-4 min-w-4 text-[0.625rem] bg-white/20 border-0 px-1">
               {filters.typeJour.length + (filters.dateFrom ? 1 : 0) + (filters.kwhMin || filters.kwhMax ? 1 : 0)}
             </Badge>
           )}
@@ -1968,6 +1911,7 @@ export function NettoyageTab() {
           <Label htmlFor="outliers" className="text-slate-400 text-xs cursor-pointer whitespace-nowrap">Aberrantes</Label>
         </div>
 
+        {!modeMoteur && <>
         <div className="w-px h-6 bg-white/10" />
 
         <Button size="sm" variant="outline" className="h-8 border-white/20 text-white hover:bg-white/10"
@@ -1996,8 +1940,9 @@ export function NettoyageTab() {
           onClick={doUndo}
           title={`Annuler (${undoStack.length} action${undoStack.length > 1 ? 's' : ''})`}>
           <RotateCcw className="h-3.5 w-3.5 mr-1" /> Annuler
-          {undoStack.length > 0 && <Badge className="ml-1 h-4 text-[10px] bg-white/10 border-0 px-1">{undoStack.length}</Badge>}
+          {undoStack.length > 0 && <Badge className="ml-1 h-4 text-[0.625rem] bg-white/10 border-0 px-1">{undoStack.length}</Badge>}
         </Button>
+        </>}
 
         {/* Export ▾ */}
         <div className="relative group ml-auto">
@@ -2090,7 +2035,7 @@ export function NettoyageTab() {
       )}
 
       {/* ---- Trouver & Remplacer ---- */}
-      {showFR && (
+      {showFR && !modeMoteur && (
         <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-36">
             <Label className="text-slate-400 text-xs mb-1 block">Rechercher</Label>
@@ -2124,7 +2069,7 @@ export function NettoyageTab() {
       )}
 
       {/* ---- Panneau Transformer ---- */}
-      {showTransformer && (
+      {showTransformer && !modeMoteur && (
         <div className="bg-violet-500/5 border border-violet-500/20 rounded-xl p-4 space-y-4">
           <div className="flex items-center gap-2">
             <Wand2 className="h-4 w-4 text-violet-400" />
@@ -2252,7 +2197,7 @@ export function NettoyageTab() {
           <span className="ml-auto text-slate-500">kWh Net — moy:{kwhStats.mean.toFixed(2)} · σ:{kwhStats.std.toFixed(2)} · min:{kwhStats.min.toFixed(2)} · max:{kwhStats.max.toFixed(2)}</span>
         </div>
 
-        <div className="overflow-auto" style={{ maxHeight: '62vh' }}>
+        <div ref={tableWrapRef} className="overflow-auto" style={{ maxHeight: '62vh' }}>
           <table className="min-w-full text-xs border-collapse">
             <thead className="sticky top-0 z-10" style={{ backgroundColor: '#131520' }}>
               <tr>
@@ -2282,13 +2227,15 @@ export function NettoyageTab() {
                 const sortedIdx  = safePage * PAGE_SIZE + pageIdx;
                 const isSelected = selectedIndices.has(sortedIdx);
                 const isOutlier  = highlightOutliers && row.kwhNet > outlierThreshold;
+                const exclusion  = modeMoteur ? qualite.exclusions.parLigne.get(row) : undefined;
                 return (
                   <tr key={sortedIdx}
-                    className={`border-t border-white/5 transition-colors ${isSelected ? 'bg-blue-600/15' : isOutlier ? 'bg-orange-500/10' : pageIdx % 2 === 0 ? '' : 'bg-white/[0.015]'} hover:bg-white/5`}>
+                    title={exclusion ? `Exclue des calculs : ${exclusion.join(', ')}` : undefined}
+                    className={`border-t border-white/5 transition-colors ${exclusion ? 'line-through opacity-50' : ''} ${isSelected ? 'bg-blue-600/15' : isOutlier ? 'bg-orange-500/10' : pageIdx % 2 === 0 ? '' : 'bg-white/[0.015]'} hover:bg-white/5`}>
                     <td className="px-2 py-1 border-r border-white/5 text-center">
                       <input type="checkbox" checked={isSelected} onChange={() => doSelectRow(sortedIdx)} className="accent-blue-500 cursor-pointer" />
                     </td>
-                    <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 font-mono text-[10px] select-none">{sortedIdx + 1}</td>
+                    <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 font-mono text-[0.625rem] select-none">{sortedIdx + 1}</td>
                     {COLUMNS.filter(c => visibleCols.has(c.key as string)).map(col => {
                       const isEditing     = editCell?.filteredIdx === sortedIdx && editCell?.col === col.key;
                       const isOutlierCell = highlightOutliers && col.key === 'kwhNet' && row.kwhNet > outlierThreshold;
@@ -2326,17 +2273,17 @@ export function NettoyageTab() {
                               col.key === 'date'              ? 'text-slate-200'     :
                               col.type === 'num'              ? 'text-slate-300/70'  : 'text-slate-400'}
                             ${isOutlierCell ? '!text-orange-400 font-bold' : ''}
-                            ${col.editable ? 'cursor-pointer hover:bg-white/5' : ''}`}
+                            ${col.editable && !modeMoteur ? 'cursor-pointer hover:bg-white/5' : ''}`}
                           onDoubleClick={() => {
-                            if (!col.editable) return;
+                            if (!col.editable || modeMoteur) return;
                             setEditCell({ filteredIdx: sortedIdx, col: col.key });
                             setEditVal(rawValue(row, col.key));
                           }}
-                          title={col.editable ? 'Double-clic pour modifier' : undefined}>
+                          title={col.editable && !modeMoteur ? 'Double-clic pour modifier' : undefined}>
                           {col.key === 'jourActivites' ? (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${row.jourActivites === 'Jour férié' ? 'bg-purple-500/20 text-purple-300' : row.jourActivites === 'Weekend' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-blue-500/15 text-blue-300'}`}>{displayVal}</span>
+                            <span className={`text-[0.625rem] px-1.5 py-0.5 rounded ${row.jourActivites === 'Jour férié' ? 'bg-purple-500/20 text-purple-300' : row.jourActivites === 'Weekend' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-blue-500/15 text-blue-300'}`}>{displayVal}</span>
                           ) : col.key === 'profil' ? (
-                            <Badge className={`border-0 text-[10px] py-0 ${row.profil === 'CHARGE' ? 'bg-blue-500/15 text-blue-300' : 'bg-orange-500/15 text-orange-300'}`}>{displayVal}</Badge>
+                            <Badge className={`border-0 text-[0.625rem] py-0 ${row.profil === 'CHARGE' ? 'bg-blue-500/15 text-blue-300' : 'bg-orange-500/15 text-orange-300'}`}>{displayVal}</Badge>
                           ) : displayVal}
                         </td>
                       );
@@ -2374,7 +2321,9 @@ export function NettoyageTab() {
 
       {/* Légende */}
       <div className="flex flex-wrap gap-4 text-xs text-slate-500">
-        <span>Double-clic sur une cellule éditable pour la modifier</span>
+        <span>{modeMoteur
+          ? 'Mesures en lecture seule : les règles qualité excluent sans rien modifier. Copie modifiable : Export ▾'
+          : 'Double-clic sur une cellule éditable pour la modifier'}</span>
         {highlightOutliers && <span className="text-orange-400">● Aberrantes : kWh Net &gt; {outlierThreshold.toFixed(2)}</span>}
       </div>
     </div>

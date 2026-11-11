@@ -3,53 +3,41 @@ import { parseExcelBuffer } from '@/lib/excel-utils';
 import {
   Upload, FileSpreadsheet, Trash2, CheckCircle, AlertCircle,
   ChevronLeft, ChevronRight, Hash, Calendar, Type, Database,
-  Tag, ChevronDown, FileText, Zap,
+  FileText, Zap, FolderOpen,
 } from 'lucide-react';
-import { extraireTextePDF, parserFactureEnergie } from '@/lib/iot-pdf-engine';
-import type { FactureParsee } from '@/lib/iot-pdf-engine';
+import { filesFromDataTransfer, filesFromInput, directoryInputProps } from '@/lib/folder-import';
+
+const ACCEPT_RE = /\.(csv|xlsx|xls)$/i;
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useIOT } from './IOTContext';
-import type { ImportedFile, ShellyRow, ProfilMi } from './shared';
-import { PROFIL_MI_LABELS, COLONNES_PROFIL_SHELLY } from './shared';
+import type { ImportedFile, ShellyRow, LectureFichier } from './shared';
+import { LectureFichierPanel } from './LectureFichierPanel';
+import { lireTableau, proposerLecture } from '@/lib/iot-lecture-fichier';
+import { COLONNES_PROFIL_SHELLY } from './shared';
 import { parseShellyRow, profilMiToShellyRow, detecterFormatShelly, parseShellySectionCSV } from '@/lib/iot-profil-engine';
 import { transformRowsToProfilMi, transformHoraireToProfilMi } from '@/lib/iot-supabase-service';
 
 type FileType = 'shelly' | 'autre';
 
-// ---- Entrée PDF facture ----
-interface PDFEntry {
-  file: File;
-  status: 'loading' | 'done' | 'error';
-  error?: string;
-  parsed?: FactureParsee;
-  // champs éditables (override du parsing)
-  editKwh: string;
-  editFcfa: string;
-  editEur: string;
-  editDebut: string;
-  editFin: string;
-  editKva: string;
-  editNumClient: string;
-}
-
 const ROWS_PER_PAGE = 50;
 
-// Onglets PROFIL Mi reconnus dans les fichiers Shelly multi-sheets
+// Onglets PROFIL Mi reconnus dans les fichiers Shelly multi-sheets — même
+// vocabulaire que les rôles d'appareils (M1 = réseau, quel que soit le
+// distributeur ; « SENELEC » n'est gardé que comme motif de détection des
+// anciens fichiers).
+type ProfilMi = 'M1_RESEAU' | 'M2_SELECTEUR' | 'M3_CHARGE' | 'M4_GROUPE' | 'M5_PV';
 const PROFIL_SHEET_PATTERNS: { pattern: RegExp; profilMi: ProfilMi }[] = [
-  { pattern: /SENELEC|M1/i,   profilMi: 'M1_SENELEC' },
-  { pattern: /SELECTEUR|M2/i, profilMi: 'M2_SELECTEUR' },
-  { pattern: /CHARGE|M3/i,    profilMi: 'M3_CHARGE' },
-  { pattern: /GROUPE|M4/i,    profilMi: 'M4_GROUPE' },
-  { pattern: /PV|M5/i,        profilMi: 'M5_PV' },
+  { pattern: /RESEAU|SENELEC|M1/i, profilMi: 'M1_RESEAU' },
+  { pattern: /SELECTEUR|M2/i,      profilMi: 'M2_SELECTEUR' },
+  { pattern: /CHARGE|M3/i,         profilMi: 'M3_CHARGE' },
+  { pattern: /GROUPE|M4/i,         profilMi: 'M4_GROUPE' },
+  { pattern: /PV|M5/i,             profilMi: 'M5_PV' },
 ];
 
 const PROFIL_MI_COLORS: Record<ProfilMi, string> = {
-  M1_SENELEC:   '#3b82f6',
+  M1_RESEAU:    '#3b82f6',
   M2_SELECTEUR: '#a855f7',
   M3_CHARGE:    '#ef4444',
   M4_GROUPE:    '#f97316',
@@ -64,12 +52,13 @@ interface SheetData {
   rowCount: number;
   profilMi?: ProfilMi;                  // profil Mi détecté depuis le nom de l'onglet
   isShelly: boolean;
+  /** Fichier hors formats Shelly : lecture proposée (date, rôles, unités), modifiable avant l'import. */
+  lecture?: LectureFichier;
 }
 
 interface FileEntry {
   file: File;
   type: FileType;
-  sourceIds: string[];   // multi-sélection : 0..N sources liées
   status: 'pending' | 'processing' | 'done' | 'error';
   error?: string;
   sheets: SheetData[];
@@ -223,7 +212,7 @@ function TableauSheet({
               const absIdx = page * ROWS_PER_PAGE + rowIdx;
               return (
                 <tr key={rowIdx} className={`hover:bg-blue-500/5 ${rowIdx % 2 === 0 ? '' : 'bg-white/[0.02]'}`}>
-                  <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none text-[10px] font-mono">{absIdx + 1}</td>
+                  <td className="px-2 py-1 text-slate-600 text-right border-r border-white/5 select-none text-[0.625rem] font-mono">{absIdx + 1}</td>
                   {columns.map(col => {
                     const val = row[col];
                     const display = val instanceof Date
@@ -277,10 +266,10 @@ function TableauSheet({
 // COMPOSANT PRINCIPAL
 // ============================================================
 export function UploadTab() {
-  const { state, addFile, setShellyRows, setSourceData } = useIOT();
+  const { state, addFile, setShellyRows } = useIOT();
   const inputRef = useRef<HTMLInputElement>(null);
+  const dirInputRef = useRef<HTMLInputElement>(null);
   const [entries, setEntries] = useState<FileEntry[]>([]);
-  const [pdfEntries, setPdfEntries] = useState<PDFEntry[]>([]);
   const [dragOver, setDragOver] = useState(false);
   // Page par entrée en cours (clé = file.name + sheet index)
   const [entryPages, setEntryPages] = useState<Record<string, number>>({});
@@ -288,7 +277,7 @@ export function UploadTab() {
   const pageKey = (entry: FileEntry) => `${entry.file.name}-${entry.activeSheet}`;
 
   // ---- Lecture complète d'un fichier ----
-  const processFile = useCallback(async (file: File, type: FileType, sourceIds: string[]): Promise<FileEntry> => {
+  const processFile = useCallback(async (file: File, type: FileType): Promise<FileEntry> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = async (e) => {
@@ -301,9 +290,17 @@ export function UploadTab() {
             .filter(n => !n.startsWith('~') && !n.toLowerCase().includes('legende') && !n.toLowerCase().includes('jours fériés'))
             .map(name => {
               const rawRows = wb.getRows(name);
-              const { columns, rows } = readSheet(rawRows);
+              let { columns, rows } = readSheet(rawRows);
               const detect = detecterFormatShelly(columns);
               const profilMi = detectProfilMiFromSheet(name);
+              // Hors formats Shelly : en-tête cherché au-dessus des données (préambule
+              // d'appareil, ligne d'unités), toutes les colonnes gardées
+              let lecture: LectureFichier | undefined;
+              if (!detect.isShelly) {
+                const t = lireTableau(rawRows);
+                columns = t.columns; rows = t.rows;
+                lecture = proposerLecture(t.columns, t.rows, t.unites, t.preambule, file.name);
+              }
               return {
                 name,
                 columns,
@@ -312,12 +309,13 @@ export function UploadTab() {
                 rowCount: rows.length,
                 profilMi,
                 isShelly: detect.isShelly,
+                lecture,
               };
             })
             .filter(s => s.rowCount > 0);
 
           if (sheets.length === 0) {
-            resolve({ file, type, sourceIds, status: 'error', error: 'Fichier vide ou format non reconnu', sheets: [], activeSheet: 0, page: 0 });
+            resolve({ file, type, status: 'error', error: 'Fichier vide ou format non reconnu', sheets: [], activeSheet: 0, page: 0 });
             return;
           }
 
@@ -337,62 +335,24 @@ export function UploadTab() {
             : detect.format === 'supabase_cl'      ? `Supabase minute${active.profilMi ? ' · ' + active.profilMi : ''}`
             : detect.format === 'profil_mi'        ? `PROFIL Mi${active.profilMi ? ' · ' + active.profilMi : ''}`
             : detect.format === 'shelly_excel'     ? `Shelly 3EM${active.profilMi ? ' · ' + active.profilMi : ''} (${detect.hasRetour ? 'avec retour' : 'sans retour'})`
-            : `${active.columns.length} colonnes — format générique`;
+            : `${active.columns.length} colonnes · lecture automatique à vérifier`;
 
-          resolve({ file, type, sourceIds, status: 'done', sheets, activeSheet, page: 0, detected: detectedType });
+          resolve({ file, type, status: 'done', sheets, activeSheet, page: 0, detected: detectedType });
         } catch (err) {
-          resolve({ file, type, sourceIds, status: 'error', error: String(err), sheets: [], activeSheet: 0, page: 0 });
+          resolve({ file, type, status: 'error', error: err instanceof Error ? err.message : String(err), sheets: [], activeSheet: 0, page: 0 });
         }
       };
       reader.readAsArrayBuffer(file);
     });
   }, []);
 
-  // ---- Traitement fichiers PDF ----
-  const processPDFFile = useCallback(async (file: File) => {
-    setPdfEntries(prev => prev.map(e => e.file === file ? { ...e, status: 'loading' } : e));
-    try {
-      const texte = await extraireTextePDF(file);
-      const parsed = parserFactureEnergie(texte);
-      setPdfEntries(prev => prev.map(e => e.file === file ? {
-        ...e,
-        status: 'done',
-        parsed,
-        editKwh:       parsed.consommationKwh != null ? String(parsed.consommationKwh) : '',
-        editFcfa:      parsed.montantFcfa      != null ? String(parsed.montantFcfa)    : '',
-        editEur:       parsed.montantEur       != null ? String(parsed.montantEur)     : '',
-        editDebut:     parsed.periode ? parsed.periode.debut.toISOString().slice(0, 10) : '',
-        editFin:       parsed.periode ? parsed.periode.fin.toISOString().slice(0, 10)   : '',
-        editKva:       parsed.puissanceSouscrite != null ? String(parsed.puissanceSouscrite) : '',
-        editNumClient: parsed.numeroClient ?? '',
-      } : e));
-    } catch (err) {
-      setPdfEntries(prev => prev.map(e => e.file === file ? { ...e, status: 'error', error: String(err) } : e));
-    }
-  }, []);
-
-  const handleFiles = useCallback(async (files: FileList) => {
-    const allFiles = Array.from(files);
-    const pdfFiles  = allFiles.filter(f => f.name.toLowerCase().endsWith('.pdf'));
-    const dataFiles = allFiles.filter(f => !f.name.toLowerCase().endsWith('.pdf'));
-
-    // Fichiers PDF → flux séparé
-    if (pdfFiles.length > 0) {
-      const newPDF: PDFEntry[] = pdfFiles.map(f => ({
-        file: f, status: 'loading',
-        editKwh: '', editFcfa: '', editEur: '',
-        editDebut: '', editFin: '', editKva: '', editNumClient: '',
-      }));
-      setPdfEntries(prev => [...prev, ...newPDF]);
-      for (const f of pdfFiles) await processPDFFile(f);
-    }
+  const handleFiles = useCallback(async (files: FileList | File[]) => {
+    const dataFiles = Array.from(files);
 
     if (dataFiles.length === 0) return;
-    const defaultSourceIds = state.sources[0]?.id ? [state.sources[0].id] : [];
     const newEntries: FileEntry[] = dataFiles.map(f => ({
       file: f,
       type: 'shelly' as FileType,
-      sourceIds: defaultSourceIds,
       status: 'pending' as const,
       sheets: [],
       activeSheet: 0,
@@ -402,50 +362,21 @@ export function UploadTab() {
 
     for (const entry of newEntries) {
       setEntries(prev => prev.map(e => e.file === entry.file ? { ...e, status: 'processing' } : e));
-      const processed = await processFile(entry.file, entry.type, entry.sourceIds);
-      setEntries(prev => prev.map(e => e.file === entry.file ? { ...processed, sourceIds: entry.sourceIds } : e));
+      const processed = await processFile(entry.file, entry.type);
+      setEntries(prev => prev.map(e => e.file === entry.file ? processed : e));
     }
-  }, [processFile, processPDFFile, state.sources]);
-
-  // ---- Import facture PDF vers le contexte ----
-  const handleImportPDF = useCallback((entry: PDFEntry) => {
-    const kwh   = parseFloat(entry.editKwh)   || 0;
-    const fcfa  = parseFloat(entry.editFcfa)  || undefined;
-    const eur   = parseFloat(entry.editEur)   || undefined;
-    const kva   = parseFloat(entry.editKva)   || undefined;
-    const debut = entry.editDebut ? new Date(entry.editDebut) : undefined;
-    const fin   = entry.editFin   ? new Date(entry.editFin)   : undefined;
-
-    const id = `${Date.now()}-${entry.file.name}`;
-    addFile({
-      id,
-      name: entry.file.name,
-      type: 'facture',
-      uploadedAt: new Date(),
-      rowCount: 1,
-      columns: ['periode_debut', 'periode_fin', 'consommation_kwh', 'montant_fcfa', 'montant_eur', 'puissance_kva', 'num_client'],
-      preview: [{ periode_debut: entry.editDebut, periode_fin: entry.editFin, consommation_kwh: kwh, montant_fcfa: fcfa, montant_eur: eur, puissance_kva: kva, num_client: entry.editNumClient }],
-      rawData: [{ periode_debut: entry.editDebut, periode_fin: entry.editFin, consommation_kwh: kwh, montant_fcfa: fcfa, montant_eur: eur, puissance_kva: kva, num_client: entry.editNumClient }],
-      statut: 'original',
-      taille: entry.file.size,
-    });
-    setPdfEntries(prev => prev.filter(e => e.file !== entry.file));
-    void debut; void fin; // consommées dans rawData indirectement
-  }, [addFile]);
+  }, [processFile]);
 
   // ---- Import vers le contexte ----
   const handleImport = useCallback((entry: FileEntry) => {
     const sheet = entry.sheets[entry.activeSheet];
     if (!sheet) return;
 
-    const id = `${Date.now()}-${entry.file.name}`;
-    // Compat : sourceId = première source (héritage), sourceIds = toutes
-    const primarySourceId = entry.sourceIds[0];
+    const id = crypto.randomUUID(); // clé de iot_files (uuid)
     const importedFile: ImportedFile = {
       id,
       name: entry.file.name,
-      type: entry.type,
-      sourceId: primarySourceId || undefined,
+      type: sheet.isShelly ? 'shelly' : 'autre',
       uploadedAt: new Date(),
       rowCount: sheet.rawData.length,
       columns: sheet.columns,
@@ -455,10 +386,11 @@ export function UploadTab() {
       taille: entry.file.size,
       deviceLocation: entry.deviceLocation || undefined,
       deviceRoom: entry.deviceRoom || undefined,
+      lecture: sheet.isShelly ? undefined : sheet.lecture,
     };
     addFile(importedFile);
 
-    if (entry.type === 'shelly') {
+    if (sheet.isShelly) {
       const detect = detecterFormatShelly(sheet.columns);
       let parsed: ShellyRow[] = [];
       try {
@@ -483,45 +415,36 @@ export function UploadTab() {
       if (parsed.length === 0) {
         parsed = sheet.rawData.map(r => parseShellyRow(r, state.joursFerier)).filter((r): r is ShellyRow => r !== null);
       }
-      // Enrichir chaque ligne avec l'identité de l'appareil (basée sur la 1ère source)
-      const sourceName = state.sources.find(s => s.id === primarySourceId)?.nom
-        ?? entry.file.name.replace(/\.(csv|xlsx|xls)$/i, '');
+      // Enrichir chaque ligne avec l'identité de l'appareil (à défaut : nom du fichier)
+      const fallbackName = entry.file.name.replace(/\.(csv|xlsx|xls)$/i, '');
       const shellyRows = parsed.map(r => ({
         ...r,
-        nomAppareil:    r.nomAppareil    ?? sourceName,
+        nomAppareil:    r.nomAppareil    ?? fallbackName,
         deviceLocation: r.deviceLocation ?? entry.deviceLocation ?? undefined,
         deviceRoom:     r.deviceRoom     ?? entry.deviceRoom     ?? undefined,
       }));
 
       setShellyRows([...state.shellyRows, ...shellyRows]);
-
-      // Diffuse les données dans toutes les sources sélectionnées
-      for (const sid of entry.sourceIds) {
-        let cumKwh = 0;
-        setSourceData(sid, shellyRows.map(r => {
-          cumKwh += r.kwhNet ?? 0;
-          return {
-            timestamp: r.date,
-            sourceId: sid,
-            puissanceKw: r.puissKwTotal ?? 0,
-            energieKwh: r.kwhNet ?? 0,
-            energieCumKwh: cumKwh,
-          };
-        }));
-      }
     }
 
     setEntries(prev => prev.filter(e => e.file !== entry.file));
-  }, [addFile, setShellyRows, setSourceData, state]);
+  }, [addFile, setShellyRows, state]);
 
   const patchEntry = useCallback((file: File, patch: Partial<FileEntry>) => {
     setEntries(prev => prev.map(e => e.file === file ? { ...e, ...patch } : e));
   }, []);
 
+  const patchLecture = useCallback((file: File, sheetIdx: number, lecture: LectureFichier) => {
+    setEntries(prev => prev.map(e => e.file !== file ? e : {
+      ...e, sheets: e.sheets.map((s, i) => i === sheetIdx ? { ...s, lecture } : s),
+    }));
+  }, []);
+
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files);
+    // Dossiers compris (parcours récursif) ; fichiers système et verrous Excel exclus
+    void filesFromDataTransfer(e.dataTransfer, ACCEPT_RE).then(files => { if (files.length > 0) handleFiles(files); });
   }, [handleFiles]);
 
   // ============================================================
@@ -540,150 +463,29 @@ export function UploadTab() {
         <input
           ref={inputRef}
           type="file"
-          accept=".csv,.xlsx,.xls,.pdf"
+          accept=".csv,.xlsx,.xls"
           multiple
           className="hidden"
-          onChange={(e) => e.target.files && handleFiles(e.target.files)}
+          onChange={(e) => { const fs = filesFromInput(e.target.files, ACCEPT_RE); if (fs.length) handleFiles(fs); e.target.value = ''; }}
+        />
+        <input
+          ref={dirInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          {...directoryInputProps()}
+          onChange={(e) => { const fs = filesFromInput(e.target.files, ACCEPT_RE); if (fs.length) handleFiles(fs); e.target.value = ''; }}
         />
         <Upload className="mx-auto h-10 w-10 text-blue-400 mb-3" />
         <p className="text-white font-medium text-lg">Glisser-déposer ou cliquer pour importer</p>
-        <p className="text-slate-400 text-sm mt-1">CSV, XLSX, XLS — Shelly 3EM &nbsp;·&nbsp; PDF — Factures énergie</p>
-        <p className="text-slate-600 text-xs mt-1">Fichiers multi-feuilles supportés · En-têtes doubles Shelly détectés automatiquement</p>
+        <p className="text-slate-400 text-sm mt-1">CSV, XLSX, XLS — Shelly 3EM &nbsp;·&nbsp; plusieurs fichiers ou un dossier entier</p>
+        <p className="text-slate-600 text-xs mt-1">Fichiers multi-feuilles supportés · En-têtes doubles Shelly détectés automatiquement · Sous-dossiers parcourus</p>
+        <Button type="button" size="sm" variant="outline"
+          className="mt-4 border-white/20 text-slate-200 hover:bg-white/10"
+          onClick={(e) => { e.stopPropagation(); dirInputRef.current?.click(); }}>
+          <FolderOpen className="h-4 w-4 mr-1.5" /> Importer un dossier
+        </Button>
       </div>
-
-      {/* ---- Factures PDF ---- */}
-      {pdfEntries.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 text-orange-400" />
-            <h3 className="text-white font-semibold">Factures énergie — vérification</h3>
-          </div>
-          {pdfEntries.map((entry, idx) => (
-            <div key={idx} className="bg-white/5 rounded-xl border border-orange-500/20 overflow-hidden">
-              {/* En-tête */}
-              <div className="flex items-center gap-3 p-4 border-b border-white/10">
-                <FileText className="h-5 w-5 text-orange-400 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-white font-medium truncate">{entry.file.name}</p>
-                  <p className="text-slate-400 text-xs">
-                    {(entry.file.size / 1024).toFixed(1)} KB
-                    {entry.parsed && (
-                      <span className="text-orange-400/80"> · {entry.parsed.source}</span>
-                    )}
-                  </p>
-                </div>
-                {entry.status === 'loading' && (
-                  <div className="w-5 h-5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
-                )}
-                {entry.status === 'done'  && <CheckCircle className="h-5 w-5 text-green-400" />}
-                {entry.status === 'error' && <AlertCircle className="h-5 w-5 text-red-400" />}
-                <Button size="sm" variant="ghost" className="text-slate-400 hover:text-red-400 hover:bg-red-500/10"
-                  onClick={() => setPdfEntries(prev => prev.filter((_, i) => i !== idx))}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-
-              {entry.status === 'error' && (
-                <p className="px-4 py-3 text-red-400 text-sm">{entry.error}</p>
-              )}
-
-              {entry.status === 'done' && (
-                <div className="p-4 space-y-4">
-                  <p className="text-slate-400 text-xs">
-                    Vérifiez et corrigez les données extraites automatiquement depuis la facture PDF.
-                  </p>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div>
-                      <label className="text-slate-500 text-xs block mb-1">Consommation (kWh)</label>
-                      <Input
-                        type="number"
-                        value={entry.editKwh}
-                        onChange={e => setPdfEntries(prev => prev.map((pe, i) => i === idx ? { ...pe, editKwh: e.target.value } : pe))}
-                        placeholder="ex: 1250"
-                        className="bg-white/5 border-white/20 text-white text-sm h-8"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-500 text-xs block mb-1">Montant FCFA</label>
-                      <Input
-                        type="number"
-                        value={entry.editFcfa}
-                        onChange={e => setPdfEntries(prev => prev.map((pe, i) => i === idx ? { ...pe, editFcfa: e.target.value } : pe))}
-                        placeholder="ex: 87500"
-                        className="bg-white/5 border-white/20 text-white text-sm h-8"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-500 text-xs block mb-1">Montant EUR</label>
-                      <Input
-                        type="number"
-                        value={entry.editEur}
-                        onChange={e => setPdfEntries(prev => prev.map((pe, i) => i === idx ? { ...pe, editEur: e.target.value } : pe))}
-                        placeholder="ex: 133.40"
-                        className="bg-white/5 border-white/20 text-white text-sm h-8"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-500 text-xs block mb-1">Puissance souscrite (kVA)</label>
-                      <Input
-                        type="number"
-                        value={entry.editKva}
-                        onChange={e => setPdfEntries(prev => prev.map((pe, i) => i === idx ? { ...pe, editKva: e.target.value } : pe))}
-                        placeholder="ex: 36"
-                        className="bg-white/5 border-white/20 text-white text-sm h-8"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-500 text-xs block mb-1">Période — début</label>
-                      <Input
-                        type="date"
-                        value={entry.editDebut}
-                        onChange={e => setPdfEntries(prev => prev.map((pe, i) => i === idx ? { ...pe, editDebut: e.target.value } : pe))}
-                        className="bg-white/5 border-white/20 text-white text-sm h-8"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-500 text-xs block mb-1">Période — fin</label>
-                      <Input
-                        type="date"
-                        value={entry.editFin}
-                        onChange={e => setPdfEntries(prev => prev.map((pe, i) => i === idx ? { ...pe, editFin: e.target.value } : pe))}
-                        className="bg-white/5 border-white/20 text-white text-sm h-8"
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="text-slate-500 text-xs block mb-1">N° client / contrat</label>
-                      <Input
-                        value={entry.editNumClient}
-                        onChange={e => setPdfEntries(prev => prev.map((pe, i) => i === idx ? { ...pe, editNumClient: e.target.value } : pe))}
-                        placeholder="Numéro de compte / référence"
-                        className="bg-white/5 border-white/20 text-white text-sm h-8"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1">
-                    {entry.parsed?.texteComplet && (
-                      <p className="text-slate-600 text-xs truncate max-w-[60%]">
-                        Texte brut : {entry.parsed.texteComplet.slice(0, 120)}…
-                      </p>
-                    )}
-                    <Button
-                      size="sm"
-                      className="bg-orange-600 hover:bg-orange-500 text-white h-8 ml-auto"
-                      onClick={() => handleImportPDF(entry)}
-                      disabled={!entry.editKwh && !entry.editFcfa}
-                    >
-                      <Zap className="h-3.5 w-3.5 mr-1.5" />
-                      Enregistrer la facture
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* ---- Fichiers en attente de configuration ---- */}
       {entries.length > 0 && (
@@ -725,112 +527,6 @@ export function UploadTab() {
                   <>
                     {/* Barre de configuration */}
                     <div className="flex flex-wrap items-center gap-3 px-4 py-3 bg-white/3 border-b border-white/10">
-                      {/* Type de données */}
-                      <Select value={entry.type} onValueChange={(val) => patchEntry(entry.file, { type: val as FileType })}>
-                        <SelectTrigger className="w-52 bg-white/5 border-white/20 text-white text-sm h-8">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-[#1a1d2e] border-white/20">
-                          <SelectItem value="shelly">Shelly 3EM — Profil de charge</SelectItem>
-                          <SelectItem value="autre">Autre / Générique</SelectItem>
-                        </SelectContent>
-                      </Select>
-
-                      {/* Sources liées (multi-sélection) */}
-                      {state.sources.length > 0 && (
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" size="sm"
-                              className="bg-white/5 border-white/20 text-white text-sm h-8 min-w-[12rem] justify-between gap-2">
-                              <div className="flex items-center gap-1.5 flex-1 truncate">
-                                {entry.sourceIds.length === 0 ? (
-                                  <span className="text-slate-400">Aucune source</span>
-                                ) : entry.sourceIds.length === 1 ? (
-                                  (() => {
-                                    const src = state.sources.find(s => s.id === entry.sourceIds[0]);
-                                    if (!src) return <span className="text-slate-400">…</span>;
-                                    return (
-                                      <>
-                                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: src.couleur }} />
-                                        <span className="truncate">{src.nom}</span>
-                                        {src.profilMi && <span className="text-slate-500 text-xs">· {src.profilMi.split('_')[0]}</span>}
-                                      </>
-                                    );
-                                  })()
-                                ) : (
-                                  <>
-                                    <div className="flex -space-x-1">
-                                      {entry.sourceIds.slice(0, 3).map(sid => {
-                                        const s = state.sources.find(x => x.id === sid);
-                                        return s ? (
-                                          <span key={sid} className="w-3 h-3 rounded-full border border-[#1a1d2e]" style={{ backgroundColor: s.couleur }} />
-                                        ) : null;
-                                      })}
-                                    </div>
-                                    <span className="text-xs">{entry.sourceIds.length} sources sélectionnées</span>
-                                  </>
-                                )}
-                              </div>
-                              <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-72 bg-[#1a1d2e] border-white/20 p-2" align="start">
-                            <div className="flex items-center justify-between px-2 py-1 mb-1">
-                              <span className="text-slate-400 text-xs">Sources liées ({entry.sourceIds.length}/{state.sources.length})</span>
-                              <button
-                                onClick={() => patchEntry(entry.file, {
-                                  sourceIds: entry.sourceIds.length === state.sources.length ? [] : state.sources.map(s => s.id),
-                                })}
-                                className="text-xs text-blue-400 hover:text-blue-300"
-                              >
-                                {entry.sourceIds.length === state.sources.length ? 'Aucune' : 'Toutes'}
-                              </button>
-                            </div>
-                            <div className="max-h-72 overflow-y-auto space-y-0.5">
-                              {state.sources.map(src => {
-                                const checked = entry.sourceIds.includes(src.id);
-                                return (
-                                  <label
-                                    key={src.id}
-                                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer"
-                                  >
-                                    <Checkbox
-                                      checked={checked}
-                                      onCheckedChange={(v) => {
-                                        const next = v
-                                          ? [...entry.sourceIds, src.id]
-                                          : entry.sourceIds.filter(id => id !== src.id);
-                                        patchEntry(entry.file, { sourceIds: next });
-                                      }}
-                                    />
-                                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: src.couleur }} />
-                                    <span className="text-white text-sm flex-1 truncate">{src.nom}</span>
-                                    {src.profilMi && (
-                                      <span className="text-slate-500 text-xs">{src.profilMi.split('_')[0]}</span>
-                                    )}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-                      )}
-
-                      {/* Badges ProfilMi des sources sélectionnées */}
-                      {entry.sourceIds.length > 0 && entry.sourceIds.map(sid => {
-                        const src = state.sources.find(s => s.id === sid);
-                        if (!src?.profilMi) return null;
-                        return (
-                          <Badge key={sid}
-                            className="text-xs border-0 h-7 flex items-center gap-1"
-                            style={{ backgroundColor: PROFIL_MI_COLORS[src.profilMi] + '25', color: PROFIL_MI_COLORS[src.profilMi] }}
-                          >
-                            <Tag className="h-3 w-3" />
-                            {PROFIL_MI_LABELS[src.profilMi]}
-                          </Badge>
-                        );
-                      })}
-
                       {/* Localisation appareil */}
                       <Input
                         value={entry.deviceLocation ?? ''}
@@ -858,16 +554,24 @@ export function UploadTab() {
                           size="sm"
                           className="bg-blue-600 hover:bg-blue-500 text-white h-8"
                           onClick={() => handleImport(entry)}
-                          disabled={!sheet.isShelly && entry.type === 'shelly'}
+                          disabled={!sheet.isShelly && !sheet.lecture?.colDate}
                         >
                           <Database className="h-3.5 w-3.5 mr-1.5" />
                           Importer {sheet.rowCount.toLocaleString('fr-FR')} lignes
                         </Button>
-                        {!sheet.isShelly && entry.type === 'shelly' && (
-                          <p className="text-orange-400 text-xs mt-1">Format Shelly non reconnu dans cette feuille</p>
-                        )}
                       </div>
                     </div>
+
+                    {/* Fichier hors formats Shelly : vérifier la lecture avant d'importer */}
+                    {!sheet.isShelly && sheet.lecture && (
+                      <LectureFichierPanel
+                        columns={sheet.columns}
+                        rows={sheet.rawData}
+                        lecture={sheet.lecture}
+                        onChange={l => patchLecture(entry.file, entry.activeSheet, l)}
+                        joursFerier={state.joursFerier}
+                      />
+                    )}
 
                     {/* Onglets feuilles */}
                     {entry.sheets.length > 1 && (
@@ -891,7 +595,7 @@ export function UploadTab() {
                               <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: PROFIL_MI_COLORS[s.profilMi] }} />
                             )}
                             {s.isShelly && (
-                              <span className="text-green-500 text-[9px]">✓</span>
+                              <span className="text-green-500 text-[0.5625rem]">✓</span>
                             )}
                             <span className="text-slate-500">{s.rowCount.toLocaleString('fr-FR')}</span>
                           </button>

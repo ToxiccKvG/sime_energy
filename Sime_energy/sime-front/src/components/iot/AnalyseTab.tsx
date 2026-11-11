@@ -1,96 +1,70 @@
-import { useMemo, useState, useRef, useCallback, useEffect, Fragment } from 'react';
-import { parseExcelBuffer, rowsToObjects, exportJsonToXlsx } from '@/lib/excel-utils';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
+import { PieOfPie, groupSmallParts, MAX_PARTS_CHOICES, type SliceLabelMode } from '@/components/shared/PieOfPie';
+import { exportJsonToXlsx } from '@/lib/excel-utils';
+import { appliquerLecture, proposerLecture, lireFichierImporte } from '@/lib/iot-lecture-fichier';
+import { ChartOptions } from '@/components/shared/ChartOptions';
+import { useChartPreferences, usePalette, seriesColor, chartTitle } from '@/lib/chart-preferences';
+import { ChartZoom } from '@/components/shared/ChartZoom';
 import {
   ScatterChart, Scatter, BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  Cell, ReferenceLine, AreaChart, Area, Legend,
-  PieChart, Pie, ComposedChart,
+  XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, AreaChart, Area, Legend, Brush,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import {
   Filter, BarChart2, TrendingUp, Activity, Upload,
   FileSpreadsheet, X, ChevronDown, ChevronUp, Download,
-  Database, CheckSquare, Square, RefreshCw, Zap,
-  Maximize2, Minimize2, ChevronRight, Layers, FileText,
+  Database, Zap,
+  Maximize2, Minimize2, ChevronRight, Layers, FileText, AlertTriangle,
 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useIOT } from './IOTContext';
 import { ProfilChargeTab } from './ProfilChargeTab';
+import { METRIQUES, METRIQUES_ENV, colorForMetric, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, fmtFr, grandeursDisponibles, type MetricKey, type MetricGroup } from './analyse/communs';
+import { EnvCourbeView, EnvBandeView, EnvHeatmapView, EnvProfil24View, SignatureView } from './analyse/VuesEnvironnement';
+import { libelleSites, PerimetreBar, perimetreDepuisChargement, type PerimetreAnalyse } from './PerimetreBar';
+import { VueComparaisonSites, VueEtats } from './analyse/VuesEtats';
+import { RapportCapteursDialog } from './RapportCapteursDialog';
+import type { PerimetreRapport } from '@/lib/iot-rapport-service';
+import { fetchDeviceRoles } from '@/lib/shelly-device-role-service';
+import { idsSerieSansDoubleCompte, type RoleCircuit } from '@/lib/iot-circuits';
+import { useQualiteMoteur, QualiteLigne } from './QualiteMoteurPanel';
 import { parseShellyRow, profilMiToShellyRow, calculerStats, detecterFormatShelly, parseShellySectionCSV } from '@/lib/iot-profil-engine';
-import { transformRowsToProfilMi, transformHoraireToProfilMi, exporterDonneesSupabase, getColonnesParGroupe, fetchDisponibles } from '@/lib/iot-supabase-service';
+import { transformRowsToProfilMi, transformHoraireToProfilMi, fetchDisponibles, fetchSiteBilan, type SiteBilan, type SupabaseExportOptions } from '@/lib/iot-supabase-service';
 import { JOURS_SEMAINE, MOIS_FR, COLONNES_PROFIL_SHELLY } from './shared';
 import type { ShellyRow } from './shared';
 
 type AnalyseMode = 'courbe' | 'tcd' | 'profil_semaine' | 'distribution' | 'correlation' | 'serie'
-  | 'env_bande' | 'env_heatmap' | 'env_profil24' | 'signature';
+  | 'env_courbe' | 'env_bande' | 'env_heatmap' | 'env_profil24' | 'signature' | 'etats' | 'sites';
 
-const ENV_MODES: AnalyseMode[] = ['env_bande', 'env_heatmap', 'env_profil24'];
+const ENV_MODES: AnalyseMode[] = ['env_courbe', 'env_bande', 'env_heatmap', 'env_profil24'];
 type ChartType = 'bar' | 'line' | 'area' | 'pie';
 
 const COULEURS = ['#a78bfa', '#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#f97316', '#06b6d4'];
 
-type MetricKey =
-  | 'kwhTotal' | 'kwhNet' | 'kwhRetourTotal'
-  | 'kwhA' | 'kwhB' | 'kwhC'
-  | 'kwhRetourA' | 'kwhRetourB' | 'kwhRetourC'
-  | 'puissKwTotal' | 'puissKwA' | 'puissKwB' | 'puissKwC'
-  | 'montantEnergie' | 'montantEnergieRetour';
+/** Libellé lisible de chaque vue — sert au titre du graphique et à l'export. */
+const MODE_LABELS: Record<string, string> = {
+  courbe: 'Courbe de charge',
+  serie: 'Série temporelle',
+  tcd: 'Tableau croisé',
+  profil_semaine: 'Profil de semaine',
+  distribution: 'Distribution',
+  correlation: 'Corrélation',
+  env_courbe: 'Courbe',
+  env_bande: 'Min / Max par jour',
+  env_heatmap: 'Carte de chaleur',
+  env_profil24: 'Profil 24 h',
+  signature: 'Signature énergétique',
+  etats: 'États des capteurs',
+  sites: 'Comparaison des sites',
+};
 
-type MetricGroup = 'Énergie' | 'Phase A' | 'Phase B' | 'Phase C' | 'Puissance' | 'Coût' ;
 
-const METRIQUES: { key: MetricKey; label: string; unit: string; color: string; group: MetricGroup }[] = [
-  // ÉNERGIE — Totaux
-  { key: 'kwhTotal',             label: 'Consommation totale',       unit: 'kWh',  color: '#3b82f6', group: 'Énergie' },
-  { key: 'kwhNet',               label: 'Énergie nette',             unit: 'kWh',  color: '#a78bfa', group: 'Énergie' },
-  { key: 'kwhRetourTotal',       label: 'Énergie injectée (retour)', unit: 'kWh',  color: '#ec4899', group: 'Énergie' },
-  // PAR PHASE — Soutirage
-  { key: 'kwhA',                 label: 'Phase A — Consommation',    unit: 'kWh',  color: '#22c55e', group: 'Phase A' },
-  { key: 'kwhB',                 label: 'Phase B — Consommation',    unit: 'kWh',  color: '#f59e0b', group: 'Phase B' },
-  { key: 'kwhC',                 label: 'Phase C — Consommation',    unit: 'kWh',  color: '#ec4899', group: 'Phase C' },
-  // PAR PHASE — Retour réseau
-  { key: 'kwhRetourA',           label: 'Phase A — Retour réseau',   unit: 'kWh',  color: '#34d399', group: 'Phase A' },
-  { key: 'kwhRetourB',           label: 'Phase B — Retour réseau',   unit: 'kWh',  color: '#fbbf24', group: 'Phase B' },
-  { key: 'kwhRetourC',           label: 'Phase C — Retour réseau',   unit: 'kWh',  color: '#f472b6', group: 'Phase C' },
-  // PUISSANCE
-  { key: 'puissKwTotal',         label: 'Puissance totale',          unit: 'kW',   color: '#06b6d4', group: 'Puissance' },
-  { key: 'puissKwA',             label: 'Puissance — Phase A',       unit: 'kW',   color: '#67e8f9', group: 'Puissance' },
-  { key: 'puissKwB',             label: 'Puissance — Phase B',       unit: 'kW',   color: '#fde047', group: 'Puissance' },
-  { key: 'puissKwC',             label: 'Puissance — Phase C',       unit: 'kW',   color: '#fda4af', group: 'Puissance' },
-  // COÛT
-  { key: 'montantEnergie',       label: 'Coût consommation',         unit: 'FCFA', color: '#facc15', group: 'Coût' },
-  { key: 'montantEnergieRetour', label: 'Crédit retour réseau',      unit: 'FCFA', color: '#a3e635', group: 'Coût' },
-];
-
-// ── Grandeurs environnementales (CAPTEUR_ENV / ETAT) ──────────
-// Contrairement aux kWh, ces grandeurs ne se somment pas : elles s'observent
-// en min / max / moyenne. Les vues env_* utilisent donc leurs propres agrégats.
-type EnvMetricKey =
-  | 'temperature' | 'humidite' | 'ressenti' | 'pointRosee'
-  | 'uvIndex' | 'luminosite' | 'pression' | 'precipitation'
-  | 'ventVitesse' | 'ventRafale' | 'batterie' | 'signal';
-
-const METRIQUES_ENV: { key: EnvMetricKey; label: string; unit: string; color: string }[] = [
-  { key: 'temperature',   label: 'Température',     unit: '°C',  color: '#f97316' },
-  { key: 'humidite',      label: 'Humidité',        unit: '%',   color: '#3b82f6' },
-  { key: 'ressenti',      label: 'Ressenti',        unit: '°C',  color: '#fb923c' },
-  { key: 'pointRosee',    label: 'Point de rosée',  unit: '°C',  color: '#22d3ee' },
-  { key: 'uvIndex',       label: 'Indice UV',       unit: '',    color: '#a855f7' },
-  { key: 'luminosite',    label: 'Luminosité',      unit: 'lux', color: '#eab308' },
-  { key: 'pression',      label: 'Pression',        unit: 'hPa', color: '#94a3b8' },
-  { key: 'precipitation', label: 'Précipitations',  unit: 'mm',  color: '#38bdf8' },
-  { key: 'ventVitesse',   label: 'Vent',            unit: 'm/s', color: '#34d399' },
-  { key: 'ventRafale',    label: 'Rafale',          unit: 'm/s', color: '#10b981' },
-  { key: 'batterie',      label: 'Batterie',        unit: '%',   color: '#84cc16' },
-  { key: 'signal',        label: 'Signal',          unit: 'dBm', color: '#64748b' },
-];
 
 const ACCENT_COLOR = '#3b82f6';
 
@@ -116,7 +90,7 @@ const ENERGIE_COLUMNS = [
 const ENV_COLUMNS = [
   'Temperature', 'Humidite', 'Ressenti', 'Point_Rosee',
   'UV_Index', 'Luminosite', 'Pression', 'Tendance_Pression',
-  'Precipitation', 'Alarme_Humidite',
+  'Precipitation', 'Precipitation_Incr', 'Mesure_Le', 'Alarme_Humidite',
   'Vent_Vitesse', 'Vent_Rafale', 'Vent_Direction',
   'Batterie', 'Batterie_V', 'Signal',
 ];
@@ -140,23 +114,6 @@ function recommendedColumns(families: Set<string>): string[] {
   if (hasEtat) ETAT_COLUMNS.forEach(c => cols.add(c));
   return Array.from(cols);
 }
-
-const DEFAULT_SUPABASE_COLUMNS = recommendedColumns(new Set());
-
-const DEFAULT_COLUMN_GROUPS = {
-  entree: ['Temps', ...ENV_COLUMNS, ...ETAT_COLUMNS],
-  calcule: ENERGIE_COLUMNS,
-  classifieur: CLASSIFIEUR_COLUMNS,
-} as const;
-
-const TOOLTIP_STYLE = {
-  backgroundColor: '#0f172a',
-  border: '1px solid rgba(148,163,184,0.35)',
-  borderRadius: 10,
-  color: '#e2e8f0',
-};
-
-const TOOLTIP_LABEL_STYLE = { color: '#f8fafc', fontWeight: 600 };
 
 const tcdFormatter = (value: number | string, name: string): [string, string] => {
   const meta = METRIQUES.find(m => m.label === name) ?? METRIQUES.find(m => m.key === name);
@@ -203,11 +160,10 @@ const TCD_LIGNE_LABEL: Record<'mois' | 'jouSemaine' | 'typeJour' | 'appareil' | 
   piece: 'Pièce',
 };
 
-// Libellé d'axe lisible par unité (pour les axes double échelle kWh / kW / FCFA)
+// Libellé d'axe lisible par unité (pour les axes double échelle kWh / kW)
 const UNIT_AXIS_LABEL: Record<string, string> = {
   kWh: 'Énergie (kWh)',
   kW: 'Puissance (kW)',
-  FCFA: 'Montant (FCFA)',
 };
 function axisLabelForUnit(unit?: string): string {
   return unit ? (UNIT_AXIS_LABEL[unit] ?? unit) : '';
@@ -264,6 +220,80 @@ function TcdTooltip({ active, payload, label }: {
   );
 }
 
+// Camembert du TCD : le même camembert « principal + secondaire » que le module Mesures.
+// Les plus petites parts passent dans « Autres » (détaillé dans un second camembert) ; un clic sur
+// une part filtre le TCD (filtre croisé) comme avant ; l'infobulle garde appareils / sites / pièces.
+function TcdPie({ data, primaryMetric, crossFilter, onPieClick, height }: {
+  data: Record<string, unknown>[];
+  primaryMetric: MetricKey;
+  crossFilter: string | null;
+  onPieClick: (entry: { label?: string }) => void;
+  height: number;
+}) {
+  const palette = usePalette();
+  const meta = METRIQUES.find(m => m.key === primaryMetric);
+  const unit = meta?.unit ?? '';
+  const [maxParts, setMaxParts] = useState<number>(5);
+  const [labelMode, setLabelMode] = useState<SliceLabelMode>('both');
+
+  const { rows, skipped } = useMemo(() => {
+    const all = data.map((d, i) => ({ name: String(d.label ?? ''), value: Number(d[primaryMetric]), color: seriesColor(palette, i) }));
+    // Un camembert ne représente que des parts positives (une énergie nette négative, un retour nul n'ont pas de part).
+    const pos = all.filter(r => Number.isFinite(r.value) && r.value > 0).sort((a, b) => b.value - a.value);
+    return { rows: pos, skipped: all.length - pos.length };
+  }, [data, primaryMetric, palette]);
+
+  const total = rows.reduce((a, r) => a + r.value, 0);
+  const { shown, others } = useMemo(() => groupSmallParts(rows, maxParts), [rows, maxParts]);
+  const fmtV = (v: number) => `${fmtFr(v, v < 10 ? 2 : 1)}${unit ? ` ${unit}` : ''}`;
+  const pct = (v: number) => `${fmtFr((v / total) * 100, 1)} %`;
+
+  if (rows.length === 0) return <p className="text-sm text-slate-400 py-10 text-center">Aucune valeur positive à répartir pour cette grandeur.</p>;
+
+  const extra = (name: string) => {
+    const row = data.find(d => String(d.label) === name);
+    if (!row) return null;
+    const n = typeof row.n === 'number' ? row.n : undefined;
+    const lists: [string, string[], string][] = [
+      ['Appareil', Array.isArray(row._appareils) ? (row._appareils as string[]) : [], 'text-cyan-300'],
+      ['Site', Array.isArray(row._emplacements) ? (row._emplacements as string[]) : [], 'text-yellow-300'],
+      ['Pièce', Array.isArray(row._pieces) ? (row._pieces as string[]) : [], 'text-purple-300'],
+    ];
+    return (
+      <div className="pt-1 border-t border-white/10 space-y-0.5">
+        {typeof n === 'number' && <p className="text-slate-400">{n} point{n > 1 ? 's' : ''}</p>}
+        {lists.filter(([, a]) => a.length > 0).map(([l, a, c]) => (
+          <p key={l} className="text-slate-400">{l}{a.length > 1 ? 's' : ''} : <span className={c}>{a.slice(0, 3).join(', ')}{a.length > 3 ? ` +${a.length - 3}` : ''}</span></p>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-slate-400" data-no-export>
+        <label className="flex items-center gap-1.5">
+          Parts affichées
+          <select className="h-7 rounded-md border border-white/10 bg-white/5 px-1.5 text-xs text-slate-200" value={maxParts} onChange={(e) => setMaxParts(Number(e.target.value))}>
+            {MAX_PARTS_CHOICES.map(n => <option key={n} value={n} className="text-black">{n === 0 ? 'Toutes' : `${n} max, le reste en « Autres »`}</option>)}
+          </select>
+        </label>
+        <div className="flex gap-1 p-1 bg-white/5 rounded-lg border border-white/10">
+          {([['percent', '%'], ['value', 'Valeur'], ['both', 'Les deux']] as [SliceLabelMode, string][]).map(([k, l]) => (
+            <button key={k} onClick={() => setLabelMode(k)} className={`px-2 py-0.5 rounded text-xs ${labelMode === k ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-white'}`}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <PieOfPie shown={shown} others={others} total={total} format={fmtV} labelMode={labelMode} height={Math.max(300, height)}
+        onSliceClick={(name) => onPieClick({ label: name })} activeName={crossFilter} tooltipExtra={extra} />
+      <p className="text-xs text-center text-slate-300">
+        {meta?.label ?? 'Total'} : <span className="font-semibold text-white">{fmtV(total)}</span> (= 100 %)
+        {skipped > 0 && <span className="text-slate-500"> · {skipped} valeur(s) nulle(s) ou négative(s) non représentée(s)</span>}
+      </p>
+    </div>
+  );
+}
+
 // Graphique TCD (bar/line/area/pie) — partagé entre la vue normale et la vue plein écran,
 // qui ne diffèrent que par la taille/densité (police, marges, rayons).
 function TcdChart({
@@ -290,6 +320,11 @@ function TcdChart({
   xAxisLabel?: string;
   compact: boolean;
 }) {
+  // Couleurs et légendes : réglages partagés avec le module Mesures.
+  const palette = usePalette();
+  const { showLegend } = useChartPreferences();
+  const metricColor = (mk: string) => colorForMetric(palette, mk);
+
   const tickFontSize = compact ? 10 : 11;
   const yTickFontSize = compact ? 9 : 10;
   const axisLabelFontSize = compact ? 10 : 11;
@@ -299,8 +334,9 @@ function TcdChart({
   const dimOpacity = compact ? 0.3 : 0.35;
   const dotRadius = compact ? 3 : 4;
   const avgLabel = compact ? 'Moy.' : 'Moyenne';
-  const pieOuterRadius = compact ? 80 : 95;
-  const pieInnerRadius = compact ? 38 : 45;
+  if (chartType === 'pie') {
+    return <TcdPie data={data} primaryMetric={primaryMetric} crossFilter={crossFilter} onPieClick={onPieClick} height={height} />;
+  }
 
   return (
     <ResponsiveContainer key={chartType} width="100%" height={height}>
@@ -313,13 +349,13 @@ function TcdChart({
             <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[1]), angle: 90, position: 'insideRight', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
           )}
           <Tooltip content={<TcdTooltip />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
-          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {showLegend && <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />}
           {Array.from(metrics).map(mk => {
             const meta = METRIQUES.find(m => m.key === mk);
             return (
-              <Bar key={mk} yAxisId={metricAxis(mk)} dataKey={mk} name={meta?.label ?? mk} radius={barRadius} fill={meta?.color ?? accentColor} cursor="pointer" opacity={0.85}>
+              <Bar key={mk} yAxisId={metricAxis(mk)} dataKey={mk} name={meta?.label ?? mk} radius={barRadius} fill={metricColor(mk)} cursor="pointer" opacity={0.85}>
                 {mk === primaryMetric && data.map((entry, i) => (
-                  <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : meta?.color ?? COULEURS[i % COULEURS.length]} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} />
+                  <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : metricColor(mk)} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} />
                 ))}
               </Bar>
             );
@@ -334,10 +370,10 @@ function TcdChart({
             <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[1]), angle: 90, position: 'insideRight', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
           )}
           <Tooltip content={<TcdTooltip />} />
-          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {showLegend && <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />}
           {Array.from(metrics).map(mk => {
             const meta = METRIQUES.find(m => m.key === mk);
-            return <Line key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? accentColor} strokeWidth={2} dot={{ r: dotRadius }} />;
+            return <Line key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={metricColor(mk)} strokeWidth={2} dot={{ r: dotRadius }} />;
           })}
           <Line yAxisId={unitAxis(primaryUnit)} type="monotone" dataKey="moyenne" name={avgLabel} stroke="#06b6d4" strokeWidth={1} strokeDasharray="4 4" dot={false} />
         </LineChart>
@@ -350,25 +386,14 @@ function TcdChart({
             <YAxis yAxisId="right" orientation="right" tick={{ fill: '#cbd5e1', fontSize: yTickFontSize }} label={{ value: axisLabelForUnit(units[1]), angle: 90, position: 'insideRight', fill: axisLabelFill, fontSize: axisLabelFontSize }} />
           )}
           <Tooltip content={<TcdTooltip />} />
-          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
+          {showLegend && <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />}
           {Array.from(metrics).map(mk => {
             const meta = METRIQUES.find(m => m.key === mk);
-            return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? accentColor} fill={(meta?.color ?? accentColor) + '20'} strokeWidth={2} />;
+            return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={metricColor(mk)} fill={metricColor(mk) + '20'} strokeWidth={2} />;
           })}
         </AreaChart>
       ) : (
-        <PieChart>
-          <Tooltip content={<TcdTooltip />} />
-          <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
-          <Pie data={data} dataKey={primaryMetric} nameKey="label" cx="50%" cy="50%" outerRadius={pieOuterRadius} innerRadius={pieInnerRadius}
-            label={(e: { name?: string; percent?: number }) => `${e.name} · ${((e.percent ?? 0) * 100).toFixed(0)}%`}
-            labelLine={false}
-            onClick={onPieClick}>
-            {data.map((entry, i) => (
-              <Cell key={i} fill={crossFilter === entry.label ? '#f59e0b' : COULEURS[i % COULEURS.length]} opacity={crossFilter && crossFilter !== entry.label ? dimOpacity : 1} cursor="pointer" />
-            ))}
-          </Pie>
-        </PieChart>
+        <></>
       )}
     </ResponsiveContainer>
   );
@@ -377,280 +402,6 @@ function TcdChart({
 // ============================================================
 // VUES ENVIRONNEMENTALES
 // ============================================================
-
-interface EnvDayAgg { jour: string; ts: number; range: [number, number]; moy: number; n: number }
-
-function aggEnvByDay(rows: ShellyRow[], metric: EnvMetricKey): EnvDayAgg[] {
-  const byDay = new Map<string, { ts: number; vals: number[] }>();
-  for (const r of rows) {
-    const v = r[metric];
-    if (typeof v !== 'number' || !isFinite(v)) continue;
-    const d = r.date instanceof Date ? r.date : new Date(r.date);
-    const key = d.toISOString().slice(0, 10);
-    const cur = byDay.get(key) ?? { ts: new Date(key).getTime(), vals: [] };
-    cur.vals.push(v);
-    byDay.set(key, cur);
-  }
-  return [...byDay.entries()]
-    .map(([key, { ts, vals }]) => ({
-      jour: new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
-      ts,
-      range: [Math.min(...vals), Math.max(...vals)] as [number, number],
-      moy: vals.reduce((s, v) => s + v, 0) / vals.length,
-      n: vals.length,
-    }))
-    .sort((a, b) => a.ts - b.ts);
-}
-
-// Vue 1 — Bande min/max journalière + moyenne
-function EnvBandeView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
-  const meta = METRIQUES_ENV.find(m => m.key === metric)!;
-  const data = useMemo(() => aggEnvByDay(rows, metric), [rows, metric]);
-  if (data.length === 0) {
-    return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
-  }
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between px-1">
-        <p className="text-slate-300 text-sm font-medium">{meta.label} — min / max / moyenne par jour</p>
-        <span className="text-slate-500 text-xs">{data.length} jour{data.length > 1 ? 's' : ''}</span>
-      </div>
-      <ResponsiveContainer width="100%" height={340}>
-        <ComposedChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-          <XAxis dataKey="jour" tick={{ fill: '#cbd5e1', fontSize: 11 }} />
-          <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} domain={['auto', 'auto']}
-            label={{ value: meta.unit ? `${meta.label} (${meta.unit})` : meta.label, angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11 }} />
-          <Tooltip
-            contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
-            formatter={(value: number | [number, number], name: string) => {
-              if (Array.isArray(value)) return [`${fmtFr(value[0], 1)} → ${fmtFr(value[1], 1)} ${meta.unit}`, 'Min → Max'];
-              return [`${fmtFr(value, 1)} ${meta.unit}`, name];
-            }} />
-          <Area dataKey="range" name="Min → Max" stroke="none" fill={meta.color} fillOpacity={0.18} connectNulls />
-          <Line dataKey="moy" name="Moyenne" stroke={meta.color} strokeWidth={2} dot={{ r: 3 }} connectNulls />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-// Vue 2 — Heatmap heures × jours (couleur = moyenne horaire)
-function EnvHeatmapView({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
-  const meta = METRIQUES_ENV.find(m => m.key === metric)!;
-  const { days, grid, vmin, vmax } = useMemo(() => {
-    // (jour, heure) → moyenne
-    const acc = new Map<string, { ts: number; sums: number[]; counts: number[] }>();
-    for (const r of rows) {
-      const v = r[metric];
-      if (typeof v !== 'number' || !isFinite(v)) continue;
-      const d = r.date instanceof Date ? r.date : new Date(r.date);
-      const key = d.toISOString().slice(0, 10);
-      const cur = acc.get(key) ?? { ts: new Date(key).getTime(), sums: Array(24).fill(0), counts: Array(24).fill(0) };
-      cur.sums[d.getHours()] += v;
-      cur.counts[d.getHours()]++;
-      acc.set(key, cur);
-    }
-    const entries = [...acc.entries()].sort((a, b) => a[1].ts - b[1].ts);
-    const days = entries.map(([key]) => new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }));
-    const grid = entries.map(([, { sums, counts }]) =>
-      sums.map((s, h) => (counts[h] > 0 ? s / counts[h] : null)));
-    const flat = grid.flat().filter((v): v is number => v !== null);
-    return { days, grid, vmin: Math.min(...flat), vmax: Math.max(...flat) };
-  }, [rows, metric]);
-
-  if (days.length === 0) {
-    return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
-  }
-
-  // Échelle bleu (froid/min) → rouge (chaud/max) via teinte HSL 220 → 10
-  const colorFor = (v: number | null): string => {
-    if (v === null) return 'rgba(255,255,255,0.03)';
-    const t = vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5;
-    return `hsl(${220 - t * 210} 75% ${35 + t * 15}%)`;
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between px-1 flex-wrap gap-2">
-        <p className="text-slate-300 text-sm font-medium">{meta.label} — moyenne par heure et par jour</p>
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          {fmtFr(vmin, 1)} {meta.unit}
-          <span className="inline-block h-2.5 w-24 rounded-full"
-            style={{ background: 'linear-gradient(90deg, hsl(220 75% 35%), hsl(115 75% 42%), hsl(10 75% 50%))' }} />
-          {fmtFr(vmax, 1)} {meta.unit}
-        </div>
-      </div>
-      <div className="overflow-x-auto pb-1">
-        <div className="inline-grid gap-px" style={{ gridTemplateColumns: `2.4rem repeat(${days.length}, minmax(1.4rem, 1fr))`, minWidth: '100%' }}>
-          <div />
-          {days.map((d, i) => (
-            <div key={i} className="text-[10px] text-slate-500 text-center pb-1 whitespace-nowrap">{d}</div>
-          ))}
-          {Array.from({ length: 24 }, (_, h) => (
-            <Fragment key={h}>
-              <div className="text-[10px] text-slate-500 pr-1.5 text-right leading-4">{String(h).padStart(2, '0')}h</div>
-              {grid.map((day, di) => (
-                <div key={di} className="h-4 rounded-[2px]"
-                  style={{ backgroundColor: colorFor(day[h]) }}
-                  title={day[h] !== null ? `${days[di]} ${String(h).padStart(2, '0')}h — ${fmtFr(day[h]!, 1)} ${meta.unit}` : `${days[di]} ${String(h).padStart(2, '0')}h — pas de données`} />
-              ))}
-            </Fragment>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Vue 4 — Profil journalier moyen sur 24 h (moyenne par heure + bande ±1σ)
-function EnvProfil24View({ rows, metric }: { rows: ShellyRow[]; metric: EnvMetricKey }) {
-  const meta = METRIQUES_ENV.find(m => m.key === metric)!;
-  const data = useMemo(() => {
-    const byHour: number[][] = Array.from({ length: 24 }, () => []);
-    for (const r of rows) {
-      const v = r[metric];
-      if (typeof v !== 'number' || !isFinite(v)) continue;
-      const d = r.date instanceof Date ? r.date : new Date(r.date);
-      byHour[d.getHours()].push(v);
-    }
-    return byHour.map((vals, h) => {
-      if (vals.length === 0) return { heure: `${String(h).padStart(2, '0')}h`, moy: null, range: null, n: 0 };
-      const moy = vals.reduce((s, v) => s + v, 0) / vals.length;
-      const std = Math.sqrt(vals.reduce((s, v) => s + (v - moy) ** 2, 0) / vals.length);
-      return {
-        heure: `${String(h).padStart(2, '0')}h`,
-        moy: +moy.toFixed(2),
-        range: [+(moy - std).toFixed(2), +(moy + std).toFixed(2)] as [number, number],
-        n: vals.length,
-      };
-    });
-  }, [rows, metric]);
-
-  if (data.every(d => d.n === 0)) {
-    return <p className="text-slate-500 text-sm py-10 text-center">Aucune donnée « {meta.label} » sur la période.</p>;
-  }
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between px-1">
-        <p className="text-slate-300 text-sm font-medium">{meta.label} — cycle journalier moyen (bande ±1σ)</p>
-        <span className="text-slate-500 text-xs">{data.reduce((s, d) => s + d.n, 0).toLocaleString('fr-FR')} relevés</span>
-      </div>
-      <ResponsiveContainer width="100%" height={340}>
-        <ComposedChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-          <XAxis dataKey="heure" tick={{ fill: '#cbd5e1', fontSize: 11 }} interval={1} />
-          <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} domain={['auto', 'auto']}
-            label={{ value: meta.unit ? `${meta.label} (${meta.unit})` : meta.label, angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11 }} />
-          <Tooltip
-            contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
-            formatter={(value: number | [number, number], name: string) => {
-              if (Array.isArray(value)) return [`${fmtFr(value[0], 1)} → ${fmtFr(value[1], 1)} ${meta.unit}`, '±1σ'];
-              return [`${fmtFr(value, 1)} ${meta.unit}`, name];
-            }} />
-          <Area dataKey="range" name="±1σ" stroke="none" fill={meta.color} fillOpacity={0.18} connectNulls />
-          <Line dataKey="moy" name="Moyenne" stroke={meta.color} strokeWidth={2} dot={{ r: 3 }} connectNulls />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-// Vue 3 — Signature énergétique : consommation journalière vs température
-// moyenne extérieure. Nuage de points + droite de régression : la pente
-// (kWh/°C) mesure la sensibilité thermique du site (clim/chauffage).
-function SignatureView({ envRows, energyRows }: { envRows: ShellyRow[]; energyRows: ShellyRow[] }) {
-  const { points, reg } = useMemo(() => {
-    const byDay = new Map<string, { temps: number[]; kwh: number }>();
-    for (const r of envRows) {
-      if (typeof r.temperature !== 'number' || !isFinite(r.temperature)) continue;
-      const key = (r.date instanceof Date ? r.date : new Date(r.date)).toISOString().slice(0, 10);
-      const cur = byDay.get(key) ?? { temps: [], kwh: 0 };
-      cur.temps.push(r.temperature);
-      byDay.set(key, cur);
-    }
-    for (const r of energyRows) {
-      const key = (r.date instanceof Date ? r.date : new Date(r.date)).toISOString().slice(0, 10);
-      const cur = byDay.get(key);
-      if (cur) cur.kwh += r.kwhTotal ?? 0;
-    }
-    const points = [...byDay.entries()]
-      .filter(([, v]) => v.temps.length > 0 && v.kwh > 0)
-      .map(([key, v]) => ({
-        x: +(v.temps.reduce((s, t) => s + t, 0) / v.temps.length).toFixed(2),
-        y: +v.kwh.toFixed(3),
-        jour: new Date(key).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
-      }))
-      .sort((a, b) => a.x - b.x);
-
-    // Régression linéaire y = a·x + b, et R²
-    let reg: { a: number; b: number; r2: number; line: { x: number; y: number }[] } | null = null;
-    if (points.length >= 3) {
-      const n = points.length;
-      const mx = points.reduce((s, p) => s + p.x, 0) / n;
-      const my = points.reduce((s, p) => s + p.y, 0) / n;
-      const sxy = points.reduce((s, p) => s + (p.x - mx) * (p.y - my), 0);
-      const sxx = points.reduce((s, p) => s + (p.x - mx) ** 2, 0);
-      const syy = points.reduce((s, p) => s + (p.y - my) ** 2, 0);
-      if (sxx > 0 && syy > 0) {
-        const a = sxy / sxx;
-        const b = my - a * mx;
-        const r2 = (sxy * sxy) / (sxx * syy);
-        const xMin = points[0].x, xMax = points[points.length - 1].x;
-        reg = { a, b, r2, line: [{ x: xMin, y: a * xMin + b }, { x: xMax, y: a * xMax + b }] };
-      }
-    }
-    return { points, reg };
-  }, [envRows, energyRows]);
-
-  if (points.length === 0) {
-    return (
-      <p className="text-slate-500 text-sm py-10 text-center">
-        Aucun jour ne combine température et consommation — vérifiez que la période chargée couvre les deux types d'appareils.
-      </p>
-    );
-  }
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between px-1 flex-wrap gap-2">
-        <p className="text-slate-300 text-sm font-medium">Consommation journalière vs température moyenne</p>
-        {reg && (
-          <div className="flex items-center gap-2 text-xs">
-            <Badge className="bg-orange-500/20 text-orange-300 border-0">
-              Pente : {fmtFr(reg.a, 2)} kWh/°C
-            </Badge>
-            <Badge className={`border-0 ${reg.r2 >= 0.5 ? 'bg-green-500/20 text-green-300' : 'bg-white/10 text-slate-400'}`}>
-              R² = {fmtFr(reg.r2, 2)}{reg.r2 < 0.5 ? ' (corrélation faible)' : ''}
-            </Badge>
-          </div>
-        )}
-      </div>
-      <ResponsiveContainer width="100%" height={360}>
-        <ComposedChart data={points} margin={{ top: 5, right: 20, bottom: 15, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-          <XAxis dataKey="x" type="number" domain={['auto', 'auto']} tick={{ fill: '#cbd5e1', fontSize: 11 }}
-            label={{ value: 'Température moyenne du jour (°C)', position: 'insideBottom', offset: -8, fill: '#94a3b8', fontSize: 11 }} />
-          <YAxis dataKey="y" tick={{ fill: '#cbd5e1', fontSize: 10 }} domain={['auto', 'auto']}
-            label={{ value: 'Consommation (kWh/jour)', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11 }} />
-          <Tooltip
-            contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
-            formatter={(value: number, name: string) =>
-              name === 'Consommation' ? [`${fmtFr(value, 2)} kWh`, name] : [`${fmtFr(value, 1)} °C`, name]}
-            labelFormatter={(_, payload) => (payload?.[0]?.payload as { jour?: string })?.jour ?? ''} />
-          <Scatter dataKey="y" name="Consommation" fill="#f97316" />
-          {reg && (
-            <Line data={reg.line} dataKey="y" name="Régression" stroke="#22d3ee"
-              strokeWidth={2} strokeDasharray="6 3" dot={false} legendType="none" />
-          )}
-        </ComposedChart>
-      </ResponsiveContainer>
-      <p className="text-slate-500 text-xs px-1">
-        Chaque point = 1 jour. Une pente positive élevée indique une consommation sensible à la chaleur
-        (climatisation) : la pente chiffre le surcoût en kWh par degré supplémentaire.
-      </p>
-    </div>
-  );
-}
 
 function reviveStoredShellyRows(rows: Record<string, unknown>[]): ShellyRow[] {
   return rows.map((row) => ({
@@ -671,11 +422,6 @@ function safeNum(v: unknown, fallback = 0): number {
   return isFinite(n) ? n : fallback;
 }
 
-// Format français : remplace le . décimal par une virgule (ex: 13.455 → 13,455)
-function fmtFr(n: number, digits: number): string {
-  return n.toFixed(digits).replace('.', ',');
-}
-
 function fmt3(v: unknown): string {
   return fmtFr(safeNum(v, 0), 3);
 }
@@ -692,607 +438,6 @@ function fmt0(v: unknown): string {
   return fmtFr(safeNum(v, 0), 0);
 }
 
-function getNumericCols(rows: Record<string, unknown>[]): string[] {
-  if (rows.length === 0) return [];
-  return Object.keys(rows[0]).filter(col => {
-    const sample = rows.find(r => r[col] !== null && r[col] !== undefined)?.[col];
-    return sample !== undefined && !isNaN(Number(sample));
-  });
-}
-
-function getDateCols(rows: Record<string, unknown>[]): string[] {
-  if (rows.length === 0) return [];
-  return Object.keys(rows[0]).filter(col => {
-    const val = rows[0][col];
-    if (!val) return false;
-    if (val instanceof Date) return true;
-    const s = String(val);
-    return !isNaN(Date.parse(s)) || s.match(/\d{1,4}[-/]\d{1,2}[-/]\d{1,4}/);
-  });
-}
-
-function genericToShellyRow(
-  raw: Record<string, unknown>,
-  dateCol: string,
-  valueCol: string,
-  joursFerier: { date: Date; actif: boolean }[],
-): ShellyRow | null {
-  const remapped: Record<string, unknown> = {
-    ...raw,
-    Temps: raw[dateCol],
-    'Wh_Total': typeof raw[valueCol] === 'number' ? (raw[valueCol] as number) * 1000 : 0,
-  };
-  return parseShellyRow(remapped, joursFerier as import('@/components/iot/shared').JourFerie[]);
-}
-
-// ── Familles d'appareils connues (schema.sql SHELLY_GCP_00) ────
-const DEVICE_FAMILY_OPTIONS = [
-  { value: '', label: 'Toutes les familles' },
-  { value: 'ENERGIE_3PH', label: 'ENERGIE_3PH — Shelly 3EM / Pro 3EM' },
-  { value: 'ENERGIE_2PH', label: 'ENERGIE_2PH — Shelly 2EM / Pro 2EM' },
-  { value: 'ENERGIE_1PH', label: 'ENERGIE_1PH — Shelly EM / PM / Plug' },
-  { value: 'LUMIERE', label: 'LUMIERE — Dimmer / Bulb' },
-  { value: 'CAPTEUR_ENV', label: 'CAPTEUR_ENV — H&T / Gas / CO₂' },
-  { value: 'ETAT', label: 'ETAT — Relais / Prise / Contact' },
-];
-
-// ============================================================
-// PANNEAU : Export Supabase
-// ============================================================
-function SupabaseExportPanel({
-  onDataLoaded,
-}: {
-  onDataLoaded: (rows: Record<string, unknown>[], colonnes: string[]) => void;
-}) {
-  // ── Dates par défaut : 7 derniers jours ──────────────────────
-  const todayStr = new Date().toISOString().split('T')[0];
-  const sevenDaysAgoStr = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-  const [open, setOpen] = useState(true);
-  const [showColumnsForm, setShowColumnsForm] = useState(false);
-  const [expandedGroups, setExpandedGroups] = useState<Record<'entree' | 'calcule' | 'classifieur', boolean>>({
-    entree: false,
-    calcule: false,
-    classifieur: false,
-  });
-  const [selectedCols, setSelectedCols] = useState<Set<string>>(() =>
-    new Set(DEFAULT_SUPABASE_COLUMNS)
-  );
-  // Tant que l'utilisateur n'a pas personnalisé manuellement, les colonnes
-  // s'adaptent automatiquement aux familles d'appareils réellement chargées.
-  const [colsAuto, setColsAuto] = useState(true);
-
-  // Granularité des données — auto-forcée sur "minute" pour les capteurs
-  // environnementaux/état, car shelly_cl_horaire n'agrège que l'énergie
-  // (aucune colonne température/humidité/etc.), tant que l'utilisateur ne
-  // choisit pas explicitement une granularité.
-  const [granularite, setGranularite] = useState<'horaire' | 'minute'>('horaire');
-  const [granulariteAuto, setGranulariteAuto] = useState(true);
-
-  // Filtres — site vide = tous les sites
-  const [site, setSite] = useState('');
-  const [deviceFamily, setDeviceFamily] = useState('ENERGIE_3PH');
-  const [deviceRoom, setDeviceRoom] = useState('');
-  const [deviceSearch, setDeviceSearch] = useState('');
-  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
-  const [dateDebut, setDateDebut] = useState(sevenDaysAgoStr);
-  const [dateFin, setDateFin] = useState(todayStr);
-  const [limit, setLimit] = useState<number | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
-  const [resultCount, setResultCount] = useState<number | null>(null);
-
-  // ── Données dynamiques depuis Supabase ───────────────────────
-  const [disponibles, setDisponibles] = useState<{
-    sites: string[];
-    devices: { name: string; device_id: string; device_family: string; site: string; room?: string | null }[];
-    deviceFamilies?: string[];
-    rooms?: string[];
-  }>({ sites: [], devices: [] });
-  const [loadingMeta, setLoadingMeta] = useState(false);
-
-  useEffect(() => {
-    setLoadingMeta(true);
-    fetchDisponibles().then(d => {
-      setDisponibles(d);
-      setLoadingMeta(false);
-    });
-  }, []);
-
-  const siteDeviceCounts = disponibles.devices.reduce<Record<string, number>>((acc, d) => {
-    const key = d.site || 'Sans site';
-    acc[key] = (acc[key] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  // Pièces disponibles pour le site sélectionné (ou toutes si aucun site choisi)
-  const roomOptions = Array.from(new Set(
-    disponibles.devices
-      .filter(d => !site || d.site === site)
-      .map(d => d.room)
-      .filter((r): r is string => Boolean(r))
-  )).sort();
-
-  // Appareils filtrés par site + famille + pièce + recherche
-  const devicesFiltres = disponibles.devices.filter(d =>
-    (!site || d.site === site) &&
-    (!deviceFamily || d.device_family === deviceFamily) &&
-    (!deviceRoom || d.room === deviceRoom) &&
-    (!deviceSearch || d.name.toLowerCase().includes(deviceSearch.toLowerCase()))
-  );
-
-  const devicesBySite = devicesFiltres.reduce<Record<string, typeof devicesFiltres>>((acc, d) => {
-    const key = d.site || 'Sans site';
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(d);
-    return acc;
-  }, {});
-
-  // Familles des appareils effectivement ciblés (sélection explicite sinon filtre courant)
-  // — sert à adapter automatiquement les colonnes proposées (énergie / météo / état).
-  const familiesActives = (selectedDeviceIds.length > 0
-    ? disponibles.devices.filter(d => selectedDeviceIds.includes(d.device_id))
-    : devicesFiltres
-  ).map(d => d.device_family).filter(Boolean) as string[];
-  const familiesKey = Array.from(new Set(familiesActives)).sort().join(',');
-
-  useEffect(() => {
-    if (!colsAuto) return;
-    setSelectedCols(new Set(recommendedColumns(new Set(familiesKey ? familiesKey.split(',') : []))));
-     
-  }, [familiesKey, colsAuto]);
-
-  useEffect(() => {
-    if (!granulariteAuto) return;
-    const families = new Set(familiesKey ? familiesKey.split(',') : []);
-    // La table horaire agrège désormais aussi les capteurs (temperature_moy,
-    // humidity_moy…), donc une sélection mixte énergie + capteurs reste en
-    // horaire : c'est la seule granularité qui permet de croiser consommation
-    // et température. La minute ne s'impose que pour une sélection composée
-    // uniquement de capteurs, où l'on veut le relevé brut.
-    const hasEnergie = Array.from(families).some(f => ENERGIE_FAMILIES.has(f) || f === 'LUMIERE');
-    const hasCapteur = families.has('CAPTEUR_ENV') || families.has('ETAT');
-    setGranularite(hasCapteur && !hasEnergie ? 'minute' : 'horaire');
-     
-  }, [familiesKey, granulariteAuto]);
-
-  const groupes = getColonnesParGroupe();
-  const GROUPE_LABELS = { entree: "Données d'entrée", calcule: 'Données calculées', classifieur: 'Classifieurs' };
-
-  useEffect(() => {
-    const availableIds = new Set(devicesFiltres.map(d => d.device_id));
-    setSelectedDeviceIds(prev => prev.filter(id => availableIds.has(id)));
-  }, [site, deviceFamily, deviceRoom, deviceSearch, disponibles.devices]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const toggleCol = (key: string) => {
-    setColsAuto(false);
-    setSelectedCols(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  };
-
-  const selectGroupe = (keys: string[], select: boolean) => {
-    setColsAuto(false);
-    setSelectedCols(prev => {
-      const next = new Set(prev);
-      keys.forEach(k => select ? next.add(k) : next.delete(k));
-      return next;
-    });
-  };
-
-  const handleFetch = async () => {
-    setLoading(true);
-    setErreur(null);
-    const colonnes = Array.from(selectedCols);
-    const result = await exporterDonneesSupabase({
-      colonnes,
-      granularite,
-      site: site.trim() || undefined,
-      deviceFamily: deviceFamily || undefined,
-      deviceIds: selectedDeviceIds.length > 0 ? selectedDeviceIds : undefined,
-      dateDebut: dateDebut || undefined,
-      dateFin: dateFin || undefined,
-      limit,
-    });
-    setLoading(false);
-    if (result.erreur) {
-      setErreur(result.erreur);
-    } else {
-      setResultCount(result.total);
-      onDataLoaded(result.rows, colonnes);
-    }
-  };
-
-  const resetToDefaultColumns = () => {
-    setColsAuto(true);
-    setGranulariteAuto(true);
-    setSelectedCols(new Set(recommendedColumns(new Set(familiesKey ? familiesKey.split(',') : []))));
-  };
-  const toggleExpandedGroup = (group: 'entree' | 'calcule' | 'classifieur') =>
-    setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
-  const toggleDeviceId = (deviceId: string) =>
-    setSelectedDeviceIds(prev => prev.includes(deviceId) ? prev.filter(id => id !== deviceId) : [...prev, deviceId]);
-
-  return (
-    <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
-      <button
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors"
-        onClick={() => setOpen(v => !v)}
-      >
-        <div className="flex items-center gap-2">
-          <Database className="h-4 w-4 text-green-400" />
-          <span className="text-white font-medium text-sm">Charger depuis Supabase</span>
-          {resultCount !== null && (
-            <Badge className="bg-green-500/20 text-green-400 border-0 text-xs ml-2">
-              {resultCount.toLocaleString('fr-FR')} ligne(s)
-            </Badge>
-          )}
-        </div>
-        {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
-      </button>
-
-
-      {open && (
-        <div className="border-t border-white/10 p-4 space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4">
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                <div className="md:col-span-2 xl:col-span-1">
-                  <Label className="text-slate-400 text-xs mb-1 block">Granularité</Label>
-                  <div className="flex items-center gap-2">
-                    {(['horaire', 'minute'] as const).map(g => (
-                      <button
-                        key={g}
-                        onClick={() => { setGranulariteAuto(false); setGranularite(g); }}
-                        className={`px-3 py-2 rounded-lg text-xs font-medium border transition-all
-                          ${granularite === g
-                            ? 'bg-green-600/30 text-green-300 border-green-500/50'
-                            : 'text-slate-400 border-white/15 hover:text-white hover:bg-white/5'}`}
-                      >
-                        {g === 'horaire' ? 'Horaire' : 'Minute'}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-slate-500 text-[11px] mt-1">
-                    {granulariteAuto
-                      ? (granularite === 'minute' ? 'Auto — relevés bruts des capteurs sélectionnés' : 'Auto — moyennes horaires, capteurs inclus')
-                      : (granularite === 'horaire' ? 'Recommandé pour l’analyse' : 'Plus lourd, données brutes')}
-                  </p>
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">
-                    Site
-                    {loadingMeta && <RefreshCw className="inline h-3 w-3 ml-1 animate-spin text-slate-500" />}
-                  </Label>
-                  <select
-                    value={site}
-                    onChange={e => { setSite(e.target.value); setSelectedDeviceIds([]); setDeviceRoom(''); }}
-                    className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
-                  >
-                    <option value="" className="bg-[#1a1d2e]">Tous les sites</option>
-                    {disponibles.sites.map(s => (
-                      <option key={s} value={s} className="bg-[#1a1d2e]">
-                        {s} ({siteDeviceCounts[s] ?? 0} appareils)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Famille d'appareil</Label>
-                  <select
-                    value={deviceFamily}
-                    onChange={e => setDeviceFamily(e.target.value)}
-                    className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
-                  >
-                    {DEVICE_FAMILY_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value} className="bg-[#1a1d2e]">{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Pièce</Label>
-                  <select
-                    value={deviceRoom}
-                    onChange={e => setDeviceRoom(e.target.value)}
-                    className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
-                    disabled={roomOptions.length === 0}
-                  >
-                    <option value="" className="bg-[#1a1d2e]">Toutes les pièces</option>
-                    {roomOptions.map(r => (
-                      <option key={r} value={r} className="bg-[#1a1d2e]">{r}</option>
-                    ))}
-                  </select>
-                  {roomOptions.length === 0 && (
-                    <p className="text-slate-600 text-[11px] mt-1">Aucune pièce renseignée pour ce filtre</p>
-                  )}
-                </div>
-
-                <div className="md:col-span-2 xl:col-span-3">
-                  <Label className="text-slate-400 text-xs mb-1 block">
-                    Appareils
-                    <span className="text-slate-500 ml-1">
-                      ({devicesFiltres.length} disponible{devicesFiltres.length > 1 ? 's' : ''} / {disponibles.devices.length} au total)
-                    </span>
-                  </Label>
-                  <div className="rounded-lg border border-white/10 bg-white/3 p-3 space-y-3">
-                    <Input
-                      value={deviceSearch}
-                      onChange={e => setDeviceSearch(e.target.value)}
-                      placeholder={loadingMeta ? 'Chargement…' : 'Rechercher un appareil...'}
-                      className="h-9 text-xs bg-white/5 border-white/20 text-white"
-                    />
-                    {selectedDeviceIds.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {selectedDeviceIds.map(id => {
-                          const device = disponibles.devices.find(d => d.device_id === id);
-                          if (!device) return null;
-                          return (
-                            <Badge key={id} className="bg-blue-600/20 text-blue-300 border-0 text-xs">
-                              {device.name}
-                              <button className="ml-1 text-blue-200" onClick={() => toggleDeviceId(id)}>x</button>
-                            </Badge>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <div className="max-h-48 overflow-auto rounded-lg border border-white/10 bg-[#0f111a]/40">
-                      {Object.entries(devicesBySite).length > 0 ? (
-                        Object.entries(devicesBySite).map(([siteName, devs]) => (
-                          <div key={siteName} className="border-b border-white/5 last:border-b-0">
-                            <div className="px-3 py-2 text-xs font-medium text-slate-300 bg-white/5">
-                              {siteName} ({devs.length} appareil{devs.length > 1 ? 's' : ''})
-                            </div>
-                            <div className="p-2 space-y-1">
-                              {devs.map(d => {
-                                const checked = selectedDeviceIds.includes(d.device_id);
-                                return (
-                                  <label key={d.device_id} className="flex items-center gap-2 px-2 py-1 rounded text-xs text-slate-300 hover:bg-white/5 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => toggleDeviceId(d.device_id)}
-                                      className="accent-blue-500"
-                                    />
-                                    <span className="flex-1 min-w-0 truncate">{d.name}</span>
-                                    <span className="text-slate-500">{d.device_family}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="px-3 py-4 text-xs text-slate-500">Aucun appareil trouvé pour ce filtre.</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Date début</Label>
-                  <Input
-                    type="date"
-                    value={dateDebut}
-                    onChange={e => setDateDebut(e.target.value)}
-                    className="h-9 text-xs bg-white/5 border-white/20 text-white"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Date fin</Label>
-                  <Input
-                    type="date"
-                    value={dateFin}
-                    onChange={e => setDateFin(e.target.value)}
-                    className="h-9 text-xs bg-white/5 border-white/20 text-white"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-slate-400 text-xs mb-1 block">Limite</Label>
-                  <select
-                    value={limit ?? ''}
-                    onChange={e => setLimit(e.target.value === '' ? undefined : parseInt(e.target.value))}
-                    className="w-full h-9 bg-white/5 border border-white/20 text-white text-xs rounded-md px-2"
-                  >
-                    <option value="" className="bg-[#1a1d2e]">Illimité</option>
-                    {[1000, 5000, 10000, 25000, 50000].map(n => (
-                      <option key={n} value={n} className="bg-[#1a1d2e]">{n.toLocaleString('fr-FR')} lignes</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white/3 rounded-xl border border-white/10 p-4 space-y-3">
-              <div>
-                <p className="text-white text-sm font-medium">Colonnes à charger</p>
-                <p className="text-slate-500 text-xs mt-1">
-                  Les colonnes habituelles sont sélectionnées par défaut.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Badge className="bg-blue-600/20 text-blue-300 border-0 text-xs">
-                  {selectedCols.size} colonne(s)
-                </Badge>
-                <Badge className={colsAuto ? 'bg-green-600/20 text-green-300 border-0 text-xs' : 'bg-white/10 text-slate-300 border-0 text-xs'}>
-                  {colsAuto ? 'Adapté automatiquement' : 'Personnalisé'}
-                </Badge>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 border-white/20 text-white hover:bg-white/10"
-                  onClick={() => setShowColumnsForm(v => !v)}
-                >
-                  {showColumnsForm ? 'Masquer la personnalisation' : 'Personnaliser les colonnes'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-8 text-slate-400 hover:text-white hover:bg-white/10"
-                  onClick={resetToDefaultColumns}
-                >
-                  Colonnes habituelles
-                </Button>
-              </div>
-
-              <p className="text-slate-500 text-xs">
-                {site && <span>Site : <span className="text-slate-300">{site}</span> · </span>}
-                {deviceFamily && <span>Famille : <span className="text-slate-300">{deviceFamily}</span> · </span>}
-                {deviceRoom && <span>Pièce : <span className="text-slate-300">{deviceRoom}</span> · </span>}
-                {selectedDeviceIds.length > 0 && <span>Appareils : <span className="text-slate-300">{selectedDeviceIds.length}</span></span>}
-                {!site && !deviceFamily && !deviceRoom && selectedDeviceIds.length === 0 && <span>Aucun filtre spécifique appliqué</span>}
-              </p>
-
-              <Button
-                className="w-full bg-green-600 hover:bg-green-500 text-white"
-                onClick={handleFetch}
-                disabled={loading || selectedCols.size === 0}
-              >
-                {loading
-                  ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Chargement...</>
-                  : <><Database className="h-4 w-4 mr-2" /> Charger dans TCD</>}
-              </Button>
-            </div>
-          </div>
-
-          {showColumnsForm && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-slate-300 text-xs font-semibold uppercase tracking-wide">
-                  Personnalisation des colonnes ({selectedCols.size} / {COLONNES_PROFIL_SHELLY.length})
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    className="text-xs text-blue-400 hover:text-blue-300"
-                    onClick={resetToDefaultColumns}
-                  >
-                    Habituel
-                  </button>
-                  <span className="text-slate-600">·</span>
-                  <button
-                    className="text-xs text-blue-400 hover:text-blue-300"
-                    onClick={() => setSelectedCols(new Set(COLONNES_PROFIL_SHELLY.map(c => c.key)))}
-                  >
-                    Tout
-                  </button>
-                  <span className="text-slate-600">·</span>
-                  <button
-                    className="text-xs text-slate-400 hover:text-white"
-                    onClick={() => setSelectedCols(new Set())}
-                  >
-                    Aucun
-                  </button>
-                </div>
-              </div>
-
-              {(['entree', 'calcule', 'classifieur'] as const).map(groupe => {
-                const cols = groupes[groupe];
-                const keys = cols.map(c => c.key);
-                const nbSelected = keys.filter(k => selectedCols.has(k)).length;
-                const allSelected = nbSelected === keys.length;
-                const defaultKeys = DEFAULT_COLUMN_GROUPS[groupe];
-                const extraCols = cols.filter(col => !defaultKeys.includes(col.key as never));
-                return (
-                  <div key={groupe} className="bg-white/3 rounded-lg border border-white/10 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-slate-300 text-xs font-medium">{GROUPE_LABELS[groupe]}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-slate-500 text-xs">{nbSelected}/{keys.length}</span>
-                        <button
-                          className="text-xs text-slate-400 hover:text-white"
-                          onClick={() => selectGroupe(keys, !allSelected)}
-                        >
-                          {allSelected ? 'Tout décocher' : 'Tout cocher'}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5">
-                      {cols.filter(col => defaultKeys.includes(col.key as never)).map(col => {
-                        const isSelected = selectedCols.has(col.key);
-                        return (
-                          <button
-                            key={col.key}
-                            onClick={() => toggleCol(col.key)}
-                            className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-all border
-                              ${isSelected
-                                ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
-                                : 'text-slate-500 border-white/10 hover:text-slate-300 hover:border-white/20'}`}
-                          >
-                            {isSelected
-                              ? <CheckSquare className="h-3 w-3 shrink-0" />
-                              : <Square className="h-3 w-3 shrink-0" />}
-                            {col.label}
-                            {col.unite && <span className="text-slate-600 text-[10px]">({col.unite})</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {extraCols.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-white/5">
-                        <button
-                          className="flex items-center gap-2 text-xs text-slate-400 hover:text-white"
-                          onClick={() => toggleExpandedGroup(groupe)}
-                        >
-                          {expandedGroups[groupe] ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                          {expandedGroups[groupe] ? 'Masquer les autres colonnes' : 'Afficher les autres colonnes'}
-                        </button>
-                        {expandedGroups[groupe] && (
-                          <div className="flex flex-wrap gap-1.5 mt-3">
-                            {extraCols.map(col => {
-                              const isSelected = selectedCols.has(col.key);
-                              return (
-                                <button
-                                  key={col.key}
-                                  onClick={() => toggleCol(col.key)}
-                                  className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-all border
-                                    ${isSelected
-                                      ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
-                                      : 'text-slate-500 border-white/10 hover:text-slate-300 hover:border-white/20'}`}
-                                >
-                                  {isSelected
-                                    ? <CheckSquare className="h-3 w-3 shrink-0" />
-                                    : <Square className="h-3 w-3 shrink-0" />}
-                                  {col.label}
-                                  {col.unite && <span className="text-slate-600 text-[10px]">({col.unite})</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {erreur && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-red-400 text-sm">
-              {erreur}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================
-// Filtre multi-sélection (Appareil / Pièce) — appliqué à tous les graphiques
-// ============================================================
 function MultiSelectFilter({ label, icon, options, selected, onChange }: {
   label: string;
   icon: React.ReactNode;
@@ -1337,73 +482,72 @@ function MultiSelectFilter({ label, icon, options, selected, onChange }: {
 // ============================================================
 // COMPOSANT PRINCIPAL
 // ============================================================
+// Un seul format partagé : toLocaleDateString en recrée un à chaque appel, soit
+// 10 s pour 46 000 relevés à la minute contre 0,2 s ici (même texte affiché)
+const FORMAT_JOUR_MOIS = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short' });
+
+/** Plage horaire appliquée chaque jour aux relevés chargés. */
+function lignesDansPlage(rows: ShellyRow[], p: PerimetreAnalyse | null): ShellyRow[] {
+  if (!p || (p.heureDebut === 0 && p.heureFin === 23)) return rows;
+  return rows.filter(r => {
+    const h = toDate(r.date).getHours();
+    return p.heureDebut <= p.heureFin ? h >= p.heureDebut && h <= p.heureFin : h >= p.heureDebut || h <= p.heureFin;
+  });
+}
+
 export function AnalyseTab() {
-  const { state, setActiveTab, setShellyRows } = useIOT();
-  const { shellyRows, joursFerier, files, selectedFileId } = state;
+  const { state, setActiveTab, setShellyRows, setSelectedFile, ensureFileContent } = useIOT();
+  const { shellyRows, joursFerier, selectedFileId, filesLoaded } = state;
+  const chargementPartage = state.chargementShelly !== null;
 
   // ---- Profil Mi actif ----
 
-  // ---- Ref graphiques + export PDF ----
-  const chartRef = useRef<HTMLDivElement>(null);
-  const [exportingPDF, setExportingPDF] = useState(false);
-
-  const exportPDF = useCallback(async () => {
-    if (!chartRef.current) return;
-    setExportingPDF(true);
-    try {
-      const canvas = await html2canvas(chartRef.current, {
-        backgroundColor: '#0f111a',
-        scale: 2,
-        useCORS: true,
-        logging: false,
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-      const pageW = doc.internal.pageSize.getWidth();
-      const pageH = doc.internal.pageSize.getHeight();
-      doc.setFontSize(11);
-      doc.setTextColor(30, 40, 80);
-      doc.text(`IOT — Analyse · ${new Date().toLocaleDateString('fr-FR')}`, 14, 10);
-      const imgH = (canvas.height / canvas.width) * (pageW - 20);
-      const maxH = pageH - 20;
-      doc.addImage(imgData, 'PNG', 10, 16, pageW - 20, Math.min(imgH, maxH));
-      doc.save(`iot_analyse_${new Date().toISOString().slice(0, 10)}.pdf`);
-    } finally {
-      setExportingPDF(false);
-    }
-  }, []);
+  // ---- Rapport (Courbe de charge) ----
+  // Remplace l'ancienne capture d'écran en PDF : le bouton de la barre ouvre le
+  // rapport de la Courbe de charge (Vue d'ensemble), qui porte les chiffres vérifiés.
+  const [demandeRapport, setDemandeRapport] = useState(0);
 
   // ---- Import fichier ----
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
   const [localRows, setLocalRows] = useState<ShellyRow[]>([]);
-  const [rawData, setRawData] = useState<Record<string, unknown>[]>([]);
-  const [allColumns, setAllColumns] = useState<string[]>([]);
-  const [dateCol, setDateCol] = useState<string>('');
-  const [valueCol, setValueCol] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
-  const [loading, setLoading] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [mappingNeeded, setMappingNeeded] = useState(false);
+  // Fichier sans aucune date lisible : sa lecture se corrige dans Fichiers
+  const [fichierIllisible, setFichierIllisible] = useState<string | null>(null);
 
   // ---- Données Supabase chargées ----
-  const [supabaseRows, setSupabaseRows] = useState<ShellyRow[]>([]);
-  const [supabaseFileName, setSupabaseFileName] = useState<string>('');
+  // L'onglet est démonté quand on le quitte : au retour (ou après une recette
+  // rouverte), les lignes partagées avec le Nettoyage reprennent leur place de
+  // données Shelly, avec leur périmètre. Sinon elles passeraient par le chemin
+  // « fichier » de la Courbe de charge, conçu pour bien moins de lignes.
+  const [chargementRepris] = useState(() => (!selectedFileId && shellyRows.length > 0 ? state.chargementShelly : null));
+  const [supabaseRows, setSupabaseRows] = useState<ShellyRow[]>(() => (chargementRepris ? shellyRows : []));
+  const [supabaseFileName, setSupabaseFileName] = useState<string>(chargementRepris ? 'Supabase — Tous appareils' : '');
+  const [supabaseChargement, setSupabaseChargement] = useState<SupabaseExportOptions | null>(chargementRepris);
+  // Périmètre choisi dans la barre (site, appareils, période, plage horaire) :
+  // partagé par toutes les vues, Courbe de charge comprise
+  const [perimetreAnalyse, setPerimetreAnalyse] = useState<PerimetreAnalyse | null>(
+    () => (chargementRepris ? state.perimetreShelly ?? perimetreDepuisChargement(chargementRepris) : null));
+  const supabaseRowsPlage = useMemo(() => lignesDansPlage(supabaseRows, perimetreAnalyse), [supabaseRows, perimetreAnalyse]);
 
-  // ---- Panneau qualité : visible seulement si des anomalies existent ----
-  const [showQualityPanel, setShowQualityPanel] = useState(false);
-  // true quand les données viennent de la bibliothèque (fichier déjà nettoyé) — pas de rapport qualité
-  const [dataFromLibrary, setDataFromLibrary] = useState(false);
 
   // Source active: supabase > local > contexte
-  const activeRows = supabaseRows.length > 0 ? supabaseRows
+  const activeRows = supabaseRows.length > 0 ? supabaseRowsPlage
     : localRows.length > 0 ? localRows : shellyRows;
-  const dataSource = supabaseRows.length > 0 ? `Supabase (${supabaseFileName})`
+  // Qualité des données Supabase : le même moteur que le Nettoyage
+  const qualite = useQualiteMoteur(supabaseRowsPlage, supabaseRows.length > 0, null);
+  // Source décrite par son périmètre (site · période), pas par « Supabase — Tous appareils »
+  const jjmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+  const dataSource = supabaseRows.length > 0
+    ? (perimetreAnalyse ? `${libelleSites(perimetreAnalyse.sites)} · ${jjmm(perimetreAnalyse.dateDebut)} → ${jjmm(perimetreAnalyse.dateFin)}` : 'Données Shelly')
     : localRows.length > 0 ? fileName
-      : shellyRows.length > 0 ? 'Données importées (contexte)' : null;
+      : shellyRows.length > 0 ? 'Données transmises par un autre onglet' : null;
 
   // ---- Analyse ----
   const [mode, setMode] = useState<AnalyseMode>('courbe');
+  const chartPrefs = useChartPreferences();
+  // Titre du graphique : « source · vue », remplaçable par l'utilisateur.
+  const autoChartTitle = `${dataSource ? `${dataSource} · ` : ''}${MODE_LABELS[mode] ?? mode}`;
+  const displayChartTitle = chartTitle(chartPrefs, `iot:${mode}`, autoChartTitle);
   const [serieMetrics, setSerieMetrics] = useState<Set<MetricKey>>(new Set(['kwhTotal']));
   const toggleSerieMetric = (k: MetricKey) =>
     setSerieMetrics(prev => {
@@ -1451,214 +595,6 @@ export function AnalyseTab() {
     });
   const isHidden = (key: string) => hiddenSeries.has(key);
 
-  // ============================================================
-  // RAPPORT QUALITÉ (anomalies) + solutions Nettoyage
-  // ============================================================
-
-  type DataIssueType =
-    | 'duplicates_day'
-    | 'duplicates_exact'
-    | 'zeros'
-    | 'outliers'
-    | 'gaps'
-    | 'negatives'
-    | 'phase_mismatch';
-
-  interface DataIssue {
-    id: DataIssueType;
-    count: number;
-    description: string;
-    detail?: string;
-  }
-
-  const OUTLIER_SIGMA = 2.5;
-  function analyserRowsForReport(rows: ShellyRow[]): DataIssue[] {
-    const issues: DataIssue[] = [];
-    if (rows.length === 0) return issues;
-
-    // Doublons par jour
-    const dateMap = new Map<string, number>();
-    for (const r of rows) {
-      const k = toDate(r.date).toISOString().slice(0, 10);
-      dateMap.set(k, (dateMap.get(k) ?? 0) + 1);
-    }
-    const dupDates = [...dateMap.entries()].filter(([, c]) => c > 1);
-    if (dupDates.length > 0) {
-      const total = dupDates.reduce((s, [, c]) => s + c - 1, 0);
-      issues.push({
-        id: 'duplicates_day',
-        count: total,
-        description: `${total} doublon${total > 1 ? 's' : ''} par date (jour)`,
-        detail: `${dupDates.length} date${dupDates.length > 1 ? 's' : ''} concernée${dupDates.length > 1 ? 's' : ''} — ex. : ${dupDates.slice(0, 3).map(([d]) => d).join(', ')}`,
-      });
-    }
-
-    // Doublons exacts (timestamp)
-    const dtMap = new Map<string, number>();
-    for (const r of rows) {
-      const k = toDate(r.date).toISOString();
-      dtMap.set(k, (dtMap.get(k) ?? 0) + 1);
-    }
-    const dupExact = [...dtMap.values()].filter(c => c > 1).reduce((s, c) => s + c - 1, 0);
-    if (dupExact > 0) {
-      issues.push({
-        id: 'duplicates_exact',
-        count: dupExact,
-        description: `${dupExact} doublon${dupExact > 1 ? 's' : ''} exacts (même date et heure)`,
-      });
-    }
-
-    // Zéros (ligne vide)
-    const zeros = rows.filter(r => r.kwhTotal === 0 && r.kwhNet === 0);
-    if (zeros.length > 0) {
-      issues.push({
-        id: 'zeros',
-        count: zeros.length,
-        description: `${zeros.length} ligne${zeros.length > 1 ? 's' : ''} vide${zeros.length > 1 ? 's' : ''} (kWh Total et Net = 0)`,
-        detail: `Première : ${toDate(zeros[0].date).toLocaleDateString('fr-FR')}`,
-      });
-    }
-
-    // Outliers
-    const kwhVals = rows.map(r => r.kwhNet);
-    const { moyenne, ecartType } = calculerStats(kwhVals);
-    const threshold = moyenne + OUTLIER_SIGMA * ecartType;
-    const outliers = rows.filter(r => ecartType > 0 && r.kwhNet > threshold);
-    if (outliers.length > 0) {
-      issues.push({
-        id: 'outliers',
-        count: outliers.length,
-        description: `${outliers.length} valeur${outliers.length > 1 ? 's' : ''} aberrante${outliers.length > 1 ? 's' : ''} (kWh Net > ${threshold.toFixed(1)})`,
-        detail: `Seuil ≈ moy(${moyenne.toFixed(2)}) + ${OUTLIER_SIGMA}σ(${ecartType.toFixed(2)})`,
-      });
-    }
-
-    // Négatifs
-    const negRows = rows.filter(r => r.kwhTotal < 0 || r.kwhNet < 0);
-    if (negRows.length > 0) {
-      issues.push({
-        id: 'negatives',
-        count: negRows.length,
-        description: `${negRows.length} valeur${negRows.length > 1 ? 's' : ''} négative${negRows.length > 1 ? 's' : ''} (kWh Total ou Net < 0)`,
-      });
-    }
-
-    // Trous temporels (jours)
-    const sortedByDate = [...rows].sort((a, b) => toDate(a.date).getTime() - toDate(b.date).getTime());
-    let gaps = 0;
-    const gapExamples: string[] = [];
-    for (let i = 1; i < sortedByDate.length; i++) {
-      const prev = toDate(sortedByDate[i - 1].date);
-      const cur = toDate(sortedByDate[i].date);
-      const diffDays = Math.round((cur.getTime() - prev.getTime()) / 86400000);
-      if (diffDays > 1) {
-        gaps += (diffDays - 1);
-        if (gapExamples.length < 5) gapExamples.push(`${prev.toISOString().slice(0, 10)} → ${cur.toISOString().slice(0, 10)}`);
-      }
-    }
-    if (gaps > 0) {
-      issues.push({
-        id: 'gaps',
-        count: gaps,
-        description: `${gaps} jour${gaps > 1 ? 's' : ''} manquant${gaps > 1 ? 's' : ''} dans la série`,
-        detail: gapExamples.length ? `Ex: ${gapExamples.join(' · ')}` : undefined,
-      });
-    }
-
-    // Incohérence phases vs total
-    const phaseMismatch = rows.filter(r => {
-      const sum = r.kwhA + r.kwhB + r.kwhC;
-      return r.kwhTotal > 0 && Math.abs(sum - r.kwhTotal) > 0.05;
-    });
-    if (phaseMismatch.length > 0) {
-      issues.push({
-        id: 'phase_mismatch',
-        count: phaseMismatch.length,
-        description: `${phaseMismatch.length} incohérence${phaseMismatch.length > 1 ? 's' : ''} entre phases et total kWh`,
-        detail: `kWhA + kWhB + kWhC ≠ kWhTotal (écart > 0.05 kWh)`,
-      });
-    }
-
-    return issues;
-  }
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const qualityIssues = useMemo(() => analyserRowsForReport(activeRows), [activeRows]);
-  const hasIssues = qualityIssues.length > 0;
-
-  // Panneau qualité : afficher seulement pour les imports manuels avec anomalies,
-  // jamais pour les fichiers chargés depuis la bibliothèque
-  useEffect(() => {
-    setShowQualityPanel(hasIssues && !dataFromLibrary);
-  }, [hasIssues, dataFromLibrary]);
-
-  const solutions = useMemo(() => {
-    const map: Record<DataIssueType, { title: string; steps: string[]; cta?: string }> = {
-      duplicates_day: {
-        title: 'Doublons par jour',
-        steps: [
-          'Aller dans l’onglet Nettoyage.',
-          'Cliquer “Procéder au Nettoyage” sur le fichier concerné.',
-          'Dans la section Diagnostic, utiliser “Conserver : première occurrence” ou “dernière occurrence”.',
-          'Re-scanner pour vérifier que l’anomalie a disparu.',
-        ],
-      },
-      duplicates_exact: {
-        title: 'Doublons exacts',
-        steps: [
-          'Onglet Nettoyage → Diagnostic.',
-          'Cliquer “Supprimer les copies exactes”.',
-          'Re-scanner.',
-        ],
-      },
-      zeros: {
-        title: 'Lignes vides (kWh=0)',
-        steps: [
-          'Onglet Nettoyage → Diagnostic → “Lignes vides”.',
-          'Choisir une méthode : “Moyenne”, “Reporter précédent”, ou “Interpolation linéaire”.',
-          'Re-scanner puis exporter si besoin.',
-        ],
-      },
-      outliers: {
-        title: 'Valeurs aberrantes',
-        steps: [
-          'Onglet Nettoyage → activer la mise en évidence “Aberrantes” pour repérer les pics.',
-          'Dans Diagnostic → Outliers : soit “Supprimer les lignes”, soit “Remplacer par la moyenne”.',
-          'Re-scanner.',
-        ],
-      },
-      negatives: {
-        title: 'Valeurs négatives',
-        steps: [
-          'Onglet Nettoyage → Diagnostic → “Valeurs négatives”.',
-          'Choisir : “Mettre à zéro” ou “Valeur absolue” selon le sens métier.',
-          'Re-scanner.',
-        ],
-      },
-      gaps: {
-        title: 'Jours manquants',
-        steps: [
-          'Onglet Nettoyage → Diagnostic → “Trous temporels”.',
-          'Cliquer “Voir les dates manquantes”.',
-          'Décider une stratégie métier: réimporter la période manquante, ou accepter la coupure (pas de comblement automatique).',
-        ],
-      },
-      phase_mismatch: {
-        title: 'Phases ≠ Total',
-        steps: [
-          'Onglet Nettoyage → Diagnostic → “Incohérence phases”.',
-          'Cliquer “Recalculer kWh Total depuis les phases”.',
-          'Re-scanner.',
-        ],
-      },
-    };
-
-    return qualityIssues.map(i => ({
-      id: i.id,
-      title: map[i.id].title,
-      steps: map[i.id].steps,
-    }));
-  }, [qualityIssues]);
 
   const parseImportedFileToShellyRows = useCallback((file: import('./shared').ImportedFile): ShellyRow[] => {
     if (file.rawData.length === 0) return [];
@@ -1666,6 +602,12 @@ export function AnalyseTab() {
     if (file.statut === 'nettoyé') {
       return reviveStoredShellyRows(file.rawData);
     }
+
+    // Fichier quelconque : lecture choisie à l'import (dates, rôles, unités),
+    // sections empilées réorganisées en colonnes
+    const ident = { nom: file.name.replace(/\.(csv|xlsx|xls)$/i, ''), lieu: file.deviceLocation, piece: file.deviceRoom };
+    const lu = lireFichierImporte(file, joursFerier);
+    if (lu) return lu.rows;
 
     const detect = detecterFormatShelly(file.columns);
     if (detect.format === 'shelly_excel') {
@@ -1695,161 +637,109 @@ export function AnalyseTab() {
     if (detect.format === 'shelly_section') {
       return parseShellySectionCSV(file.rawData, joursFerier);
     }
-    return [];
+    // Importé avant le 19/10 sans lecture : la proposer à la volée
+    const lecture = proposerLecture(file.columns, file.rawData, {}, [], file.name);
+    return lecture.colDate ? appliquerLecture(file.rawData, lecture, joursFerier, ident).rows : [];
   }, [joursFerier]);
 
   // ---- Callback Supabase ----
-  const handleSupabaseData = useCallback((rows: Record<string, unknown>[], _colonnes: string[]) => {
+  const handleSupabaseData = useCallback((rows: Record<string, unknown>[], options: SupabaseExportOptions, perimetre: PerimetreAnalyse) => {
     if (rows.length === 0) return;
-    setDataFromLibrary(false); // import Supabase manuel → rapport qualité actif
+    // Gardé pour le Nettoyage : même périmètre pour le moteur de qualité,
+    // et recette rejouable
+    setSupabaseChargement(options);
     const parsed = rows
       .map(r => profilMiToShellyRow(r, joursFerier))
       .filter((r): r is ShellyRow => r !== null);
     if (parsed.length > 0) {
       setSupabaseRows(parsed);
       setSupabaseFileName('Supabase — Tous appareils');
+      // Déjà partagées avec le Nettoyage : ne pas y laisser l'ancien chargement
+      if (chargementPartage) setShellyRows(lignesDansPlage(parsed, perimetre), options, { perimetre });
     }
-  }, [joursFerier]);
-
-  // ---- Parse fichier ----
-  const parseFile = useCallback((file: File) => {
-    setDataFromLibrary(false); // import manuel → rapport qualité actif
-    setLoading(true);
-    setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const buffer = e.target!.result as ArrayBuffer;
-        const wb = await parseExcelBuffer(buffer);
-        let sheetName = wb.sheetNames[0];
-        const candidates = wb.sheetNames.filter(n =>
-          n.toLowerCase().includes('profil') ||
-          n.toLowerCase().includes('données') ||
-          n.toLowerCase().includes('data') ||
-          n.toLowerCase().includes('mesure')
-        );
-        if (candidates.length > 0) sheetName = candidates[0];
-        const rawRows = wb.getRows(sheetName);
-        const rows = rowsToObjects(rawRows, { dateNF: 'YYYY-MM-DD' })
-          .filter(r => Object.values(r).some(v => v !== null));
-        if (rows.length === 0) { setLoading(false); return; }
-        const cols = Object.keys(rows[0]);
-        setAllColumns(cols);
-        setRawData(rows);
-        const detect = detecterFormatShelly(cols);
-        if (detect.format === 'shelly_excel') {
-          const parsed = rows
-            .map(r => parseShellyRow(r, joursFerier))
-            .filter((r): r is ShellyRow => r !== null);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else if (detect.format === 'profil_mi') {
-          const parsed = rows
-            .map(r => profilMiToShellyRow(r, joursFerier))
-            .filter((r): r is ShellyRow => r !== null);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else if (detect.format === 'supabase_cl') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const profilRows = transformRowsToProfilMi(rows as any, COLONNES_PROFIL_SHELLY.map(c => c.key));
-          const parsed = profilRows
-            .map(r => profilMiToShellyRow(r, joursFerier))
-            .filter((r): r is ShellyRow => r !== null);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else if (detect.format === 'supabase_horaire') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const profilRows = transformHoraireToProfilMi(rows as any, COLONNES_PROFIL_SHELLY.map(c => c.key));
-          const parsed = profilRows
-            .map(r => profilMiToShellyRow(r, joursFerier))
-            .filter((r): r is ShellyRow => r !== null);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else if (detect.format === 'shelly_section') {
-          const parsed = parseShellySectionCSV(rows, joursFerier);
-          setLocalRows(parsed);
-          setMappingNeeded(false);
-        } else {
-          const dateCandidates = getDateCols(rows);
-          const numCandidates = getNumericCols(rows);
-          setDateCol(dateCandidates[0] ?? cols[0]);
-          setValueCol(numCandidates[0] ?? cols[1]);
-          setMappingNeeded(true);
-        }
-      } catch { /* ignore */ }
-      setLoading(false);
-    };
-    reader.readAsArrayBuffer(file);
-  }, [joursFerier]);
-
-  const applyMapping = () => {
-    if (!dateCol || !valueCol) return;
-    const parsed = rawData
-      .map(r => genericToShellyRow(r, dateCol, valueCol, joursFerier))
-      .filter((r): r is ShellyRow => r !== null);
-    setLocalRows(parsed);
-    setMappingNeeded(false);
-  };
+  }, [joursFerier, chargementPartage, setShellyRows]);
 
   const clearLocal = () => {
-    setLocalRows([]); setRawData([]); setAllColumns([]);
-    setFileName(''); setMappingNeeded(false);
+    setLocalRows([]); setFileName(''); setFichierIllisible(null);
   };
 
   const clearSupabase = () => {
     setSupabaseRows([]); setSupabaseFileName('');
+    if (chargementPartage) setShellyRows([]);
   };
 
   const loadFromImported = useCallback((f: import('./shared').ImportedFile) => {
     if (f.rawData.length === 0) return;
-    const cols = f.columns;
-    setAllColumns(cols); setRawData(f.rawData); setFileName(f.name);
+    setFileName(f.name);
     const parsed = parseImportedFileToShellyRows(f);
-    if (parsed.length > 0) {
-      setLocalRows(parsed); setMappingNeeded(false);
-      setShowImport(false); // collapse import panel → charts visible directly
-    } else {
-      const dateCandidates = getDateCols(f.rawData);
-      const numCandidates = getNumericCols(f.rawData);
-      setDateCol(dateCandidates[0] ?? cols[0]);
-      setValueCol(numCandidates[0] ?? cols[1]);
-      setMappingNeeded(true);
-      setShowImport(true); // expand only when user must configure column mapping
-    }
+    setLocalRows(parsed);
+    setFichierIllisible(parsed.length > 0 ? null : f.name);
+    setShowImport(parsed.length === 0); // graphiques directement visibles, sinon le message
   }, [parseImportedFileToShellyRows]);
 
+  // Fichier sélectionné (bibliothèque ou reprise de session) : le contenu
+  // vient de la base à la demande, d'où l'attente de la liste puis du
+  // téléchargement. Une sélection devenue obsolète (autre fichier choisi
+  // entre-temps) est ignorée.
   useEffect(() => {
-    if (!selectedFileId) return;
-    const file = files.find(f => f.id === selectedFileId);
-    if (!file) return;
-    setDataFromLibrary(true); // données depuis la bibliothèque → pas de rapport qualité
-    loadFromImported(file);
-    setSupabaseRows([]);
-    setSupabaseFileName('');
-    setMode('tcd');
-  }, [selectedFileId, files, loadFromImported]);
+    if (!selectedFileId || !filesLoaded) return;
+    let stale = false;
+    void ensureFileContent(selectedFileId).then(file => {
+      if (stale || !file) return;
+      loadFromImported(file);
+      setSupabaseRows([]);
+      setSupabaseFileName('');
+      setMode('tcd');
+    });
+    return () => { stale = true; };
+  }, [selectedFileId, filesLoaded, ensureFileContent, loadFromImported]);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault(); setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) parseFile(file);
-  }, [parseFile]);
-
-  // ---- Export CSV ----
+  // ---- Export Excel ----
+  // Écrit ce qui est CHARGÉ, à sa granularité d'origine (minute, heure, jour) : une ligne par relevé avec
+  // la date ET l'heure, l'appareil, la pièce, puis les colonnes qui portent réellement des données.
+  // Avant, l'export était un tableau fixe de colonnes d'énergie avec la date seule : une station météo
+  // à la minute donnait 1 440 lignes identiques par jour, sans heure ni température — d'où le détour par
+  // la granularité horaire pour « avoir les bonnes colonnes ».
   const exportCSV = async () => {
+    const envCols = METRIQUES_ENV.filter(m => activeRows.some(r => typeof r[m.key] === 'number'));
+    const autresGrandeurs = [...new Set(activeRows.flatMap(r => r.grandeurs ? Object.keys(r.grandeurs) : []))];
+    const hasEnergy = activeRows.some(r => r.kwhTotal !== 0 || r.kwhRetourTotal !== 0 || r.puissKwTotal !== 0);
+    const hms = (d: Date) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    // Identifiant et rôle : un fichier réimporté refait le même calcul sans
+    // double comptage (compteur général vs départs) que l'analyse en direct
+    const avecId = activeRows.some(r => r.deviceId);
+    const avecRole = activeRows.some(r => r.role);
+    // Nombres (pas de texte « 0,120 ») à pleine précision, unité dans l'en-tête :
+    // la réimport relit exactement ces valeurs
+    const nb = (v: unknown) => +safeNum(v, 0).toFixed(6);
     await exportJsonToXlsx(
-      activeRows.map(r => ({
-        Date: toDate(r.date).toLocaleDateString('fr-FR'),
-        Jour: r.jourSemaine,
-        'kWh Total': fmt3(r.kwhTotal),
-        'kWh Net': fmt3(r.kwhNet),
-        'kWh Retour': r.kwhRetourTotal.toFixed(3),
-        'Phase A': fmt3(r.kwhA),
-        'Phase B': fmt3(r.kwhB),
-        'Phase C': fmt3(r.kwhC),
-        Ferié: r.isJourFerie ? 'Oui' : '',
-        Weekend: r.isWeekend ? 'Oui' : '',
-      })),
+      activeRows.map(r => {
+        const d = toDate(r.date);
+        const ligne: Record<string, unknown> = {
+          Date: d.toLocaleDateString('fr-FR'),
+          Heure: hms(d),
+          Appareil: r.nomAppareil ?? '',
+          ...(avecId ? { 'ID appareil': r.deviceId ?? '' } : {}),
+          ...(avecRole ? { 'Rôle': r.role ?? '' } : {}),
+          Pièce: r.deviceRoom ?? '',
+          Site: r.deviceLocation ?? '',
+        };
+        for (const m of envCols) ligne[`${m.label}${m.unit ? ` (${m.unit})` : ''}`] = typeof r[m.key] === 'number' ? r[m.key] : '';
+        for (const k of autresGrandeurs) ligne[k] = r.grandeurs?.[k] ?? '';
+        if (hasEnergy) {
+          ligne['kWh Total'] = nb(r.kwhTotal);
+          ligne['kWh Net'] = nb(r.kwhNet);
+          ligne['kWh Retour'] = nb(r.kwhRetourTotal);
+          ligne['Puissance (kW)'] = nb(r.puissKwTotal);
+          ligne['Phase A (kWh)'] = nb(r.kwhA);
+          ligne['Phase B (kWh)'] = nb(r.kwhB);
+          ligne['Phase C (kWh)'] = nb(r.kwhC);
+        }
+        ligne['Jour'] = r.jourSemaine;
+        ligne['Férié'] = r.isJourFerie ? 'Oui' : '';
+        ligne['Weekend'] = r.isWeekend ? 'Oui' : '';
+        return ligne;
+      }),
       'Données',
       `tcd_${fileName || 'export'}.xlsx`
     );
@@ -1889,27 +779,63 @@ export function AnalyseTab() {
   // (compteurs + météo), les relevés des capteurs env en sont donc absents.
   // Les vues env_* partent d'activeRows avec les mêmes filtres globaux, en ne
   // gardant que les lignes portant au moins une grandeur environnementale.
+  // Plusieurs sites : les grandeurs se lisent site par site, jamais en moyenne entre lieux
+  const sitesCharges = useMemo(() => [...new Set(activeRows.map(r => r.deviceLocation).filter((s): s is string => !!s))].sort(), [activeRows]);
+  const [siteVueChoisi, setSiteVue] = useState<string | null>(null);
+  const siteVue = sitesCharges.length > 1 ? (siteVueChoisi && sitesCharges.includes(siteVueChoisi) ? siteVueChoisi : sitesCharges[0]) : null;
   const envRows = useMemo(() => {
-    let rows = activeRows.filter(r => METRIQUES_ENV.some(m => typeof r[m.key] === 'number'));
+    let rows = activeRows.filter(r => r.grandeurs || METRIQUES_ENV.some(m => typeof r[m.key] === 'number'));
+    if (siteVue) rows = rows.filter(r => r.deviceLocation === siteVue);
     if (!showFeries) rows = rows.filter(r => !r.isJourFerie);
     if (!showWeekends) rows = rows.filter(r => !r.isWeekend);
     if (slicerAppareil.length) rows = rows.filter(r => slicerAppareil.includes(r.nomAppareil ?? ''));
     if (slicerPiece.length) rows = rows.filter(r => slicerPiece.includes(r.deviceRoom ?? ''));
     return rows;
-  }, [activeRows, showFeries, showWeekends, slicerAppareil, slicerPiece]);
+  }, [activeRows, showFeries, showWeekends, slicerAppareil, slicerPiece, siteVue]);
 
   // Grandeurs env réellement présentes → pilote l'affichage des modes env_*
+  const paletteGrandeurs = usePalette();
+  // Couleurs choisies par donnée : leur changement doit recalculer les couleurs
+  const prefsGraph = useChartPreferences();
+  const couleurMetrique = useCallback((k: string) => colorForMetric(paletteGrandeurs, k),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [paletteGrandeurs, prefsGraph]);
   const envMetricsAvailable = useMemo(
-    () => METRIQUES_ENV.filter(m => envRows.some(r => typeof r[m.key] === 'number')),
-    [envRows]);
+    () => grandeursDisponibles(envRows, paletteGrandeurs),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [envRows, paletteGrandeurs, prefsGraph]);
   const hasEnvData = envMetricsAvailable.length > 0;
+  // Signature = consommation × température extérieure : il faut une température
+  const hasTemperature = useMemo(() => envRows.some(r => typeof r.temperature === 'number'), [envRows]);
   // Données énergie réelles (au moins un relevé non nul) → pilote les modes énergie
   const hasEnergyData = useMemo(
     () => activeRows.some(r =>
       (r.kwhTotal ?? 0) > 0 || (r.kwhRetourTotal ?? 0) > 0 || (r.puissKwTotal ?? 0) > 0 || (r.whTotal ?? 0) > 0),
     [activeRows]);
 
-  const [envMetric, setEnvMetric] = useState<EnvMetricKey>('temperature');
+  const [envMetric, setEnvMetric] = useState<string>('temperature');
+  const grandeurActive = envMetricsAvailable.find(m => m.key === envMetric) ?? envMetricsAvailable[0];
+
+  // Données affichées par la vue courante → un sélecteur de couleur chacune.
+  // (La Courbe de charge porte son propre sélecteur.)
+  const donneesCouleur = useMemo(() => {
+    const deMetriques = (keys: string[]) => keys.map(k => {
+      const m = METRIQUES.find(x => x.key === k);
+      return { key: k, label: m ? `${m.label}${m.unit ? ` (${m.unit})` : ''}` : k, color: couleurMetrique(k) };
+    });
+    if (ENV_MODES.includes(mode)) {
+      return grandeurActive
+        ? [{ key: grandeurActive.key, label: `${grandeurActive.label}${grandeurActive.unit ? ` (${grandeurActive.unit})` : ''}`, color: grandeurActive.color }]
+        : [];
+    }
+    if (mode === 'serie') return deMetriques([...serieMetrics]);
+    if (mode === 'tcd') return deMetriques([...tcdMetrics]);
+    if (mode === 'profil_semaine' || mode === 'distribution' || mode === 'correlation') return deMetriques(['kwhNet']);
+    if (mode === 'signature') return deMetriques(['kwhTotal']);
+    return [];
+  }, [mode, grandeurActive, serieMetrics, tcdMetrics, couleurMetrique]);
+  // Fichier aux grandeurs quelconques (PM2.5, tension…) : « Grandeurs » plutôt qu'« Environnement »
+  const libelleGrandeurs = envMetricsAvailable.some(m => !METRIQUES_ENV.some(e => e.key === m.key)) ? 'Grandeurs' : 'Environnement';
   // Grandeur sélectionnée absente des données chargées → retomber sur la première dispo
   useEffect(() => {
     if (envMetricsAvailable.length > 0 && !envMetricsAvailable.some(m => m.key === envMetric)) {
@@ -1917,19 +843,49 @@ export function AnalyseTab() {
     }
   }, [envMetricsAvailable, envMetric]);
 
+  // Familles du catalogue : pour dire ce qui est chargé, et ne proposer États que s'il y en a
+  const [familleDe, setFamilleDe] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (supabaseRows.length === 0) return;
+    let annule = false;
+    fetchDisponibles().then(d => { if (!annule) setFamilleDe(new Map(d.devices.map(x => [x.device_id, x.device_family]))); }).catch(() => {});
+    return () => { annule = true; };
+  }, [supabaseRows.length]);
+  const nbParType = useMemo(() => {
+    const ids = new Set(activeRows.map(r => r.deviceId).filter((d): d is string => !!d));
+    const n = { compteurs: 0, ambiance: 0, etats: 0, autres: 0 };
+    for (const id of ids) {
+      const f = familleDe.get(id);
+      if (f === 'CAPTEUR_ENV') n.ambiance++;
+      else if (f === 'ETAT') n.etats++;
+      else if (f && f.startsWith('ENERGIE') || f === 'LUMIERE') n.compteurs++;
+      else n.autres++;
+    }
+    return n;
+  }, [activeRows, familleDe]);
+  const perimetreRapportEcran = useMemo<PerimetreRapport | null>(() => (supabaseRows.length > 0 && perimetreAnalyse ? {
+    dateDebut: perimetreAnalyse.dateDebut, dateFin: perimetreAnalyse.dateFin,
+    heureDebut: perimetreAnalyse.heureDebut, heureFin: perimetreAnalyse.heureFin,
+    sites: perimetreAnalyse.sites.length ? perimetreAnalyse.sites : sitesCharges,
+    deviceIds: perimetreAnalyse.deviceIds.length ? perimetreAnalyse.deviceIds : null,
+  } : null), [supabaseRows.length, perimetreAnalyse, sitesCharges]);
+  const [rapportCapteursOuvert, setRapportCapteursOuvert] = useState(false);
+
   // Mode actif indisponible pour ces données (ex. mode énergie sur un jeu 100%
   // météo, ou Signature sans les deux types de données) → basculer sur le
   // premier mode pertinent
   useEffect(() => {
     const isEnvMode = ENV_MODES.includes(mode);
-    if (mode === 'signature' && !(hasEnergyData && hasEnvData)) {
-      setMode(hasEnergyData ? 'courbe' : 'env_bande');
+    if (mode === 'signature' && !(hasEnergyData && hasTemperature)) {
+      setMode(hasEnergyData ? 'courbe' : 'env_courbe');
     } else if (isEnvMode && !hasEnvData && hasEnergyData) {
       setMode('courbe');
-    } else if (!isEnvMode && mode !== 'signature' && !hasEnergyData && hasEnvData) {
-      setMode('env_bande');
+    } else if (!isEnvMode && mode !== 'signature' && mode !== 'etats' && mode !== 'sites' && !hasEnergyData && hasEnvData) {
+      setMode('env_courbe');
+    } else if (mode !== 'etats' && !hasEnergyData && !hasEnvData && nbParType.etats > 0) {
+      setMode('etats');
     }
-  }, [mode, hasEnvData, hasEnergyData]);
+  }, [mode, hasEnvData, hasEnergyData, hasTemperature, nbParType.etats]);
 
   // Slicers Power BI (saison, tranche, type de jour)
   const slicerRows = useMemo(() => {
@@ -1968,6 +924,43 @@ export function AnalyseTab() {
     return typeMap[crossFilter] ? slicerRows.filter(typeMap[crossFilter]) : slicerRows;
   }, [slicerRows, crossFilter, tcdLigne]);
 
+  // ── Sans double comptage : une arrivée et ses départs, ou un départ et ses
+  // sous-départs, ne s'additionnent pas. Les vues par période et les totaux ne
+  // portent que sur la série principale de chaque site.
+  const [rolesCircuits, setRolesCircuits] = useState<RoleCircuit[]>([]);
+  const [sitesBilan, setSitesBilan] = useState<SiteBilan[]>([]);
+  // Un fichier réimporté (export de l'Analyse) porte l'ID et le rôle de chaque
+  // appareil : même règle que les données en direct
+  const avecIdsAppareils = useMemo(() => activeRows.some(r => r.deviceId), [activeRows]);
+  const donneesShelly = supabaseRows.length > 0 || avecIdsAppareils;
+  useEffect(() => {
+    if (!donneesShelly) return;
+    let annule = false;
+    Promise.all([fetchDeviceRoles(), fetchSiteBilan()])
+      .then(([r, b]) => { if (!annule) { setRolesCircuits(r); setSitesBilan(b); } })
+      .catch(e => console.warn('[AnalyseTab] rôles indisponibles', e));
+    return () => { annule = true; };
+  }, [donneesShelly]);
+  const idsSerie = useMemo(() => {
+    if (!donneesShelly) return null;
+    const vus = new Map<string, string>();
+    for (const r of activeRows) if (r.deviceId && !vus.has(r.deviceId)) vus.set(r.deviceId, r.deviceLocation ?? '');
+    // Rôles de la base ; à défaut (appareil inconnu), celui écrit dans le fichier
+    const connus = new Set(rolesCircuits.map(r => r.device_id));
+    const duFichier = new Map<string, string>();
+    for (const r of activeRows) if (r.deviceId && r.role && !connus.has(r.deviceId)) duFichier.set(r.deviceId, r.role);
+    const roles = [...rolesCircuits, ...[...duFichier].map(([device_id, role]) => ({ device_id, role }))];
+    if (roles.length === 0) return null;
+    const ids = idsSerieSansDoubleCompte([...vus].map(([deviceId, site]) => ({ deviceId, site })), roles, sitesBilan);
+    // Tous les appareils chargés sont additionnables : rien à restreindre
+    return ids && ids.size < vus.size ? ids : null;
+  }, [donneesShelly, activeRows, rolesCircuits, sitesBilan]);
+  const sansDoubleCompte = useCallback(
+    (rows: ShellyRow[]) => (idsSerie ? rows.filter(r => !r.deviceId || idsSerie.has(r.deviceId)) : rows),
+    [idsSerie]);
+  const slicerSerie = useMemo(() => sansDoubleCompte(slicerRows), [slicerRows, sansDoubleCompte]);
+  const tcdParAppareils = !drillMonth && (tcdLigne === 'appareil' || tcdLigne === 'piece');
+
   const stats = useMemo(() => {
     const vals = filteredRows
       .map(r => safeNum((r as unknown as Record<string, unknown>)[primarySerieMetric] as number, NaN))
@@ -1975,10 +968,35 @@ export function AnalyseTab() {
     return calculerStats(vals);
   }, [filteredRows, primarySerieMetric]);
 
+  /**
+   * Quel appareil et quand, derrière le maximum et le minimum.
+   * Demande du manager (18/09) : « on ne sait pas c'est quel usage qui est à
+   * 18,7 Wh — on l'a, mais on ne l'affiche pas ». Quand plusieurs appareils
+   * sont chargés, la valeur affichée est une somme : sans l'attribution, elle
+   * ne se rattache à rien.
+   */
+  const statsQui = useMemo(() => {
+    let hi: { v: number; r: ShellyRow } | null = null;
+    let lo: { v: number; r: ShellyRow } | null = null;
+    for (const r of filteredRows) {
+      const v = safeNum((r as unknown as Record<string, unknown>)[primarySerieMetric] as number, NaN);
+      if (typeof v !== 'number' || !isFinite(v)) continue;
+      if (!hi || v > hi.v) hi = { v, r };
+      if (!lo || v < lo.v) lo = { v, r };
+    }
+    const decrire = (x: { v: number; r: ShellyRow } | null) => {
+      if (!x) return null;
+      const nom = x.r.nomAppareil?.trim();
+      const quand = toDate(x.r.date).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      return nom ? `${nom} · ${quand}` : quand;
+    };
+    return { max: decrire(hi), min: decrire(lo) };
+  }, [filteredRows, primarySerieMetric]);
+
   const serieData = useMemo(() =>
     filteredRows.map(r => {
-      const obj: Record<string, unknown> = {
-        date: toDate(r.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
+      const obj: Record<string, unknown> & { appareil: string; emplacement: string; piece: string } = {
+        date: FORMAT_JOUR_MOIS.format(toDate(r.date)),
         consommation: +(r.kwhTotal ?? 0).toFixed(3),
         isWeekend: r.isWeekend,
         isFerie: r.isJourFerie,
@@ -2053,7 +1071,8 @@ export function AnalyseTab() {
   };
 
   const tcdData = useMemo(() => {
-    const src = slicerRows;
+    // Par appareil ou pièce, chacun garde sa ligne ; par période, la série principale seule
+    const src = tcdParAppareils ? slicerRows : slicerSerie;
     if (src.length === 0) return [];
 
     // Drill-down : si un mois est sélectionné, afficher les jours de ce mois
@@ -2105,12 +1124,19 @@ export function AnalyseTab() {
     ];
     return types.map(({ key, rows }) => buildTcdGroup(rows, key));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slicerRows, tcdLigne, tcdMetrics, drillMonth]);
+  }, [slicerRows, slicerSerie, tcdParAppareils, tcdLigne, tcdMetrics, drillMonth]);
 
   // Total de la métrique principale sur toutes les catégories → pour la colonne "Part %" (occupation)
-  const tcdPrimaryTotal = useMemo(
-    () => tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[primaryTcdMetric] ?? 0), 0),
-    [tcdData, primaryTcdMetric]);
+  // Par appareil ou pièce avec plusieurs niveaux de compteurs, le total vient de la
+  // série principale : la somme des lignes compterait deux fois les mêmes kWh.
+  const tcdGroupeTotal = useMemo(
+    () => (tcdParAppareils && idsSerie ? buildTcdGroup(slicerSerie, 'TOTAL') as unknown as Record<string, number> : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tcdParAppareils, idsSerie, slicerSerie, tcdMetrics, primaryTcdMetric]);
+  const tcdTotal = (mk: string) => tcdGroupeTotal
+    ? tcdGroupeTotal[mk] ?? 0
+    : tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
+  const tcdPrimaryTotal = tcdTotal(primaryTcdMetric);
   const tcdPart = (row: Record<string, unknown>): string => {
     const v = (row as Record<string, number>)[primaryTcdMetric] ?? 0;
     return tcdPrimaryTotal > 0 ? `${fmtFr((v / tcdPrimaryTotal) * 100, 1)} %` : '—';
@@ -2133,7 +1159,7 @@ export function AnalyseTab() {
   // Série temporelle par phase (granularité = jour) — style Shelly Cloud
   const stackedData = useMemo(() => {
     const byDate = new Map<string, { d: Date; a: number; b: number; c: number }>();
-    for (const r of slicerRows) {
+    for (const r of slicerSerie) {
       const d = toDate(r.date);
       const key = d.toISOString().slice(0, 10);
       const cur = byDate.get(key) ?? { d, a: 0, b: 0, c: 0 };
@@ -2151,17 +1177,17 @@ export function AnalyseTab() {
         'Phase C': +c.toFixed(2),
         'Total':   +(a + b + c).toFixed(2),
       }));
-  }, [slicerRows]);
+  }, [slicerSerie]);
 
   const profilSemaineData = useMemo(() =>
     JOURS_SEMAINE.map((jour, idx) => {
-      const rows = filteredRows.filter(r => toDate(r.date).getDay() === idx);
+      const rows = sansDoubleCompte(filteredRows).filter(r => toDate(r.date).getDay() === idx);
       return {
         jour,
         kwhMoyen: rows.length ? +(rows.reduce((s, r) => s + r.kwhNet, 0) / rows.length).toFixed(2) : 0,
         n: rows.length,
       };
-    }), [filteredRows]);
+    }), [filteredRows, sansDoubleCompte]);
 
   const distributionData = useMemo(() => {
     if (filteredRows.length < 2) return [];
@@ -2195,102 +1221,34 @@ export function AnalyseTab() {
     <>
       <div className="space-y-4">
 
-        {/* ---- Export Supabase ---- */}
-        <SupabaseExportPanel onDataLoaded={handleSupabaseData} />
+        {/* ---- Périmètre : un seul chargement pour toutes les vues ---- */}
+        <PerimetreBar
+          colonnesRecommandees={recommendedColumns}
+          repris={chargementRepris && perimetreAnalyse ? { perimetre: perimetreAnalyse, chargement: chargementRepris, nbLignes: supabaseRows.length } : undefined}
+          onCharge={(rows, _colonnes, options, p) => { handleSupabaseData(rows, options, p); setPerimetreAnalyse(p); }}
+        />
 
-        {/* ---- Rapport qualité + solutions ---- */}
-        {activeRows.length > 0 && showQualityPanel && (
-          <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
-            <div className={`flex items-center justify-between px-4 py-3 ${hasIssues ? 'bg-amber-500/10 border-b border-amber-500/20' : 'bg-green-500/10 border-b border-green-500/20'}`}>
-              <div className="flex items-center gap-2">
-                {hasIssues ? <Filter className="h-4 w-4 text-amber-400" /> : <CheckSquare className="h-4 w-4 text-green-400" />}
-                <span className={`text-sm font-semibold ${hasIssues ? 'text-amber-300' : 'text-green-300'}`}>
-                  Rapport qualité des données
-                </span>
-                <span className="text-slate-500 text-xs">
-                  · {activeRows.length.toLocaleString('fr-FR')} lignes
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="h-8 border-white/20 text-white hover:bg-white/10"
-                  onClick={() => {
-                    if (activeRows.length > 0) setShellyRows(activeRows);
-                    setShowQualityPanel(false);
-                    setActiveTab('nettoyage');
-                  }}>
-                  Aller au Nettoyage
-                </Button>
-                <Button size="sm" variant="ghost" className="h-8 text-slate-400 hover:text-white hover:bg-white/10"
-                  onClick={() => {
-                    setLocalRows([]);
-                    setRawData([]);
-                    setAllColumns([]);
-                    setFileName('');
-                    setMappingNeeded(false);
-                    setSupabaseRows([]);
-                    setSupabaseFileName('');
-                    setShowQualityPanel(false);
-                  }}>
-                  Annuler
-                </Button>
-              </div>
-            </div>
+        {/* ---- Ce qui est chargé : tout en une ligne ---- */}
+        {supabaseRows.length > 0 && familleDe.size > 0 && (
+          <p className="text-xs text-slate-400 px-1">
+            <span className="text-slate-300 font-medium">Chargé : </span>
+            {[
+              sitesCharges.length > 1 ? `${sitesCharges.length} sites` : null,
+              nbParType.compteurs ? `${nbParType.compteurs} compteur${nbParType.compteurs > 1 ? 's' : ''} d'énergie` : null,
+              nbParType.ambiance ? `${nbParType.ambiance} capteur${nbParType.ambiance > 1 ? 's' : ''} d'ambiance ou météo` : null,
+              nbParType.etats ? `${nbParType.etats} capteur${nbParType.etats > 1 ? 's' : ''} d'état` : null,
+              nbParType.autres ? `${nbParType.autres} non classé${nbParType.autres > 1 ? 's' : ''}` : null,
+            ].filter(Boolean).join(' · ')}
+          </p>
+        )}
 
-            <div className="p-4 space-y-4">
-              {!hasIssues ? (
-                <p className="text-slate-400 text-sm">
-                  Aucune anomalie majeure détectée. Tu peux quand même passer par `Nettoyage` pour filtrer/éditer/exporter.
-                </p>
-              ) : (
-                <>
-                  <div className="flex flex-wrap gap-2">
-                    {qualityIssues.map(iss => (
-                      <Badge key={iss.id} className="bg-amber-500/15 text-amber-300 border border-amber-500/20 text-xs">
-                        {iss.description}
-                      </Badge>
-                    ))}
-                  </div>
-
-                  <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
-                    <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FileSpreadsheet className="h-4 w-4 text-blue-400" />
-                        <span className="text-white text-sm font-semibold">Solutions détaillées</span>
-                      </div>
-                      <span className="text-slate-500 text-xs">Actions à exécuter dans l’onglet Nettoyage</span>
-                    </div>
-                    <div className="divide-y divide-white/5">
-                      {solutions.map(sol => {
-                        const issue = qualityIssues.find(i => i.id === sol.id);
-                        return (
-                          <div key={sol.id} className="p-4">
-                            <div className="flex items-start justify-between gap-4">
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-white text-sm font-medium">{sol.title}</span>
-                                  {issue && (
-                                    <Badge className="bg-white/10 text-slate-300 border-0 text-[10px]">
-                                      {issue.count}
-                                    </Badge>
-                                  )}
-                                </div>
-                                {issue?.detail && <p className="text-slate-500 text-xs mt-1">{issue.detail}</p>}
-                              </div>
-                            </div>
-                            <ol className="mt-3 ml-5 list-decimal space-y-1 text-slate-300 text-xs">
-                              {sol.steps.map((s, idx) => (
-                                <li key={idx} className="leading-relaxed">{s}</li>
-                              ))}
-                            </ol>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+        {/* ---- Qualité : une ligne, détail et réglages dans le Nettoyage ---- */}
+        {supabaseRows.length > 0 && (
+          <QualiteLigne q={qualite} onVoir={() => {
+            setShellyRows(activeRows, supabaseChargement, { perimetre: perimetreAnalyse, reglesExclues: state.reglesShelly });
+            setSelectedFile(null);
+            setActiveTab('nettoyage');
+          }} />
         )}
 
         {/* ---- Import fichier local ---- */}
@@ -2301,7 +1259,7 @@ export function AnalyseTab() {
           >
             <div className="flex items-center gap-2">
               <Upload className="h-4 w-4 text-blue-400" />
-              <span className="text-white font-medium text-sm">Importer un fichier local (CSV / XLSX)</span>
+              <span className="text-white font-medium text-sm">Analyser un fichier (CSV / XLSX) plutôt que les données Shelly</span>
               {dataSource && (
                 <Badge className="bg-blue-600/30 text-blue-300 border-0 text-xs ml-2">
                   {localRows.length > 0 ? `${localRows.length} lignes · ${fileName}` : dataSource}
@@ -2346,7 +1304,8 @@ export function AnalyseTab() {
                         </div>
                         {isActive
                           ? <Badge className="bg-blue-600/30 text-blue-300 border-0 text-xs">Actif</Badge>
-                          : <Button size="sm" className="h-7 text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30" onClick={() => loadFromImported(f)}>Charger</Button>
+                          : <Button size="sm" className="h-7 text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30"
+                              onClick={() => { void ensureFileContent(f.id).then(full => { if (full) loadFromImported(full); }); }}>Charger</Button>
                         }
                       </div>
                     );
@@ -2354,80 +1313,22 @@ export function AnalyseTab() {
                 </div>
               )}
 
-              {/* Drop zone */}
-              <div
-                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all
-                ${dragOver ? 'border-blue-400 bg-blue-500/10' : 'border-white/20 hover:border-white/40 hover:bg-white/5'}`}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleDrop}
-                onClick={() => inputRef.current?.click()}
-              >
-                <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
-                  onChange={(e) => e.target.files?.[0] && parseFile(e.target.files[0])} />
-                {loading ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                    <p className="text-slate-400 text-sm">Chargement...</p>
-                  </div>
-                ) : (
-                  <>
-                    <FileSpreadsheet className="mx-auto h-8 w-8 text-blue-400 mb-2" />
-                    <p className="text-white text-sm font-medium">Glisser-déposer ou cliquer</p>
-                    <p className="text-slate-500 text-xs mt-1">CSV, XLSX, XLS — Shelly 3EM, données génériques</p>
-                  </>
-                )}
+              {/* Nouveau fichier : un seul endroit pour l'importer et vérifier sa lecture */}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                <span>Nouveau fichier ? Importez-le dans <strong className="text-slate-300">Fichiers</strong> : dates, colonnes et unités s'y vérifient une fois pour toutes.</span>
+                <Button size="sm" variant="outline" className="h-7 text-xs border-white/20 text-slate-200 hover:bg-white/10"
+                  onClick={() => setActiveTab('fichiers')}>Aller à Fichiers</Button>
               </div>
 
-              {/* Mapping colonnes */}
-              {mappingNeeded && rawData.length > 0 && (
-                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 space-y-3">
-                  <p className="text-yellow-400 text-sm font-medium">Format non reconnu — sélectionnez les colonnes</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-slate-400 text-xs mb-1 block">Colonne date / temps</Label>
-                      <Select value={dateCol} onValueChange={setDateCol}>
-                        <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm"><SelectValue placeholder="Choisir..." /></SelectTrigger>
-                        <SelectContent className="bg-[#1a1d2e] border-white/20">
-                          {allColumns.map(c => <SelectItem key={c} value={c} className="text-white text-sm">{c}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-slate-400 text-xs mb-1 block">Colonne valeur (kWh / W)</Label>
-                      <Select value={valueCol} onValueChange={setValueCol}>
-                        <SelectTrigger className="bg-white/5 border-white/20 text-white text-sm"><SelectValue placeholder="Choisir..." /></SelectTrigger>
-                        <SelectContent className="bg-[#1a1d2e] border-white/20">
-                          {getNumericCols(rawData).map(c => <SelectItem key={c} value={c} className="text-white text-sm">{c}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="overflow-x-auto rounded-lg border border-white/10 max-h-40">
-                    <table className="min-w-full text-xs">
-                      <thead className="bg-white/5 sticky top-0">
-                        <tr>{allColumns.slice(0, 6).map(c => (
-                          <th key={c} className={`px-3 py-2 text-left font-medium whitespace-nowrap
-                          ${c === dateCol ? 'text-blue-400' : c === valueCol ? 'text-green-400' : 'text-slate-400'}`}>{c}</th>
-                        ))}</tr>
-                      </thead>
-                      <tbody>{rawData.slice(0, 5).map((row, i) => (
-                        <tr key={i} className="border-t border-white/5">
-                          {allColumns.slice(0, 6).map(c => (
-                            <td key={c} className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{String(row[c] ?? '')}</td>
-                          ))}
-                        </tr>
-                      ))}</tbody>
-                    </table>
-                  </div>
-                  <Button className="bg-blue-600 hover:bg-blue-500 text-white" onClick={applyMapping} disabled={!dateCol || !valueCol}>
-                    Analyser ces données
-                  </Button>
+              {fichierIllisible && (
+                <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span>Aucune date lisible dans « {fichierIllisible} ». Réimportez-le depuis <strong>Fichiers</strong> pour vérifier sa lecture (colonne date, ordre jour/mois).</span>
                 </div>
               )}
 
               {/* Fichier chargé */}
-              {localRows.length > 0 && !mappingNeeded && (
+              {localRows.length > 0 && (
                 <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/20 rounded-xl px-4 py-3">
                   <FileSpreadsheet className="h-5 w-5 text-green-400 shrink-0" />
                   <div className="flex-1">
@@ -2456,113 +1357,145 @@ export function AnalyseTab() {
 
         {activeRows.length > 0 && (
           <>
-            {/* Barre mode + filtres */}
-            <div className="flex flex-wrap items-center gap-3 bg-white/5 rounded-xl border border-white/10 p-3">
-              <div className="flex gap-1 flex-wrap items-center">
-                {/* Modes proposés selon le contenu réellement chargé : vues énergie
-                    si des compteurs remontent des kWh, vues environnement si des
-                    capteurs remontent température/humidité/etc. En jeu mixte, les
-                    deux groupes sont visibles, séparés par un trait. */}
-                {(hasEnergyData ? [
-                  { key: 'courbe', icon: <Zap className="h-3.5 w-3.5" />, label: 'Courbe de charge' },
-                  { key: 'serie', icon: <Activity className="h-3.5 w-3.5" />, label: 'Série temp.' },
-                  { key: 'tcd', icon: <BarChart2 className="h-3.5 w-3.5" />, label: 'TCD' },
-                  { key: 'profil_semaine', icon: <TrendingUp className="h-3.5 w-3.5" />, label: 'Semaine' },
-                  { key: 'distribution', icon: <Filter className="h-3.5 w-3.5" />, label: 'Distribution' },
-                  { key: 'correlation', icon: <Activity className="h-3.5 w-3.5" />, label: 'Corrélation' },
-                ] : []).map(({ key, icon, label }) => (
-                  <button
-                    key={key}
-                    onClick={() => setMode(key as AnalyseMode)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
-                    ${mode === key ? 'text-white' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
-                    style={mode === key ? { backgroundColor: ACCENT_COLOR + '40', color: ACCENT_COLOR } : {}}
-                  >
-                    {icon} {label}
-                  </button>
-                ))}
-                {hasEnergyData && hasEnvData && <div className="h-5 w-px bg-white/15 mx-1" />}
-                {([
-                  ...(hasEnvData ? [
-                    { key: 'env_bande', icon: <Activity className="h-3.5 w-3.5" />, label: 'Min/Max jour' },
-                    { key: 'env_heatmap', icon: <Layers className="h-3.5 w-3.5" />, label: 'Heatmap' },
-                    { key: 'env_profil24', icon: <TrendingUp className="h-3.5 w-3.5" />, label: 'Profil 24 h' },
-                  ] : []),
-                  // Croisement conso ↔ température : uniquement en jeu mixte
-                  ...(hasEnergyData && hasEnvData ? [
-                    { key: 'signature', icon: <Zap className="h-3.5 w-3.5" />, label: 'Signature énergétique' },
-                  ] : []),
-                ]).map(({ key, icon, label }) => (
-                  <button
-                    key={key}
-                    onClick={() => setMode(key as AnalyseMode)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
-                    ${mode === key ? 'bg-orange-500/25 text-orange-300' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
-                  >
-                    {icon} {label}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-3 ml-auto flex-wrap">
-                {availableAppareils.length > 0 && (
-                  <MultiSelectFilter label="Appareil" icon={<Zap className="h-3.5 w-3.5" />}
-                    options={availableAppareils} selected={slicerAppareil} onChange={setSlicerAppareil} />
-                )}
-                {availablePieces.length > 0 && (
-                  <MultiSelectFilter label="Pièce" icon={<Layers className="h-3.5 w-3.5" />}
-                    options={availablePieces} selected={slicerPiece} onChange={setSlicerPiece} />
-                )}
-                <div className="flex items-center gap-2">
-                  <Switch id="fe2" checked={showFeries} onCheckedChange={setShowFeries} className="data-[state=checked]:bg-purple-500 scale-75" />
-                  <Label htmlFor="fe2" className="text-slate-400 text-xs">Fériés</Label>
+            {/* Barre des vues : regroupées par question, filtres et affichage dans des menus */}
+            {(() => {
+              type Vue = { mode: AnalyseMode; libelle: string };
+              const groupes: { cle: string; libelle: string; icone: React.ReactNode; vues: Vue[] }[] = [
+                ...(hasEnergyData ? [
+                  { cle: 'ensemble', libelle: "Vue d'ensemble", icone: <Zap className="h-3.5 w-3.5" />, vues: [{ mode: 'courbe' as AnalyseMode, libelle: 'Courbe de charge' }] },
+                  { cle: 'profils', libelle: 'Profils', icone: <TrendingUp className="h-3.5 w-3.5" />, vues: [{ mode: 'profil_semaine' as AnalyseMode, libelle: 'Semaine type' }] },
+                  { cle: 'detail', libelle: 'Détail temporel', icone: <Activity className="h-3.5 w-3.5" />, vues: [{ mode: 'serie' as AnalyseMode, libelle: 'Série temporelle' }] },
+                  { cle: 'tcd', libelle: 'Tableau croisé', icone: <BarChart2 className="h-3.5 w-3.5" />, vues: [{ mode: 'tcd' as AnalyseMode, libelle: 'Tableau croisé' }] },
+                  { cle: 'stats', libelle: 'Statistiques', icone: <Filter className="h-3.5 w-3.5" />, vues: [
+                    { mode: 'distribution' as AnalyseMode, libelle: 'Distribution' },
+                    { mode: 'correlation' as AnalyseMode, libelle: 'Corrélation' },
+                  ] },
+                ] : []),
+                ...(hasEnvData ? [
+                  { cle: 'env', libelle: libelleGrandeurs, icone: <Layers className="h-3.5 w-3.5" />, vues: [
+                    { mode: 'env_courbe' as AnalyseMode, libelle: 'Courbe' },
+                    { mode: 'env_bande' as AnalyseMode, libelle: 'Min/Max par jour' },
+                    { mode: 'env_heatmap' as AnalyseMode, libelle: 'Carte de chaleur' },
+                    { mode: 'env_profil24' as AnalyseMode, libelle: 'Profil 24 h' },
+                  ] },
+                ] : []),
+                // Croisement consommation ↔ température : uniquement en jeu mixte
+                ...(hasEnergyData && hasTemperature ? [
+                  { cle: 'signature', libelle: 'Signature énergétique', icone: <Zap className="h-3.5 w-3.5" />, vues: [{ mode: 'signature' as AnalyseMode, libelle: 'Signature énergétique' }] },
+                ] : []),
+                ...(nbParType.etats > 0 ? [
+                  { cle: 'etats', libelle: 'États', icone: <Activity className="h-3.5 w-3.5" />, vues: [{ mode: 'etats' as AnalyseMode, libelle: 'États des capteurs' }] },
+                ] : []),
+                ...(hasEnergyData && sitesCharges.length > 1 ? [
+                  { cle: 'sites', libelle: 'Comparaison des sites', icone: <Layers className="h-3.5 w-3.5" />, vues: [{ mode: 'sites' as AnalyseMode, libelle: 'Comparaison des sites' }] },
+                ] : []),
+              ];
+              const actif = groupes.find(g => g.vues.some(v => v.mode === mode)) ?? groupes[0];
+              const nbFiltres = slicerAppareil.length + slicerPiece.length + (showFeries ? 0 : 1) + (showWeekends ? 0 : 1);
+              return (
+                <div className="bg-white/5 rounded-xl border border-white/10 p-2 space-y-2">
+                  <div className="flex flex-wrap items-center gap-1">
+                    {groupes.map(g => (
+                      <button key={g.cle} onClick={() => setMode(g.vues[0].mode)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+                        ${actif?.cle === g.cle ? 'text-white' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
+                        style={actif?.cle === g.cle ? { backgroundColor: ACCENT_COLOR + '40', color: ACCENT_COLOR } : {}}>
+                        {g.icone} {g.libelle}
+                      </button>
+                    ))}
+                    <div className="flex items-center gap-2 ml-auto">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button className="flex items-center gap-1 h-7 px-2 rounded-md text-xs text-slate-300 hover:text-white border border-white/15">
+                            <Filter className="h-3.5 w-3.5" /> Filtres{nbFiltres > 0 && <span className="ml-1 px-1.5 rounded-full bg-violet-600/50 text-white">{nbFiltres}</span>}
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-72 p-3 bg-[#1a1d2e] border-white/20 space-y-3">
+                          {availableAppareils.length > 0 && (
+                            <MultiSelectFilter label="Appareil" icon={<Zap className="h-3.5 w-3.5" />}
+                              options={availableAppareils} selected={slicerAppareil} onChange={setSlicerAppareil} />
+                          )}
+                          {availablePieces.length > 0 && (
+                            <MultiSelectFilter label="Pièce" icon={<Layers className="h-3.5 w-3.5" />}
+                              options={availablePieces} selected={slicerPiece} onChange={setSlicerPiece} />
+                          )}
+                          <div className="flex items-center gap-2">
+                            <Switch id="fe2" checked={showFeries} onCheckedChange={setShowFeries} className="data-[state=checked]:bg-purple-500 scale-75" />
+                            <Label htmlFor="fe2" className="text-slate-300 text-xs">Inclure les jours fériés</Label>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Switch id="we2" checked={showWeekends} onCheckedChange={setShowWeekends} className="data-[state=checked]:bg-yellow-500 scale-75" />
+                            <Label htmlFor="we2" className="text-slate-300 text-xs">Inclure les week-ends</Label>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                      {/* Couleurs, légendes et titre — mêmes réglages que le module Mesures. */}
+                      <ChartOptions chartId={`iot:${mode}`} defaultTitle={autoChartTitle} donnees={donneesCouleur} chaleur={mode === 'env_heatmap'} />
+                      <span className="text-slate-500 text-xs">
+                        {(ENV_MODES.includes(mode) ? envRows.length : filteredRows.length).toLocaleString('fr-FR')} relevés
+                      </span>
+                      <Button size="sm" variant="ghost" className="text-slate-400 hover:text-white h-7 px-2" onClick={exportCSV} title="Exporter les relevés (Excel)">
+                        <Download className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-7 px-2 gap-1.5"
+                        onClick={() => {
+                          // Sans énergie, pas de courbe de charge : le rapport porte sur les capteurs
+                          if (!hasEnergyData) { setRapportCapteursOuvert(true); return; }
+                          setMode('courbe'); setDemandeRapport(n => n + 1);
+                        }}
+                        title="Rapport PDF ou Excel : tout ce qui est chargé (énergie, capteurs, états, sites)">
+                        <FileText className="h-3.5 w-3.5" /> Rapport
+                      </Button>
+                    </div>
+                  </div>
+                  {/* Plusieurs sites : grandeurs et signature se lisent un site à la fois */}
+                  {siteVue && (ENV_MODES.includes(mode) || mode === 'signature') && (
+                    <div className="flex flex-wrap items-center gap-1 pl-1">
+                      <span className="text-xs text-slate-500 mr-1">Site affiché :</span>
+                      {sitesCharges.map(s => (
+                        <button key={s} onClick={() => setSiteVue(s)}
+                          className={`px-2.5 py-1 rounded-md text-xs ${siteVue === s ? 'bg-white/15 text-white' : 'text-slate-400 hover:text-white'}`}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {actif && actif.vues.length > 1 && (
+                    <div className="flex flex-wrap items-center gap-1 pl-1">
+                      {actif.vues.map(v => (
+                        <button key={v.mode} onClick={() => setMode(v.mode)}
+                          className={`px-2.5 py-1 rounded-md text-xs ${mode === v.mode ? 'bg-white/15 text-white' : 'text-slate-400 hover:text-white'}`}>
+                          {v.libelle}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Switch id="we2" checked={showWeekends} onCheckedChange={setShowWeekends} className="data-[state=checked]:bg-yellow-500 scale-75" />
-                  <Label htmlFor="we2" className="text-slate-400 text-xs">WE</Label>
-                </div>
-                <Badge variant="outline" className="border-white/20 text-slate-400 text-xs">
-                  {(ENV_MODES.includes(mode) ? envRows.length : filteredRows.length).toLocaleString('fr-FR')} pts
-                </Badge>
-                <Button size="sm" variant="ghost" className="text-slate-400 hover:text-white h-7 px-2" onClick={exportCSV} title="Exporter CSV">
-                  <Download className="h-3.5 w-3.5" />
-                </Button>
-                <Button size="sm" variant="ghost"
-                  className="text-slate-400 hover:text-red-400 h-7 px-2"
-                  onClick={exportPDF}
-                  disabled={exportingPDF}
-                  title="Exporter graphique en PDF"
-                >
-                  {exportingPDF
-                    ? <span className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin inline-block" />
-                    : <FileText className="h-3.5 w-3.5" />
-                  }
-                </Button>
-              </div>
-            </div>
+              );
+            })()}
 
-            <div ref={chartRef} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
+              {/* Titre repris dans l'export PDF/image */}
+              <p className="text-white font-medium text-sm">{displayChartTitle}</p>
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-white font-semibold text-sm">Espace visualisation</h3>
-                  <p className="text-slate-500 text-xs mt-1">Zone dédiée aux graphiques et tableaux d'analyse.</p>
-                </div>
+                <div />
                 {mode === 'serie' && (
                   <div className="flex items-center gap-2 flex-wrap max-w-[65%] justify-end">
                     {/* Aperçu pills des métriques sélectionnées */}
                     <div className="flex items-center gap-1 flex-wrap">
                       {METRIQUES.filter(m => serieMetrics.has(m.key)).slice(0, 5).map(m => (
                         <span key={m.key}
-                          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full"
-                          style={{ backgroundColor: m.color + '25', color: m.color }}
+                          className="inline-flex items-center gap-1 text-[0.625rem] px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: couleurMetrique(m.key) + '25', color: couleurMetrique(m.key) }}
                           title={`${m.label} (${m.unit})`}
                         >
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.color }} />
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: couleurMetrique(m.key) }} />
                           {m.label.split(' — ').pop()?.split(' (')[0] ?? m.label}
                           <span className="opacity-60">{m.unit}</span>
                         </span>
                       ))}
                       {serieMetrics.size > 5 && (
-                        <span className="text-[10px] text-slate-500">+{serieMetrics.size - 5}</span>
+                        <span className="text-[0.625rem] text-slate-500">+{serieMetrics.size - 5}</span>
                       )}
                     </div>
 
@@ -2586,12 +1519,12 @@ export function AnalyseTab() {
                           </button>
                         </div>
                         <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
-                          {(['Énergie', 'Phase A', 'Phase B', 'Phase C', 'Puissance', 'Coût'] as MetricGroup[]).map(group => {
+                          {(['Énergie', 'Phase A', 'Phase B', 'Phase C', 'Puissance'] as MetricGroup[]).map(group => {
                             const groupMetrics = METRIQUES.filter(m => m.group === group);
                             if (groupMetrics.length === 0) return null;
                             return (
                               <div key={group}>
-                                <div className="text-[10px] text-slate-500 uppercase tracking-wide px-2 mb-1">{group}</div>
+                                <div className="text-[0.625rem] text-slate-500 uppercase tracking-wide px-2 mb-1">{group}</div>
                                 {groupMetrics.map(m => {
                                   const checked = serieMetrics.has(m.key);
                                   return (
@@ -2600,9 +1533,9 @@ export function AnalyseTab() {
                                       className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer"
                                     >
                                       <Checkbox checked={checked} onCheckedChange={() => toggleSerieMetric(m.key)} />
-                                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+                                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: couleurMetrique(m.key) }} />
                                       <span className="text-white text-xs flex-1 truncate">{m.label}</span>
-                                      <span className="text-slate-500 text-[10px]">{m.unit}</span>
+                                      <span className="text-slate-500 text-[0.625rem]">{m.unit}</span>
                                     </label>
                                   );
                                 })}
@@ -2623,7 +1556,23 @@ export function AnalyseTab() {
               {/* ---- Courbe de charge (ex-onglet Profil de charge) ---- */}
               {mode === 'courbe' && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                  <ProfilChargeTab />
+                  <ProfilChargeTab
+                    perimetre={supabaseRows.length > 0 ? perimetreAnalyse : null}
+                    lignes={supabaseRows.length > 0 ? undefined : activeRows}
+                    demandeRapport={demandeRapport}
+                  />
+                </div>
+              )}
+
+              {/* ---- États et comparaison des sites ---- */}
+              {mode === 'etats' && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                  <VueEtats rows={activeRows} perimetre={perimetreRapportEcran} />
+                </div>
+              )}
+              {mode === 'sites' && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                  <VueComparaisonSites rows={slicerSerie} />
                 </div>
               )}
 
@@ -2631,6 +1580,13 @@ export function AnalyseTab() {
               {ENV_MODES.includes(mode) && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
                   {/* Sélecteur de grandeur — équivalent env du sélecteur de métriques kWh */}
+                  {envMetricsAvailable.length > 12 ? (
+                    // Analyseur réseau : des dizaines de grandeurs, une liste plutôt que des pastilles
+                    <select value={grandeurActive?.key ?? ''} onChange={e => setEnvMetric(e.target.value)}
+                      className="h-8 rounded-md bg-white/5 border border-white/20 text-white text-xs px-2 max-w-full">
+                      {envMetricsAvailable.map(m => <option key={m.key} value={m.key}>{m.label}{m.unit ? ` (${m.unit})` : ''}</option>)}
+                    </select>
+                  ) : (
                   <div className="flex flex-wrap gap-1.5">
                     {envMetricsAvailable.map(m => (
                       <button key={m.key}
@@ -2645,16 +1601,20 @@ export function AnalyseTab() {
                       </button>
                     ))}
                   </div>
-                  {mode === 'env_bande' && <EnvBandeView rows={envRows} metric={envMetric} />}
-                  {mode === 'env_heatmap' && <EnvHeatmapView rows={envRows} metric={envMetric} />}
-                  {mode === 'env_profil24' && <EnvProfil24View rows={envRows} metric={envMetric} />}
+                  )}
+                  {grandeurActive && <>
+                    {mode === 'env_courbe' && <EnvCourbeView rows={envRows} g={grandeurActive} />}
+                    {mode === 'env_bande' && <EnvBandeView rows={envRows} g={grandeurActive} />}
+                    {mode === 'env_heatmap' && <EnvHeatmapView rows={envRows} g={grandeurActive} />}
+                    {mode === 'env_profil24' && <EnvProfil24View rows={envRows} g={grandeurActive} />}
+                  </>}
                 </div>
               )}
 
               {/* ---- Signature énergétique (jeu mixte uniquement) ---- */}
               {mode === 'signature' && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-                  <SignatureView envRows={envRows} energyRows={filteredRows} />
+                  <SignatureView envRows={envRows} energyRows={siteVue ? filteredRows.filter(r => r.deviceLocation === siteVue) : filteredRows} />
                 </div>
               )}
 
@@ -2689,11 +1649,13 @@ export function AnalyseTab() {
                       <h3 className="text-white font-semibold text-sm">Série temporelle</h3>
                       <span className="text-slate-500 text-xs">{serieMetrics.size} métrique{serieMetrics.size > 1 ? 's' : ''}</span>
                     </div>
+                    {/* « Agrandir » : la courbe seule, en plein écran sur fond blanc (remarque du manager, 12/10). */}
+                    <ChartZoom title={`Série temporelle — ${displayChartTitle}`} className="pt-7">
                     <ResponsiveContainer width="100%" height={520}>
                       <AreaChart data={serieData} margin={{ top: 10, right: 30, bottom: 35, left: 45 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                         <XAxis dataKey="date" tick={{ fill: '#cbd5e1', fontSize: 10 }} interval="preserveStartEnd"
-                          label={{ value: 'Temps (date)', position: 'insideBottom', offset: -5, fill: '#cbd5e1', fontSize: 11 }} />
+                          label={{ value: 'Temps (date)', position: 'insideBottom', offset: 2, fill: '#cbd5e1', fontSize: 11 }} />
                         <YAxis yAxisId="left" tick={{ fill: '#cbd5e1', fontSize: 10 }}
                           tickFormatter={(v: number) => fmtFr(v, v >= 100 ? 0 : 1)}
                           label={{ value: axisLabelForUnit(serieUnits[0]), angle: -90, position: 'insideLeft', fill: '#cbd5e1', fontSize: 11, offset: 5 }} />
@@ -2709,26 +1671,29 @@ export function AnalyseTab() {
                           label={{ value: `Moy. ${fmt1(stats.moyenne)} ${METRIQUES.find(m => m.key === primarySerieMetric)?.unit ?? ''}`, fill: '#f59e0b', fontSize: 10, position: 'right' }} />
                         {METRIQUES.filter(m => serieMetrics.has(m.key)).map(m => (
                           <Area key={m.key} yAxisId={serieMetricAxis(m.unit)} type="monotone" dataKey={m.key} name={`${m.label} (${m.unit})`}
-                            stroke={m.color} fill={`${m.color}25`}
+                            stroke={couleurMetrique(m.key)} fill={`${couleurMetrique(m.key)}25`}
                             strokeWidth={m.key === primarySerieMetric ? 2.5 : 1.5}
                             dot={false}
                             hide={isHidden(m.key)} />
                         ))}
+                        <Brush dataKey="date" height={22} stroke="#60a5fa" fill="rgba(255,255,255,0.04)" travellerWidth={8} />
                       </AreaChart>
                     </ResponsiveContainer>
+                    </ChartZoom>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
                     {[
-                      { label: 'Moyenne', value: fmt2(stats.moyenne), color: 'text-blue-400' },
-                      { label: 'Médiane', value: fmt2(stats.mediane), color: 'text-cyan-400' },
-                      { label: 'Écart-type', value: fmt2(stats.ecartType), color: 'text-purple-400' },
-                      { label: 'P25', value: fmt2(stats.p25), color: 'text-green-400' },
-                      { label: 'P75', value: fmt2(stats.p75), color: 'text-yellow-400' },
-                      { label: 'Maximum', value: fmt2(stats.max), color: 'text-orange-400' },
+                      { label: 'Moyenne', value: fmt2(stats.moyenne), color: 'text-blue-400', qui: null },
+                      { label: 'Médiane', value: fmt2(stats.mediane), color: 'text-cyan-400', qui: null },
+                      { label: 'Écart-type', value: fmt2(stats.ecartType), color: 'text-purple-400', qui: null },
+                      { label: 'P25', value: fmt2(stats.p25), color: 'text-green-400', qui: null },
+                      { label: 'Minimum', value: fmt2(stats.min), color: 'text-green-400', qui: statsQui.min },
+                      { label: 'Maximum', value: fmt2(stats.max), color: 'text-orange-400', qui: statsQui.max },
                     ].map(s => (
                       <div key={s.label} className="bg-white/5 rounded-xl border border-white/10 p-3 text-center">
                         <p className="text-slate-500 text-xs">{s.label}</p>
                         <p className={`${s.color} font-bold text-sm mt-1`}>{s.value}</p>
+                        {s.qui && <p className="text-slate-500 text-[0.625rem] mt-0.5 leading-tight truncate" title={s.qui}>{s.qui}</p>}
                       </div>
                     ))}
                   </div>
@@ -2756,7 +1721,7 @@ export function AnalyseTab() {
                         {METRIQUES.map(m => (
                           <button key={m.key} onClick={() => toggleTcdMetric(m.key)}
                             className={`px-2 py-1 rounded text-xs font-medium border transition-all ${tcdMetrics.has(m.key) ? 'border-transparent text-white' : 'border-white/10 text-slate-400 hover:text-white'}`}
-                            style={tcdMetrics.has(m.key) ? { backgroundColor: m.color + '30', borderColor: m.color + '60', color: m.color } : {}}
+                            style={tcdMetrics.has(m.key) ? { backgroundColor: couleurMetrique(m.key) + '30', borderColor: couleurMetrique(m.key) + '60', color: couleurMetrique(m.key) } : {}}
                           >{m.label}</button>
                         ))}
                       </div>
@@ -2808,6 +1773,14 @@ export function AnalyseTab() {
                     )}
                   </div>
 
+                  {idsSerie && (
+                    <p className="text-xs text-slate-400 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5">
+                      {tcdParAppareils
+                        ? 'Chaque appareil garde sa ligne ; le total et les parts portent sur la série principale de chaque site, car arrivée et départs ne s\'additionnent pas.'
+                        : 'Calculé sur la série principale de chaque site (arrivée, charge ou départs de premier niveau) : additionner arrivée et départs compterait deux fois la même énergie.'}
+                    </p>
+                  )}
+
                   {/* Cross-filter banner */}
                   {crossFilter && (
                     <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-1.5 text-xs">
@@ -2853,7 +1826,7 @@ export function AnalyseTab() {
                           {['Catégorie', 'N'].map(h => <th key={h} className="px-4 py-3 text-left text-slate-300 font-medium text-xs">{h}</th>)}
                           {Array.from(tcdMetrics).map(mk => {
                             const meta = METRIQUES.find(m => m.key === mk);
-                            return <th key={mk} className="px-4 py-3 text-left font-medium text-xs" style={{ color: meta?.color }}>
+                            return <th key={mk} className="px-4 py-3 text-left font-medium text-xs" style={{ color: couleurMetrique(mk) }}>
                               {meta?.label ?? mk}{meta?.unit && <span className="text-slate-500 ml-1 font-normal">({meta.unit})</span>}
                             </th>;
                           })}
@@ -2872,7 +1845,7 @@ export function AnalyseTab() {
                             <td className="px-4 py-2 text-slate-400 text-xs">{row.n}</td>
                             {Array.from(tcdMetrics).map(mk => {
                               const meta = METRIQUES.find(m => m.key === mk);
-                              return <td key={mk} className="px-4 py-2 font-medium text-xs" style={{ color: meta?.color }}>
+                              return <td key={mk} className="px-4 py-2 font-medium text-xs" style={{ color: couleurMetrique(mk) }}>
                                 {fmtFr((row as unknown as Record<string, number>)[mk] ?? 0, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                               </td>;
                             })}
@@ -2887,8 +1860,8 @@ export function AnalyseTab() {
                           <td className="px-4 py-2 text-slate-400 text-xs">{tcdData.reduce((s, r) => s + r.n, 0)}</td>
                           {Array.from(tcdMetrics).map(mk => {
                             const meta = METRIQUES.find(m => m.key === mk);
-                            const total = tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
-                            return <td key={mk} className="px-4 py-2 text-xs" style={{ color: meta?.color }}>
+                            const total = tcdTotal(mk);
+                            return <td key={mk} className="px-4 py-2 text-xs" style={{ color: couleurMetrique(mk) }}>
                               {fmtFr(total, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                             </td>;
                           })}
@@ -2972,7 +1945,7 @@ export function AnalyseTab() {
                       <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4" />
                       <Bar dataKey="kwhMoyen" name="kwhNet" radius={[4, 4, 0, 0]}>
                         {profilSemaineData.map((_, i) => (
-                          <Cell key={i} fill={i === 0 || i === 6 ? '#a78bfa' : ACCENT_COLOR} />
+                          <Cell key={i} fill={i === 0 || i === 6 ? '#a78bfa' : couleurMetrique('kwhNet')} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -3009,7 +1982,7 @@ export function AnalyseTab() {
                       <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
                       <Bar dataKey="count" name="Nb jours" radius={[4, 4, 0, 0]}>
                         {distributionData.map((d, i) => (
-                          <Cell key={i} fill={d.min < safeNum(stats.p25, 0) ? '#a78bfa' : d.min < safeNum(stats.p75, 0) ? ACCENT_COLOR : '#f59e0b'} />
+                          <Cell key={i} fill={d.min < safeNum(stats.p25, 0) ? '#a78bfa' : d.min < safeNum(stats.p75, 0) ? couleurMetrique('kwhNet') : '#f59e0b'} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -3018,7 +1991,7 @@ export function AnalyseTab() {
                 <div className="flex gap-3 text-xs">
                   {[
                     { color: 'bg-purple-500', label: `Faible (< ${fmt0(stats.p25)})` },
-                    { color: '', label: 'Normal (P25–P75)', style: { backgroundColor: ACCENT_COLOR } },
+                    { color: '', label: 'Normal (P25–P75)', style: { backgroundColor: couleurMetrique('kwhNet') } },
                     { color: 'bg-yellow-500', label: `Élevé (> ${fmt0(stats.p75)})` },
                   ].map(l => (
                     <div key={l.label} className="flex items-center gap-1.5 text-slate-400">
@@ -3049,7 +2022,7 @@ export function AnalyseTab() {
                           name === 'y' ? 'Énergie nette' : 'Jour',
                         ]}
                       />
-                      <Scatter data={correlationData} fill={ACCENT_COLOR} opacity={0.7} r={3} />
+                      <Scatter data={correlationData} fill={couleurMetrique('kwhNet')} opacity={0.7} r={3} />
                       <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4" />
                     </ScatterChart>
                   </ResponsiveContainer>
@@ -3062,7 +2035,7 @@ export function AnalyseTab() {
                       <XAxis dataKey="jour" tick={{ fill: '#cbd5e1', fontSize: 12 }} />
                       <YAxis tick={{ fill: '#cbd5e1', fontSize: 10 }} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={{ color: '#e2e8f0' }} formatter={tcdFormatter} />
-                      <Line type="monotone" dataKey="kwhMoyen" name="kwhNet" stroke={ACCENT_COLOR} strokeWidth={2} dot={{ fill: ACCENT_COLOR, r: 4 }} />
+                      <Line type="monotone" dataKey="kwhMoyen" name="kwhNet" stroke={couleurMetrique('kwhNet')} strokeWidth={2} dot={{ fill: couleurMetrique('kwhNet'), r: 4 }} />
                       <ReferenceLine y={safeNum(stats.moyenne, 0)} stroke="#f59e0b" strokeDasharray="4 4" />
                     </LineChart>
                   </ResponsiveContainer>
@@ -3076,6 +2049,14 @@ export function AnalyseTab() {
       {/* ============================================================
         OVERLAY FULLSCREEN — Dashboard Power BI
     ============================================================ */}
+      <RapportCapteursDialog
+        ouvert={rapportCapteursOuvert}
+        onFermer={() => setRapportCapteursOuvert(false)}
+        perimetre={perimetreRapportEcran}
+        lignesFichier={perimetreRapportEcran ? null : activeRows}
+        nomFichier={fileName}
+      />
+
       {fullscreenTCD && (
         <div className="fixed inset-0 z-50 bg-[#0f111a] flex flex-col overflow-hidden">
           {/* Header */}
@@ -3091,7 +2072,7 @@ export function AnalyseTab() {
                 <button key={m.key} onClick={() => toggleTcdMetric(m.key)}
                   className="px-2.5 py-1 rounded text-xs font-medium border transition-all"
                   style={tcdMetrics.has(m.key)
-                    ? { backgroundColor: m.color + '25', borderColor: m.color + '60', color: m.color }
+                    ? { backgroundColor: couleurMetrique(m.key) + '25', borderColor: couleurMetrique(m.key) + '60', color: couleurMetrique(m.key) }
                     : { borderColor: 'rgba(255,255,255,0.1)', color: '#64748b' }}
                 >{m.label}</button>
               ))}
@@ -3206,20 +2187,20 @@ export function AnalyseTab() {
                   <AreaChart data={stackedData} margin={{ top: 5, right: 10, bottom: 20, left: 0 }}>
                     <defs>
                       <linearGradient id="phA" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#a855f7" stopOpacity={0.5} />
-                        <stop offset="95%" stopColor="#a855f7" stopOpacity={0.05} />
+                        <stop offset="5%"  stopColor={couleurMetrique('kwhA')} stopOpacity={0.5} />
+                        <stop offset="95%" stopColor={couleurMetrique('kwhA')} stopOpacity={0.05} />
                       </linearGradient>
                       <linearGradient id="phB" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#f59e0b" stopOpacity={0.5} />
-                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.05} />
+                        <stop offset="5%"  stopColor={couleurMetrique('kwhB')} stopOpacity={0.5} />
+                        <stop offset="95%" stopColor={couleurMetrique('kwhB')} stopOpacity={0.05} />
                       </linearGradient>
                       <linearGradient id="phC" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#06b6d4" stopOpacity={0.5} />
-                        <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.05} />
+                        <stop offset="5%"  stopColor={couleurMetrique('kwhC')} stopOpacity={0.5} />
+                        <stop offset="95%" stopColor={couleurMetrique('kwhC')} stopOpacity={0.05} />
                       </linearGradient>
                       <linearGradient id="phTot" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#22c55e" stopOpacity={0.4} />
-                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0.02} />
+                        <stop offset="5%"  stopColor={couleurMetrique('kwhTotal')} stopOpacity={0.4} />
+                        <stop offset="95%" stopColor={couleurMetrique('kwhTotal')} stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -3232,10 +2213,10 @@ export function AnalyseTab() {
                       formatter={(v: number, name: string) => [`${fmtFr(v, 3)} kWh`, name]}
                     />
                     <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8', cursor: 'pointer' }} onClick={(e) => toggleSeries(String(e.dataKey ?? ''))} />
-                    <Area type="monotone" dataKey="Total"   stroke="#22c55e" fill="url(#phTot)" strokeWidth={2}   hide={isHidden('Total')} />
-                    <Area type="monotone" dataKey="Phase A" stroke="#a855f7" fill="url(#phA)"   strokeWidth={1.5} hide={isHidden('Phase A')} />
-                    <Area type="monotone" dataKey="Phase B" stroke="#f59e0b" fill="url(#phB)"   strokeWidth={1.5} hide={isHidden('Phase B')} />
-                    <Area type="monotone" dataKey="Phase C" stroke="#06b6d4" fill="url(#phC)"   strokeWidth={1.5} hide={isHidden('Phase C')} />
+                    <Area type="monotone" dataKey="Total"   stroke={couleurMetrique('kwhTotal')} fill="url(#phTot)" strokeWidth={2}   hide={isHidden('Total')} />
+                    <Area type="monotone" dataKey="Phase A" stroke={couleurMetrique('kwhA')} fill="url(#phA)"   strokeWidth={1.5} hide={isHidden('Phase A')} />
+                    <Area type="monotone" dataKey="Phase B" stroke={couleurMetrique('kwhB')} fill="url(#phB)"   strokeWidth={1.5} hide={isHidden('Phase B')} />
+                    <Area type="monotone" dataKey="Phase C" stroke={couleurMetrique('kwhC')} fill="url(#phC)"   strokeWidth={1.5} hide={isHidden('Phase C')} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -3259,7 +2240,7 @@ export function AnalyseTab() {
                     <Legend wrapperStyle={{ fontSize: 10, color: '#94a3b8' }} />
                     {Array.from(tcdMetrics).map(mk => {
                       const meta = METRIQUES.find(m => m.key === mk);
-                      return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={meta?.color ?? ACCENT_COLOR} fill={(meta?.color ?? ACCENT_COLOR) + '15'} strokeWidth={2} dot={false} />;
+                      return <Area key={mk} yAxisId={metricAxis(mk)} type="monotone" dataKey={mk} name={meta?.label ?? mk} stroke={couleurMetrique(mk)} fill={couleurMetrique(mk) + '15'} strokeWidth={2} dot={false} />;
                     })}
                   </AreaChart>
                 </ResponsiveContainer>
@@ -3273,7 +2254,7 @@ export function AnalyseTab() {
                     {['Catégorie', 'N'].map(h => <th key={h} className="px-3 py-1.5 text-left text-slate-400 font-medium">{h}</th>)}
                     {Array.from(tcdMetrics).map(mk => {
                       const meta = METRIQUES.find(m => m.key === mk);
-                      return <th key={mk} className="px-3 py-1.5 text-left font-medium" style={{ color: meta?.color }}>
+                      return <th key={mk} className="px-3 py-1.5 text-left font-medium" style={{ color: couleurMetrique(mk) }}>
                         {meta?.label ?? mk}{meta?.unit && <span className="text-slate-500 ml-1 font-normal">({meta.unit})</span>}
                       </th>;
                     })}
@@ -3290,7 +2271,7 @@ export function AnalyseTab() {
                         <td className="px-3 py-1.5 text-slate-400">{row.n}</td>
                         {Array.from(tcdMetrics).map(mk => {
                           const meta = METRIQUES.find(m => m.key === mk);
-                          return <td key={mk} className="px-3 py-1.5 font-medium" style={{ color: meta?.color }}>
+                          return <td key={mk} className="px-3 py-1.5 font-medium" style={{ color: couleurMetrique(mk) }}>
                             {fmtFr((row as unknown as Record<string, number>)[mk] ?? 0, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                           </td>;
                         })}
@@ -3304,8 +2285,8 @@ export function AnalyseTab() {
                       <td className="px-3 py-1.5 text-slate-400">{tcdData.reduce((s, r) => s + r.n, 0)}</td>
                       {Array.from(tcdMetrics).map(mk => {
                         const meta = METRIQUES.find(m => m.key === mk);
-                        const total = tcdData.reduce((s, r) => s + ((r as unknown as Record<string, number>)[mk] ?? 0), 0);
-                        return <td key={mk} className="px-3 py-1.5" style={{ color: meta?.color }}>
+                        const total = tcdTotal(mk);
+                        return <td key={mk} className="px-3 py-1.5" style={{ color: couleurMetrique(mk) }}>
                           {fmtFr(total, 3)}{meta?.unit && <span className="opacity-50 ml-0.5 font-normal">{meta.unit}</span>}
                         </td>;
                       })}

@@ -11,13 +11,13 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-interface Account { site: string; auth_key: string; server: string; }
+interface Account { site: string; auth_key: string; server: string; appareils_inclus?: string[] | null; }
 type DeviceFamily = "ENERGIE_3PH" | "ENERGIE_2PH" | "ENERGIE_1PH" | "LUMIERE" | "CAPTEUR_ENV" | "ETAT" | "INCONNU";
 type Meta = { name: string; room: string | null; type: string; family: DeviceFamily; };
 
 const FAMILY_BY_TYPE: Record<string, DeviceFamily> = {
   "SHEM-3":"ENERGIE_3PH","SPEM-003CEBEU":"ENERGIE_3PH","SPEM-003CEBEU400":"ENERGIE_3PH",
-  "SHEM":"ENERGIE_2PH","SPEM-002CEBEU50":"ENERGIE_2PH",
+  "SHEM":"ENERGIE_2PH","SPEM-002CEBEU50":"ENERGIE_2PH","S3EM-002CXCEU":"ENERGIE_2PH",
   "SNPL-00112EU":"ENERGIE_1PH","SNPM-001PCEU16":"ENERGIE_1PH","S3PM-001PCEU16":"ENERGIE_1PH",
   "S3PL-00112EU":"ENERGIE_1PH","S4PL-00416EU":"ENERGIE_1PH","SPSW-104PE16EU":"ENERGIE_1PH","S3PB-O3AR000001":"ENERGIE_1PH",
   "S3PL-30110EU":"ENERGIE_1PH",
@@ -103,6 +103,16 @@ function getFamilyDynamic(type: string, exact: Record<string, DeviceFamily>, pre
   return getFamilyStatic(type); // filet de sécurité phase A — supprimé en phase B
 }
 
+/** Vrai pour une entrée all_status qui n'est pas un appareil (thermostat virtuel, scène…). */
+function isVirtualCloudObject(s: Record<string,unknown>): boolean {
+  const fam = String(s.family ?? "").toLowerCase();
+  if (fam === "thermostat" || fam === "scene" || fam === "group") return true;
+  // Un vrai appareil a toujours un type matériel (SHEM-3, SNSW-…) ; un id purement
+  // numérique de 13 chiffres est un timestamp de création d'objet virtuel.
+  const type = String(s.type ?? "");
+  return /^THERMOSTAT$|^SCENE$|^GROUP$/i.test(type);
+}
+
 const ID_FALLBACK: Record<string, { type: string; name: string; family: DeviceFamily; site: string }> = {
   // Compte 1 — Ma Maison
   "XB137192911224369":{type:"SBHT-003C",name:"BLU H&T_Chambre",family:"CAPTEUR_ENV",site:"Ma Maison"},
@@ -141,9 +151,9 @@ const ID_FALLBACK: Record<string, { type: string; name: string; family: DeviceFa
   "206ef102b9c4":{type:"S4PL-00416EU",name:"1) Box Wifi",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34987a68c520":{type:"SPSW-104PE16EU",name:"1) Prise 1",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34987a68c520_1":{type:"SPSW-104PE16EU",name:"2) Prise 2",family:"ENERGIE_1PH",site:"Académie CER2E"},
-  "206ef102b9c4_1":{type:"S4PL-00416EU",name:"2) Télé",family:"ENERGIE_1PH",site:"Académie CER2E"},
+  "206ef102b9c4_1":{type:"S4PL-00416EU",name:"2) FONTAINE A EAU",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34987a68c520_2":{type:"SPSW-104PE16EU",name:"3) Prise 3",family:"ENERGIE_1PH",site:"Académie CER2E"},
-  "206ef102b9c4_2":{type:"S4PL-00416EU",name:"3) Woyofal",family:"ENERGIE_1PH",site:"Académie CER2E"},
+  "206ef102b9c4_2":{type:"S4PL-00416EU",name:"3) Home assistant",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "206ef102b9c4_3":{type:"S4PL-00416EU",name:"4) Caméra",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34987a68c520_3":{type:"SPSW-104PE16EU",name:"4) Prise 4",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "08f9e0ea7d94":{type:"SPEM-003CEBEU",name:"Cafétéria_TD RDC",family:"ENERGIE_3PH",site:"Académie CER2E"},
@@ -157,17 +167,16 @@ const ID_FALLBACK: Record<string, { type: string; name: string; family: DeviceFa
   "08f9e0e8d774":{type:"SPEM-003CEBEU400",name:"M1_SENELEC",family:"ENERGIE_3PH",site:"Académie CER2E"},
   "483fdac3b59d":{type:"SHEM-3",name:"M2_SELECTEUR PV/SENELEC",family:"ENERGIE_3PH",site:"Académie CER2E"},
   "483fdac3d79c":{type:"SHEM-3",name:"M3_CHARGE_CONSOMMATION",family:"ENERGIE_3PH",site:"Académie CER2E"},
-  "08f9e0e4d080":{type:"SPEM-002CEBEU50",name:"M4_Groupe électrogène",family:"ENERGIE_2PH",site:"Académie CER2E"},
-  "08f9e0e4d080_1":{type:"SPEM-002CEBEU50",name:"M4_Groupe électrogène (canal 2)",family:"ENERGIE_2PH",site:"Académie CER2E"},
+  "08f9e0e4d080":{type:"SPEM-002CEBEU50",name:"SENELEC Mme Boussara",family:"ENERGIE_2PH",site:"Prestation CER2E"},
+  "08f9e0e4d080_1":{type:"SPEM-002CEBEU50",name:"SENELEC Mme Boussara (canal 2)",family:"ENERGIE_2PH",site:"Prestation CER2E"},
   "8cbfea9705f4":{type:"S3PL-00112EU",name:"PC INFORMATIQUE",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "08f9e047b1b2":{type:"SHEM-3",name:"PV_BUILDING COMMUNAL",family:"ENERGIE_3PH",site:"Académie CER2E"},
   "ecda3bc06554":{type:"S3SW-001P8EU",name:"Simple Allumage",family:"ETAT",site:"Académie CER2E"},
   "08f9e0e82db0":{type:"SPEM-003CEBEU",name:"TGBT_EPT Thiès",family:"ENERGIE_3PH",site:"Académie CER2E"},
   "c8c9a325a225":{type:"SHDM-2",name:"Variateur",family:"LUMIERE",site:"Académie CER2E"},
-  "543204ba4b18":{type:"SNPM-001PCEU16",name:"Ventilo à partir du 04/12/2025",family:"ENERGIE_1PH",site:"Académie CER2E"},
+  "543204ba4b18":{type:"SNPM-001PCEU16",name:"Prise Bureau",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34b7da8a47a0":{type:"S3PM-001PCEU16",name:"Éclairage Disjoncteur 1",family:"ENERGIE_1PH",site:"Académie CER2E"},
   "34b7da8a4aa0":{type:"S3PM-001PCEU16",name:"Éclairage Disjoncteur 2",family:"ENERGIE_1PH",site:"Académie CER2E"},
-  "1720017229409":{type:"INCONNU",name:"Appareil inconnu (fantôme)",family:"ETAT",site:"Académie CER2E"},
   // Compte 3 — Donsin (PV), devices déplacés depuis Académie CER2E le 2026-07-09
   "XB61819871591478":{type:"SBDW-002C",name:"Capteur d'ouverture de portes",family:"ETAT",site:"Donsin"},
   "XB211299189491624":{type:"SBWS-90CM",name:"Station météo_Donsin",family:"CAPTEUR_ENV",site:"Donsin"},
@@ -318,15 +327,34 @@ function extractEnergie3PH(base: Record<string,unknown>, s: Record<string,unknow
 }
 
 function extractEnergie2PH(base: Record<string,unknown>, s: Record<string,unknown>, last: {wh_tot:number|null}|undefined): Record<string,unknown> {
+  // Shelly EM à deux pinces (Gen1 `emeters`, Gen2/Gen3 `em1:0`/`em1:1`).
+  // Les deux pinces sont deux mesures DISTINCTES, nommées séparément dans
+  // l'app (ex. Dakar : pince 0 = « Général SENELEC », pince 1 = « Yacouba »).
+  // La ligne du boîtier ne porte donc que la pince 0 (power_w, wh_tot) ; la
+  // pince 1 a sa propre ligne `<id>_1` (shelly_device_channels). Jusqu'au
+  // 2026-10-19 on écrivait ici la SOMME des deux : la pince 1 était comptée
+  // deux fois (Général SENELEC Dakar +33 %). p_b/wh_b restent en détail.
   const emeters=s.emeters as any[]|undefined;
   if (emeters && emeters.length>=2) {
     const [a,b]=emeters;
     const wh_a=safeNum(a.total,0,1e9),wh_b=safeNum(b.total,0,1e9);
-    const wh_tot=wh_a!=null&&wh_b!=null?wh_a+wh_b:null;
     return {...base,state:"on",
-      power_w:safeNum((a.power??0)+(b.power??0),-1e5,1e5),voltage_v:safeNum(a.voltage,0,500),current_a:safeNum(a.current,0,1000),
+      power_w:safeNum(a.power,-1e5,1e5),voltage_v:safeNum(a.voltage,0,500),current_a:safeNum(a.current,0,1000),
       p_a:safeNum(a.power,-1e5,1e5),p_b:safeNum(b.power,-1e5,1e5),v_a:safeNum(a.voltage,0,500),v_b:safeNum(b.voltage,0,500),i_a:safeNum(a.current,0,1000),i_b:safeNum(b.current,0,1000),
-      wh_a:safeCounter(wh_a,null),wh_b:safeCounter(wh_b,null),wh_tot:safeCounter(wh_tot,last?.wh_tot),
+      wh_a:safeCounter(wh_a,null),wh_b:safeCounter(wh_b,null),wh_tot:safeCounter(wh_a,last?.wh_tot),
+    };
+  }
+  const e1a=s["em1:0"] as any;
+  if (e1a) {
+    const e1b=(s["em1:1"] as any)??{};
+    const da=(s["em1data:0"] as any)??{}, db=(s["em1data:1"] as any)??{};
+    const wh_a=safeNum(da.total_act_energy,0,1e9),wh_b=safeNum(db.total_act_energy,0,1e9);
+    return {...base,state:"on",
+      power_w:safeNum(e1a.act_power,-1e5,1e5),voltage_v:safeNum(e1a.voltage,0,500),current_a:safeNum(e1a.current,0,1000),
+      p_a:safeNum(e1a.act_power,-1e5,1e5),p_b:safeNum(e1b.act_power,-1e5,1e5),v_a:safeNum(e1a.voltage,0,500),v_b:safeNum(e1b.voltage,0,500),i_a:safeNum(e1a.current,0,1000),i_b:safeNum(e1b.current,0,1000),
+      wh_a:safeCounter(wh_a,null),wh_b:safeCounter(wh_b,null),wh_tot:safeCounter(wh_a,last?.wh_tot),
+      wh_rtot:safeCounter(safeNum(da.total_act_ret_energy,0,1e9),null),
+      frequency_hz:safeNum(e1a.freq,40,70),signal_rssi:(s.wifi as any)?.rssi!=null?Math.round((s.wifi as any).rssi):null,
     };
   }
   const em0=s["em:0"] as any;
@@ -549,12 +577,38 @@ function extractChannelReading(deviceId: string, site: string, meta: Meta, paren
   if(pm!==undefined) return {...base,state:"on",power_w:safeNum(pm.apower,0,7500),voltage_v:safeNum(pm.voltage,0,500),current_a:safeNum(pm.current,0,1000),wh_tot:safeCounter(safeNum(pm.aenergy?.total,0,1e9),last?.wh_tot),wh_rtot:safeCounter(safeNum(pm.ret_aenergy?.total,0,1e9),null),device_temp_c:safeNum(pm.temperature?.tC,-40,150),...diag};
   const relays=parentStatus.relays as any[]|undefined, meters=parentStatus.meters as any[]|undefined;
   if(relays&&relays.length>ch){const m=meters?.[ch]; return {...base,state:relays[ch].ison?"on":"off",power_w:safeNum(m?.power,0,7500),voltage_v:safeNum(m?.voltage,0,500),wh_tot:safeCounter(safeNum(m?.total,0,1e9),last?.wh_tot)};}
+  const e1=parentStatus[`em1:${ch}`] as any;
+  if(e1!==undefined){
+    const d=(parentStatus[`em1data:${ch}`] as any)??{};
+    return {...base,state:"on",power_w:safeNum(e1.act_power,-1e5,1e5),voltage_v:safeNum(e1.voltage,0,500),current_a:safeNum(e1.current,0,1000),p_a:safeNum(e1.act_power,-1e5,1e5),v_a:safeNum(e1.voltage,0,500),i_a:safeNum(e1.current,0,1000),wh_tot:safeCounter(safeNum(d.total_act_energy,0,1e9),last?.wh_tot),wh_rtot:safeCounter(safeNum(d.total_act_ret_energy,0,1e9),null),frequency_hz:safeNum(e1.freq,40,70),...diag};
+  }
   const emeters=parentStatus.emeters as any[]|undefined;
   if(emeters&&emeters.length>ch){
     const e=emeters[ch]; const wh=safeNum(e.total,0,1e9);
     return {...base,state:"on",power_w:safeNum(e.power,-1e5,1e5),voltage_v:safeNum(e.voltage,0,500),current_a:safeNum(e.current,0,1000),p_a:safeNum(e.power,-1e5,1e5),v_a:safeNum(e.voltage,0,500),i_a:safeNum(e.current,0,1000),wh_tot:safeCounter(wh,last?.wh_tot)};
   }
   return {...base,state:"offline"};
+}
+
+// Appareils dont on ne conserve que les mesures nouvelles (measured_at changé).
+// Volontairement limité à la station météo Donsin ; à étendre au cas par cas.
+const DEDUP_MEASURE_IDS = new Set<string>(["XB211299189491624"]);
+
+async function dropRepeatedMeasures(rows: Record<string,unknown>[]): Promise<Record<string,unknown>[]> {
+  const targets=[...new Set(rows.filter(r=>DEDUP_MEASURE_IDS.has(String(r.device_id))).map(r=>String(r.device_id)))];
+  if (targets.length===0) return rows;
+  const last: Record<string,number|null>={};
+  for (const id of targets) {
+    const {data,error}=await supabase.from("shelly_cl").select("measured_at").eq("device_id",id)
+      .not("measured_at","is",null).order("ts",{ascending:false}).limit(1);
+    // En cas d'erreur de lecture on préfère écrire (doublon possible) plutôt que perdre une mesure.
+    last[id]=!error&&data&&data[0]?.measured_at ? new Date(data[0].measured_at as string).getTime() : null;
+  }
+  return rows.filter(r=>{
+    const id=String(r.device_id);
+    if (!DEDUP_MEASURE_IDS.has(id) || !r.measured_at || last[id]==null) return true;
+    return new Date(r.measured_at as string).getTime()!==last[id];
+  });
 }
 
 async function pollAccount(
@@ -575,8 +629,17 @@ async function pollAccount(
   const rows: Record<string,unknown>[]=[];
   const processed=new Set<string>();
 
+  // Collecte partielle : seuls les appareils de la liste blanche (NULL = tout le compte).
+  const inclus=account.appareils_inclus?.length ? new Set(account.appareils_inclus) : null;
+
   for (const [deviceId,status] of Object.entries(allStatus)) {
     if (typeof status!=="object"||!status) continue;
+    if (inclus && !inclus.has(deviceId)) continue;
+    // Objets VIRTUELS du cloud (thermostat, scène, groupe…) : présents dans
+    // all_status mais absents de device/list, sans état physique. Exemple :
+    // 1720017229409 = thermostat désactivé de Ma Maison, 5 mois de lignes
+    // vides (« Appareil inconnu (fantôme) »). On les ignore.
+    if (isVirtualCloudObject(status as Record<string,unknown>)) { console.log(`[virtuel ignoré] ${deviceId} family=${(status as any).family}`); continue; }
     const meta=resolveMeta(deviceId,apiData,dbCache,channels,exact,prefix);
     rows.push(extractReading(deviceId,account.site,meta,status as any,lastCounters[deviceId]));
     processed.add(deviceId);
@@ -584,6 +647,7 @@ async function pollAccount(
 
   for (const [virtualId,chan] of Object.entries(channels)) {
     if (processed.has(virtualId)) continue;
+    if (inclus && !inclus.has(chan.parent)) continue;
     const parentStatus=allStatus[chan.parent] as Record<string,unknown>|undefined;
     if (!parentStatus) continue;
     const meta=resolveMeta(virtualId,apiData,dbCache,channels,exact,prefix);
@@ -610,26 +674,37 @@ async function pollAccount(
   // Seule la statistique `nb_offline` de shelly_cl_journalier s'appuyait encore
   // dessus ; elle vaudra désormais 0.
 
-  if (rows.length>0) {
-    const {error}=await supabase.from("shelly_cl").insert(rows);
+  // Dédoublonnage des relectures — appareils listés dans DEDUP_MEASURE_IDS seulement.
+  //
+  // La station météo Donsin ne transmet qu'environ de 07 h 20 à 18 h UTC ; le reste
+  // du temps all_status renvoie la dernière mesure connue (`_updated` inchangé).
+  // Écrire une ligne par minute produisait 61,5 % de lignes identiques en
+  // septembre 2026 (valeurs « figées » la nuit, cumul de pluie plat puis en
+  // marche d'escalier). On n'écrit donc que si `measured_at` a changé.
+  // Le statut hors-ligne se déduit de l'absence de relevé récent (voir plus haut) :
+  // la station apparaît hors-ligne la nuit, ce qui est exact.
+  const toWrite=await dropRepeatedMeasures(rows);
+  if (toWrite.length>0) {
+    const {error}=await supabase.from("shelly_cl").insert(toWrite);
     if (error) throw new Error(`[${account.site}] ${error.message}`);
-    console.log(`[${account.site}] ${rows.length} lignes insérées`);
   }
-  return {inserted:rows.length};
+  console.log(`[${account.site}] ${toWrite.length} lignes insérées` + (rows.length!==toWrite.length ? ` (${rows.length-toWrite.length} relectures ignorées)` : ""));
+  return {inserted:toWrite.length};
 }
 
 async function loadAccounts(): Promise<Account[]> {
   // Priorité : table shelly_accounts (gérée depuis la plateforme)
   const { data, error } = await supabase
     .from("shelly_accounts")
-    .select("site, auth_key, server_url")
+    .select("site, auth_key, server_url, appareils_inclus")
     .eq("actif", true);
 
   if (!error && data && data.length > 0) {
-    return data.map((r: { site: string; auth_key: string; server_url: string }) => ({
+    return data.map((r: { site: string; auth_key: string; server_url: string; appareils_inclus: string[] | null }) => ({
       site: r.site,
       auth_key: r.auth_key,
       server: r.server_url,
+      appareils_inclus: r.appareils_inclus,
     }));
   }
 
@@ -651,10 +726,34 @@ async function writePollStatus(site: string, status: "ok" | "error", errorMsg?: 
     .eq("site", site);
 }
 
+/** Comparaison à temps constant (même logique que shelly-webhook). */
+function secretsMatch(given: string | null, expected: string): boolean {
+  if (!given) return false;
+  const a = new TextEncoder().encode(given);
+  const b = new TextEncoder().encode(expected);
+  let diff = a.length ^ b.length;
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  return diff === 0;
+}
+
+/** Appel autorisé : le cron (x-cron-secret = CRON_SECRET) ou un utilisateur connecté (bouton du front). */
+async function isAuthorized(req: Request): Promise<boolean> {
+  const expected = Deno.env.get("CRON_SECRET");
+  if (expected && secretsMatch(req.headers.get("x-cron-secret"), expected)) return true;
+  const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!token) return false;
+  const { data, error } = await supabase.auth.getUser(token);
+  return !error && !!data?.user;
+}
+
 Deno.serve(async (req: Request) => {
-  // Déployé avec --no-verify-jwt : le cron pg_cron peut appeler sans JWT valide.
-  // La sécurité des données est assurée par RLS sur shelly_cl (lecture = authenticated).
-  // Écriture par service_role dans le client Supabase ci-dessus → bypass RLS OK.
+  // Déployé avec --no-verify-jwt : le cron pg_cron n'a pas de session, il prouve
+  // son droit par l'en-tête x-cron-secret. Tout autre appel doit porter le JWT
+  // d'un utilisateur connecté. Écriture par service_role → bypass RLS OK.
+  if (!(await isAuthorized(req))) {
+    return new Response(JSON.stringify({ok:false,error:"unauthorized"}),{status:401,headers:{"Content-Type":"application/json"}});
+  }
   let forceOverride = false;
   try { const body = await req.json(); forceOverride = body?.forceMetaRefresh === true; } catch { /* body vide (cron) */ }
   try {

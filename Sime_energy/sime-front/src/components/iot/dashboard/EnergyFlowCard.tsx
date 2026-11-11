@@ -10,10 +10,12 @@
 // l'autre. Un site sans rattachement n'affiche simplement pas de carte.
 // ============================================================
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Sun, Plug, ArrowRight, Zap, Building2, AlertTriangle } from 'lucide-react';
-import type { ShellyClRow, EnergyAgg, Period } from '@/lib/iot-dashboard-service';
+import type { ShellyClRow, EnergyAgg, Period, Device } from '@/lib/iot-dashboard-service';
 import type { ShellyDeviceRole, DeviceRole } from '@/lib/shelly-device-role-service';
+import { indexLieux, type PlageDetail } from '@/lib/iot-energy-detail-service';
+import { EnergyDetailDialog, type EnergySubject } from './EnergyDetailDialog';
 
 const fmtFr = (n: number, d = 2) => n.toFixed(d).replace('.', ',');
 
@@ -23,6 +25,10 @@ interface Props {
   period: Period;
   /** device_id → rattachement électrique. Vide = aucune carte affichée. */
   roles: Map<string, ShellyDeviceRole>;
+  /** Catalogue 7 jours — identifie un compteur même absent du snapshot 5 min. */
+  allDevices: Device[];
+  /** Période analysée par la popup de détail. */
+  plage: PlageDetail;
 }
 
 // Rôles qui composent le schéma de flux. Les autres (DEPART, AMBIANCE…)
@@ -31,63 +37,91 @@ const ROLES_FLUX: DeviceRole[] = ['M1_RESEAU', 'M2_SELECTEUR', 'M3_CHARGE', 'M5_
 
 // ── Composants de présentation ────────────────────────────────
 
+// Les icônes lucide reçoivent leur couleur en `style` et non par une classe :
+// elle vient du rôle électrique du nœud, valeur calculée, pas d'une palette
+// Tailwind connue à la compilation.
+type IconeNoeud = React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
+
+// Un nœud est cliquable dès qu'un appareil lui est rattaché — y compris
+// lorsqu'il n'a rien mesuré : c'est justement là qu'on veut savoir depuis
+// quand il s'est tu, et ce qu'il mesurait avant.
+const CLIQUABLE =
+  'cursor-pointer transition-shadow hover:ring-1 hover:ring-white/25 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40';
+
 // Nœud sans mesure : la valeur est remplacée par un tiret et le motif est
 // affiché. Le contour passe en pointillé gris pour que l'œil distingue
 // immédiatement « mesuré » de « non mesuré » sans lire les chiffres.
-function NodeVide({ icon: Icon, name, sub, motif }: {
-  icon: React.ComponentType<{ className?: string }>;
-  name: string; sub?: string; motif: string;
+function NodeVide({ icon: Icon, name, sub, motif, onClick }: {
+  icon: IconeNoeud;
+  name: string; sub?: string; motif: string; onClick?: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-slate-600/50 bg-slate-500/5 p-3 text-center">
+    <div role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={e => { if (onClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick(); } }}
+      title={onClick ? 'Voir le détail' : undefined}
+      className={`rounded-xl border border-dashed border-slate-600/50 bg-slate-500/5 p-3 text-center ${onClick ? CLIQUABLE : ''}`}>
       <div className="mx-auto w-8 h-8 rounded-lg flex items-center justify-center mb-1 bg-slate-500/15">
         <Icon className="h-4 w-4 text-slate-500" />
       </div>
       <p className="text-slate-400 text-xs font-semibold">{name}</p>
       <p className="text-xl font-bold mt-1 text-slate-600">—</p>
-      <p className="text-amber-500/80 text-[10px] mt-0.5">{motif}</p>
-      {sub && <p className="text-slate-600 text-[10px]">{sub}</p>}
+      <p className="text-amber-500/80 text-[0.625rem] mt-0.5">{motif}</p>
+      {sub && <p className="text-slate-600 text-[0.625rem]">{sub}</p>}
     </div>
   );
 }
 
-function NodeLive({ icon: Icon, color, name, power, energy, sub }: {
-  icon: React.ComponentType<{ className?: string }>;
+function NodeLive({ icon: Icon, color, name, power, energy, sub, onClick }: {
+  icon: IconeNoeud;
   color: string; name: string; power: number | null; energy?: number | null; sub?: string;
+  onClick?: () => void;
 }) {
-  if (power == null) return <NodeVide icon={Icon} name={name} sub={sub} motif="aucune donnée · hors ligne" />;
+  // Sans onClick, aucun appareil ne porte ce rôle sur le site : il n'est pas
+  // « hors ligne », il n'existe pas (ex. pas de PV à Ma Maison).
+  if (power == null) return <NodeVide icon={Icon} name={name} sub={sub} motif={onClick ? 'aucune donnée · hors ligne' : 'non équipé'} onClick={onClick} />;
   return (
-    <div className="rounded-xl border p-3 text-center" style={{ backgroundColor: color + '10', borderColor: color + '50' }}>
+    <div role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={e => { if (onClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick(); } }}
+      title={onClick ? 'Voir le détail' : undefined}
+      className={`rounded-xl border p-3 text-center ${onClick ? CLIQUABLE : ''}`}
+      style={{ backgroundColor: color + '10', borderColor: color + '50' }}>
       <div className="mx-auto w-8 h-8 rounded-lg flex items-center justify-center mb-1" style={{ backgroundColor: color + '25' }}>
         <Icon className="h-4 w-4" style={{ color }} />
       </div>
       <p className="text-white text-xs font-semibold">{name}</p>
       <p className="text-xl font-bold mt-1" style={{ color }}>
-        {fmtFr(power, 2)} <span className="text-[10px] text-slate-400 font-normal">kW</span>
+        {fmtFr(power, 2)} <span className="text-[0.625rem] text-slate-400 font-normal">kW</span>
       </p>
       {typeof energy === 'number' && energy > 0 && (
-        <p className="text-slate-500 text-[10px] mt-0.5">{fmtFr(energy, 0)} kWh cumulés</p>
+        <p className="text-slate-500 text-[0.625rem] mt-0.5">{fmtFr(energy, 0)} kWh cumulés</p>
       )}
-      {sub && <p className="text-slate-500 text-[10px]">{sub}</p>}
+      {sub && <p className="text-slate-500 text-[0.625rem]">{sub}</p>}
     </div>
   );
 }
 
-function NodeHist({ icon: Icon, color, name, kwh, sub }: {
-  icon: React.ComponentType<{ className?: string }>;
-  color: string; name: string; kwh: number | null; sub?: string;
+function NodeHist({ icon: Icon, color, name, kwh, sub, onClick }: {
+  icon: IconeNoeud;
+  color: string; name: string; kwh: number | null; sub?: string; onClick?: () => void;
 }) {
-  if (kwh == null) return <NodeVide icon={Icon} name={name} sub={sub} motif="aucune donnée sur la période" />;
+  if (kwh == null) return <NodeVide icon={Icon} name={name} sub={sub} motif={onClick ? 'aucune donnée sur la période' : 'non équipé'} onClick={onClick} />;
   return (
-    <div className="rounded-xl border p-3 text-center" style={{ backgroundColor: color + '10', borderColor: color + '50' }}>
+    <div role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={e => { if (onClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick(); } }}
+      title={onClick ? 'Voir le détail' : undefined}
+      className={`rounded-xl border p-3 text-center ${onClick ? CLIQUABLE : ''}`}
+      style={{ backgroundColor: color + '10', borderColor: color + '50' }}>
       <div className="mx-auto w-8 h-8 rounded-lg flex items-center justify-center mb-1" style={{ backgroundColor: color + '25' }}>
         <Icon className="h-4 w-4" style={{ color }} />
       </div>
       <p className="text-white text-xs font-semibold">{name}</p>
       <p className="text-xl font-bold mt-1" style={{ color }}>
-        {fmtFr(kwh, kwh >= 100 ? 1 : 2)} <span className="text-[10px] text-slate-400 font-normal">kWh</span>
+        {fmtFr(kwh, kwh >= 100 ? 1 : 2)} <span className="text-[0.625rem] text-slate-400 font-normal">kWh</span>
       </p>
-      {sub && <p className="text-slate-500 text-[10px] mt-0.5">{sub}</p>}
+      {sub && <p className="text-slate-500 text-[0.625rem] mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -99,7 +133,7 @@ function Arrow({ value, unit = 'kW', color = '#64748b', dim = false }: {
   return (
     <div className={`flex flex-col items-center justify-center ${dim || inconnu ? 'opacity-30' : ''}`}>
       <ArrowRight className="h-5 w-5" style={{ color }} />
-      <p className="text-[10px] font-semibold mt-0.5" style={{ color }}>
+      <p className="text-[0.625rem] font-semibold mt-0.5" style={{ color }}>
         {inconnu ? '—' : `${fmtFr(value, value >= 100 ? 1 : 2)} ${unit}`}
       </p>
     </div>
@@ -107,25 +141,36 @@ function Arrow({ value, unit = 'kW', color = '#64748b', dim = false }: {
 }
 
 // Encart autoconsommation : affiche le pourcentage seulement s'il est mesuré.
-function AutoConsoBloc({ pct, valeur, unite, manquants }: {
+function AutoConsoBloc({ pct, valeur, unite, manquants, onClick }: {
   pct: number | null; valeur: number | null; unite: string; manquants: string;
+  onClick?: () => void;
 }) {
+  const clic = onClick
+    ? {
+        role: 'button' as const, tabIndex: 0, onClick,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
+        },
+        title: 'Comparer PV, charges et réseau',
+        className: CLIQUABLE,
+      }
+    : { className: '' };
   if (pct == null) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-600/50 bg-slate-500/5 p-3 text-center">
-        <p className="text-slate-400 text-[10px] uppercase tracking-wide">Autoconsommation</p>
+      <div {...clic} className={`rounded-xl border border-dashed border-slate-600/50 bg-slate-500/5 p-3 text-center ${clic.className}`}>
+        <p className="text-slate-400 text-[0.625rem] uppercase tracking-wide">Autoconsommation</p>
         <p className="text-2xl font-bold text-slate-600 mt-1">—</p>
-        <p className="text-amber-500/80 text-[10px] mt-0.5">
+        <p className="text-amber-500/80 text-[0.625rem] mt-0.5">
           incalculable · {manquants || 'compteur'} sans données
         </p>
       </div>
     );
   }
   return (
-    <div className="rounded-xl border p-3 text-center bg-green-500/5 border-green-500/30">
-      <p className="text-green-400 text-[10px] uppercase tracking-wide">Autoconsommation</p>
+    <div {...clic} className={`rounded-xl border p-3 text-center bg-green-500/5 border-green-500/30 ${clic.className}`}>
+      <p className="text-green-400 text-[0.625rem] uppercase tracking-wide">Autoconsommation</p>
       <p className="text-2xl font-bold text-green-400 mt-1">{fmtFr(pct, 0)}%</p>
-      <p className="text-slate-500 text-[10px] mt-0.5">
+      <p className="text-slate-500 text-[0.625rem] mt-0.5">
         {fmtFr(valeur ?? 0, 2)} {unite} utilisés sur place
       </p>
     </div>
@@ -134,13 +179,16 @@ function AutoConsoBloc({ pct, valeur, unite, manquants }: {
 
 // ── Carte d'un site ───────────────────────────────────────────
 
-function SiteFlow({ site, snapshot, energyAgg, isHistoric, roles }: {
+function SiteFlow({ site, snapshot, energyAgg, isHistoric, roles, allDevices, plage }: {
   site: string;
   snapshot: ShellyClRow[];
   energyAgg: EnergyAgg[];
   isHistoric: boolean;
   roles: Map<string, ShellyDeviceRole>;
+  allDevices: Device[];
+  plage: PlageDetail;
 }) {
+  const [detail, setDetail] = useState<EnergySubject | null>(null);
   const live = useMemo(() => {
     const rows = snapshot.filter(r => r.site === site);
     const byRole = (role: DeviceRole) => rows.find(r => roles.get(r.device_id)?.role === role);
@@ -152,6 +200,84 @@ function SiteFlow({ site, snapshot, energyAgg, isHistoric, roles }: {
     const byRole = (role: DeviceRole) => rows.find(e => roles.get(e.device_id)?.role === role);
     return { m1: byRole('M1_RESEAU'), m2: byRole('M2_SELECTEUR'), m3: byRole('M3_CHARGE'), pv: byRole('M5_PV') };
   }, [energyAgg, site, roles]);
+
+  // Appareil porteur de chaque rôle sur le site. Résolu sur le CATALOGUE
+  // (fenêtre 7 j) et pas seulement sur le snapshot : un compteur débranché
+  // sort du snapshot au bout de 5 minutes, or c'est précisément celui dont on
+  // veut ouvrir l'historique. Le snapshot et l'agrégat ne servent que de
+  // repli, pour un appareil trop récent pour le catalogue.
+  const appareilParRole = useMemo(() => {
+    const lieux = indexLieux(allDevices, snapshot);
+    const map = new Map<DeviceRole, {
+      device_id: string; name: string; inverse: boolean; site: string; room: string | null;
+    }>();
+    const ajouter = (device_id: string, name: string, siteRow: string) => {
+      if (siteRow !== site) return;
+      const r = roles.get(device_id);
+      if (!r || !ROLES_FLUX.includes(r.role) || map.has(r.role)) return;
+      map.set(r.role, {
+        device_id, name,
+        inverse: r.sens_inverse ?? false,
+        site: siteRow,
+        room: lieux.get(device_id)?.room ?? null,
+      });
+    };
+    for (const d of allDevices) ajouter(d.device_id, d.name, d.site);
+    for (const r of snapshot)   ajouter(r.device_id, r.name, r.site);
+    for (const e of energyAgg)  ajouter(e.device_id, e.name, e.site);
+    return map;
+  }, [allDevices, snapshot, energyAgg, site, roles]);
+
+  /** Sujet de popup pour un compteur du schéma. `null` si rien n'y est rattaché. */
+  const sujetRole = (role: DeviceRole, titre: string, couleur: string, sub: string): EnergySubject | null => {
+    const d = appareilParRole.get(role);
+    if (!d) return null;
+    return {
+      titre,
+      sousTitre: [site, d.room, sub, d.name].filter(Boolean).join(' · '),
+      couleur,
+      plage,
+      series: [{ label: titre, couleur, devices: [d] }],
+      notes: d.inverse
+        ? ['TC monté à l\'envers : consommation et injection sont permutées à la lecture.']
+        : undefined,
+    };
+  };
+
+  const ouvrir = (role: DeviceRole, titre: string, couleur: string, sub: string) => {
+    const sujet = sujetRole(role, titre, couleur, sub);
+    if (sujet) setDetail(sujet);
+  };
+
+  // L'autoconsommation n'est pas une mesure mais un croisement : la popup
+  // superpose donc les trois compteurs qui la composent plutôt que d'afficher
+  // un pourcentage sans ses termes.
+  const ouvrirAutoConso = useMemo(() => {
+    const pv = appareilParRole.get('M5_PV');
+    const ch = appareilParRole.get('M3_CHARGE');
+    const re = appareilParRole.get('M1_RESEAU');
+    const series = [
+      pv && { label: 'M5 — PV', couleur: '#facc15', devices: [pv] },
+      ch && { label: 'M3 — Charges', couleur: '#ef4444', devices: [ch] },
+      re && { label: 'M1 — Réseau', couleur: '#3b82f6', devices: [re] },
+    ].filter(Boolean) as EnergySubject['series'];
+    if (series.length < 2) return undefined;
+    return () => setDetail({
+      titre: 'Autoconsommation',
+      sousTitre: `${site} · part de la charge couverte par le PV`,
+      couleur: '#22c55e',
+      plage,
+      series,
+      notes: [
+        'Autoconsommation = M3 charges − M1 réseau (ce que le site a consommé sans le prendre au réseau)',
+        'Comparer les trois courbes montre à quelles heures le PV couvre réellement la charge',
+      ],
+    });
+  }, [appareilParRole, site, plage]);
+
+  /** Un rôle n'est cliquable que s'il porte un appareil. */
+  const clic = (role: DeviceRole, titre: string, couleur: string, sub: string) =>
+    appareilParRole.has(role) ? () => ouvrir(role, titre, couleur, sub) : undefined;
 
   // ── Valeurs live ──────────────────────────────────────────────
   //
@@ -238,7 +364,7 @@ function SiteFlow({ site, snapshot, energyAgg, isHistoric, roles }: {
         </h3>
         <div className="flex items-center gap-2">
           {aConfirmer > 0 && (
-            <span className="text-amber-400/90 text-[11px] flex items-center gap-1" title="Rattachements appareil → rôle proposés automatiquement, pas encore validés">
+            <span className="text-amber-400/90 text-[0.6875rem] flex items-center gap-1" title="Rattachements appareil → rôle proposés automatiquement, pas encore validés">
               <AlertTriangle className="h-3 w-3" />
               {aConfirmer} rattachement{aConfirmer > 1 ? 's' : ''} à confirmer
             </span>
@@ -252,17 +378,22 @@ function SiteFlow({ site, snapshot, energyAgg, isHistoric, roles }: {
       {isHistoric ? (
         /* ── Vue historique : kWh ── */
         <div className="grid grid-cols-1 md:grid-cols-[1fr,auto,1fr,auto,1fr] gap-2 items-center">
-          <NodeHist icon={Plug}      color="#3b82f6" name="M1 — Réseau"   kwh={hSenelec} sub="Import réseau" />
+          <NodeHist icon={Plug}      color="#3b82f6" name="M1 — Réseau"   kwh={hSenelec} sub="Import réseau"
+            onClick={clic('M1_RESEAU', 'M1 — Réseau', '#3b82f6', 'Import réseau')} />
           <Arrow value={hSenelec} unit="kWh" dim={hSenelec === 0} />
-          <NodeHist icon={Building2} color="#06b6d4" name="M2 — Sélecteur"  kwh={hSelect}  sub="Aiguillage PV/réseau" />
+          <NodeHist icon={Building2} color="#06b6d4" name="M2 — Sélecteur"  kwh={hSelect}  sub="Aiguillage PV/réseau"
+            onClick={clic('M2_SELECTEUR', 'M2 — Sélecteur', '#06b6d4', 'Aiguillage PV/réseau')} />
           <Arrow value={hCharge}  unit="kWh" dim={hCharge === 0} />
-          <NodeHist icon={Building2} color="#ef4444" name="M3 — Charges"    kwh={hCharge}  sub="Consommation totale" />
+          <NodeHist icon={Building2} color="#ef4444" name="M3 — Charges"    kwh={hCharge}  sub="Consommation totale"
+            onClick={clic('M3_CHARGE', 'M3 — Charges', '#ef4444', 'Consommation totale')} />
 
           <div className="md:col-span-3 md:col-start-1 mt-2">
             <div className="grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-2 items-center">
-              <NodeHist icon={Sun} color="#facc15" name="M5 — PV" kwh={hPV} sub="Production solaire" />
+              <NodeHist icon={Sun} color="#facc15" name="M5 — PV" kwh={hPV} sub="Production solaire"
+                onClick={clic('M5_PV', 'M5 — PV', '#facc15', 'Production solaire')} />
               <Arrow value={autoConsoKwhHist} unit="kWh" color="#22c55e" dim={hPV === 0} />
-              <AutoConsoBloc pct={autoConsoPctHist} valeur={autoConsoKwhHist} unite="kWh" manquants={manquantsHist} />
+              <AutoConsoBloc pct={autoConsoPctHist} valeur={autoConsoKwhHist} unite="kWh" manquants={manquantsHist}
+                onClick={ouvrirAutoConso} />
             </div>
           </div>
 
@@ -277,17 +408,22 @@ function SiteFlow({ site, snapshot, energyAgg, isHistoric, roles }: {
       ) : (
         /* ── Vue live : kW ── */
         <div className="grid grid-cols-1 md:grid-cols-[1fr,auto,1fr,auto,1fr] gap-2 items-center">
-          <NodeLive icon={Plug}      color="#3b82f6" name="M1 — Réseau"  power={pSenelec} energy={eSenelec} sub="Compteur réseau" />
+          <NodeLive icon={Plug}      color="#3b82f6" name="M1 — Réseau"  power={pSenelec} energy={eSenelec} sub="Compteur réseau"
+            onClick={clic('M1_RESEAU', 'M1 — Réseau', '#3b82f6', 'Import réseau')} />
           <Arrow value={pSenelec} dim={pSenelec === 0} />
-          <NodeLive icon={Building2} color="#06b6d4" name="M2 — Sélecteur" power={pSelect}  sub="Aiguillage PV/réseau" />
+          <NodeLive icon={Building2} color="#06b6d4" name="M2 — Sélecteur" power={pSelect}  sub="Aiguillage PV/réseau"
+            onClick={clic('M2_SELECTEUR', 'M2 — Sélecteur', '#06b6d4', 'Aiguillage PV/réseau')} />
           <Arrow value={pCharge} dim={pCharge === 0} />
-          <NodeLive icon={Building2} color="#ef4444" name="M3 — Charges"   power={pCharge}  energy={eCharge} sub="Consommation totale" />
+          <NodeLive icon={Building2} color="#ef4444" name="M3 — Charges"   power={pCharge}  energy={eCharge} sub="Consommation totale"
+            onClick={clic('M3_CHARGE', 'M3 — Charges', '#ef4444', 'Consommation totale')} />
 
           <div className="md:col-span-3 md:col-start-1 mt-2">
             <div className="grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-2 items-center">
-              <NodeLive icon={Sun} color="#facc15" name="M5 — PV" power={pPV} energy={ePV} sub="Production solaire" />
+              <NodeLive icon={Sun} color="#facc15" name="M5 — PV" power={pPV} energy={ePV} sub="Production solaire"
+                onClick={clic('M5_PV', 'M5 — PV', '#facc15', 'Production solaire')} />
               <Arrow value={autoConsoKwLive} color="#22c55e" dim={pPV === 0} />
-              <AutoConsoBloc pct={autoConsoPctLive} valeur={autoConsoKwLive} unite="kW" manquants={manquantsLive} />
+              <AutoConsoBloc pct={autoConsoPctLive} valeur={autoConsoKwLive} unite="kW" manquants={manquantsLive}
+                onClick={ouvrirAutoConso} />
             </div>
           </div>
 
@@ -300,13 +436,15 @@ function SiteFlow({ site, snapshot, energyAgg, isHistoric, roles }: {
           )}
         </div>
       )}
+
+      <EnergyDetailDialog sujet={detail} onClose={() => setDetail(null)} />
     </div>
   );
 }
 
 // ── Point d'entrée : une carte par site rattaché ──────────────
 
-export function EnergyFlowCard({ snapshot, energyAgg, period, roles }: Props) {
+export function EnergyFlowCard({ snapshot, energyAgg, period, roles, allDevices, plage }: Props) {
   const isHistoric = period !== 'live';
 
   // Sites qui portent au moins un compteur du schéma de flux. Un site dont les
@@ -337,6 +475,8 @@ export function EnergyFlowCard({ snapshot, energyAgg, period, roles }: Props) {
           energyAgg={energyAgg}
           isHistoric={isHistoric}
           roles={roles}
+          allDevices={allDevices}
+          plage={plage}
         />
       ))}
     </div>

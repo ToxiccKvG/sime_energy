@@ -42,7 +42,6 @@ const STATUT_COLORS: Record<string, string> = {
 
 const TYPE_COLORS: Record<string, string> = {
   shelly:      'bg-yellow-500/20 text-yellow-400',
-  facturation: 'bg-purple-500/20 text-purple-400',
   autre:       'bg-slate-500/20 text-slate-400',
 };
 
@@ -130,10 +129,10 @@ function FichierCard({
             </div>
           )}
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <Badge className={`text-[10px] border-0 px-1.5 py-0 ${TYPE_COLORS[file.type] ?? TYPE_COLORS.autre}`}>
+            <Badge className={`text-[0.625rem] border-0 px-1.5 py-0 ${TYPE_COLORS[file.type] ?? TYPE_COLORS.autre}`}>
               {file.type}
             </Badge>
-            <Badge className={`text-[10px] border-0 px-1.5 py-0 ${STATUT_COLORS[statut]}`}>
+            <Badge className={`text-[0.625rem] border-0 px-1.5 py-0 ${STATUT_COLORS[statut]}`}>
               {statut === 'original' && <AlertCircle className="h-2.5 w-2.5 mr-0.5 inline" />}
               {statut !== 'original' && <CheckCircle2 className="h-2.5 w-2.5 mr-0.5 inline" />}
               {statut}
@@ -162,12 +161,12 @@ function FichierCard({
       {file.columns.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {file.columns.slice(0, 6).map(col => (
-            <span key={col} className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500 font-mono">
+            <span key={col} className="text-[0.625rem] px-1.5 py-0.5 rounded bg-white/5 text-slate-500 font-mono">
               {col}
             </span>
           ))}
           {file.columns.length > 6 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-600">
+            <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-white/5 text-slate-600">
               +{file.columns.length - 6}
             </span>
           )}
@@ -216,12 +215,11 @@ function FichierCard({
 // ============================================================
 export function StockageTab() {
   const { state, removeFile, updateFile, setSelectedFile, setActiveTab } = useIOT();
-  const { files } = state;
-  const [filter, setFilter] = useState<'tous' | 'shelly' | 'facturation' | 'nettoyé'>('tous');
+  const { files, filesLoading } = state;
+  const [filter, setFilter] = useState<'tous' | 'shelly' | 'nettoyé'>('tous');
 
   const filtered = files.filter(f => {
     if (filter === 'shelly')      return f.type === 'shelly';
-    if (filter === 'facturation') return f.type === 'facturation';
     if (filter === 'nettoyé')     return f.statut === 'nettoyé';
     return true;
   });
@@ -248,7 +246,7 @@ export function StockageTab() {
 
       {/* Filtres */}
       <div className="flex gap-1 p-1 bg-white/5 rounded-lg border border-white/10 w-fit">
-        {(['tous', 'shelly', 'facturation', 'nettoyé'] as const).map(f => (
+        {(['tous', 'shelly', 'nettoyé'] as const).map(f => (
           <button key={f} onClick={() => setFilter(f)}
             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors capitalize ${
               filter === f
@@ -261,7 +259,12 @@ export function StockageTab() {
       </div>
 
       {/* Grille de fichiers */}
-      {filtered.length === 0 ? (
+      {filesLoading && files.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+          <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-4" />
+          <p className="text-sm">Chargement de la bibliothèque…</p>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-slate-500">
           <HardDrive className="h-14 w-14 opacity-20 mb-4" />
           <p className="text-base font-medium">

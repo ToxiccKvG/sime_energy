@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import requests
+from urllib.parse import quote
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,6 +14,10 @@ load_dotenv()
 SHELLY_AUTH_KEY = os.getenv("SHELLY_AUTH_KEY")
 SHELLY_SERVER = os.getenv("SHELLY_SERVER", "https://shelly-88-eu.shelly.cloud")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
+# Le webhook refuse toute requête sans ce secret (durcissement 2026-09-25).
+# Doit être identique à celui posé côté Edge Function :
+#   supabase secrets set SHELLY_WEBHOOK_SECRET=<valeur>
+SHELLY_WEBHOOK_SECRET = os.getenv("SHELLY_WEBHOOK_SECRET")
 
 EDGE_FUNCTION_BASE = f"{SUPABASE_URL}/functions/v1/shelly-webhook"
 
@@ -58,8 +63,21 @@ def send_rpc(device_id: str, method: str, params: dict) -> dict:
 
 
 def configure_webhook(device_id: str, site: str) -> dict:
-    """Crée un webhook sur l'appareil pour envoyer les données énergie."""
-    webhook_url = f"{EDGE_FUNCTION_BASE}?device_id={device_id}&site={site}"
+    """Crée un webhook sur l'appareil pour envoyer les données énergie.
+
+    Le firmware Shelly (Webhook.Create) ne sait poster que des URL, sans
+    en-têtes : le secret voyage donc dans la query string. Conséquence à
+    connaître — cette URL est aussi sensible qu'un mot de passe, elle ne
+    doit être ni journalisée ni partagée.
+
+    `site` n'est plus transmis : la fonction le déduit elle-même de
+    l'appareil, précisément pour qu'un appelant ne puisse pas le choisir.
+    """
+    webhook_url = (
+        f"{EDGE_FUNCTION_BASE}"
+        f"?device_id={quote(device_id, safe='')}"
+        f"&secret={quote(SHELLY_WEBHOOK_SECRET, safe='')}"
+    )
     return send_rpc(device_id, "Webhook.Create", {
         "enable": True,
         "event": "em.data",          # événement énergie 3EM
@@ -68,6 +86,15 @@ def configure_webhook(device_id: str, site: str) -> dict:
 
 
 def main():
+    if not SHELLY_WEBHOOK_SECRET:
+        sys.exit(
+            "SHELLY_WEBHOOK_SECRET absent du .env.\n"
+            "Le webhook refuse toute requête sans secret : configurer les\n"
+            "appareils sans lui produirait des webhooks morts.\n"
+            "  1. supabase secrets set SHELLY_WEBHOOK_SECRET=<valeur>\n"
+            "  2. reporter la même valeur dans SHELLY_GCP_00/.env"
+        )
+
     print(f"Serveur Shelly : {SHELLY_SERVER}")
     print(f"Edge Function  : {EDGE_FUNCTION_BASE}\n")
 

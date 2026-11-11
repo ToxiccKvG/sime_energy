@@ -1,6 +1,6 @@
 import {
   Zap, BarChart2,
-  Database, Eraser, FolderOpen, LayoutDashboard, Settings,
+  Database, Eraser, FolderOpen, LayoutDashboard, Settings, ZapOff,
 } from 'lucide-react';
 import { IOTProvider, useIOT } from '@/components/iot/IOTContext';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -10,36 +10,46 @@ import { FichiersTab }       from '@/components/iot/FichiersTab';
 import { AnalyseTab }        from '@/components/iot/AnalyseTab';
 import { NettoyageTab }      from '@/components/iot/NettoyageTab';
 import { ParametresTab }     from '@/components/iot/ParametresTab';
+import { CoupuresTab }       from '@/components/iot/CoupuresTab';
 import { Badge }             from '@/components/ui/badge';
+import { TablePrefsProvider, TableDisplayToggle, useTablePrefs } from '@/components/iot/tablePrefs';
 
 // ---- Définition des onglets ----
-const TABS = [
+// disabled : onglet en pause — grisé, non cliquable, jamais affiché (réactiver = retirer le drapeau)
+const TABS: readonly { id: string; label: string; icon: typeof Zap; description: string; disabled?: boolean }[] = [
   { id: 'dashboard',  label: 'Dashboard',   icon: LayoutDashboard, description: 'Vue temps réel multi-sites' },
-  { id: 'sources',    label: 'Sources',     icon: Database,        description: 'Capteurs & sources' },
+  { id: 'sources',    label: 'Sources',     icon: Database,        description: 'Rôles électriques par site' },
   { id: 'fichiers',   label: 'Fichiers',    icon: FolderOpen,      description: 'Import & bibliothèque' },
   { id: 'nettoyage',  label: 'Nettoyage',   icon: Eraser,          description: 'Tri · filtre · édition' },
   { id: 'tcd',        label: 'Analyse',     icon: BarChart2,       description: 'Courbe · TCD · Heatmap · Distribution' },
+  { id: 'coupures',   label: 'Coupures',    icon: ZapOff,          description: 'Causes · énergie non distribuée', disabled: true },
   { id: 'parametres', label: 'Paramètres',  icon: Settings,        description: 'Comptes Shelly Cloud' },
-] as const;
+];
 
-type TabId = (typeof TABS)[number]['id'];
+type TabId = 'dashboard' | 'sources' | 'fichiers' | 'nettoyage' | 'tcd' | 'coupures' | 'parametres';
+
+const DISABLED_TABS = new Set(TABS.filter(t => t.disabled).map(t => t.id));
 
 // ---- Page intérieure (accès au contexte) ----
 function IOTInner() {
   const { state, setActiveTab } = useIOT();
-  const { activeTab, shellyRows, files, sources } = state;
+  const { activeTab, shellyRows, files } = state;
+  const { fit, density } = useTablePrefs();
 
-  const tabId = (activeTab as TabId) ?? 'dashboard';
+  // Un onglet en pause mémorisé dans le navigateur renvoie au Dashboard
+  const savedTab = (activeTab as TabId) ?? 'dashboard';
+  const tabId: TabId = DISABLED_TABS.has(savedTab) ? 'dashboard' : savedTab;
 
-  // Badge Sources = nb sources actives (dynamique, masqué si 0)
-  const nbSourcesActives = sources.filter(s => s.actif).length;
+  // Les sources vivent en base (shelly_device_roles) : pas de badge local.
   const badges: Partial<Record<TabId, number>> = {
-    sources:  nbSourcesActives > 0 ? nbSourcesActives : undefined,
     fichiers: files.length > 0 ? files.length : undefined,
   };
 
+  // Onglets qui affichent des tableaux larges : le sélecteur Ajuster/Défiler y est utile
+  const hasTables = tabId === 'fichiers' || tabId === 'nettoyage' || tabId === 'tcd';
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-table-fit={fit} data-table-density={density}>
       {/* En-tête */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -56,16 +66,10 @@ function IOTInner() {
 
         {/* Indicateurs rapides */}
         <div className="flex flex-wrap gap-2 text-xs text-slate-400">
-          {sources.filter(s => s.actif).length > 0 && (
-            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
-              <p className="text-blue-400 font-bold text-sm">{sources.filter(s => s.actif).length}</p>
-              <p>source(s)</p>
-            </div>
-          )}
           {shellyRows.length > 0 && (
             <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
-              <p className="text-green-400 font-bold text-sm">{shellyRows.length}</p>
-              <p>jours</p>
+              <p className="text-green-400 font-bold text-sm">{shellyRows.length.toLocaleString('fr-FR')}</p>
+              <p>relevés</p>
             </div>
           )}
           {files.length > 0 && (
@@ -77,13 +81,30 @@ function IOTInner() {
         </div>
       </div>
 
-      {/* Navigation onglets — scrollable horizontal sur mobile */}
-      <div className="overflow-x-auto">
+      {/* Navigation onglets — scrollable horizontal sur mobile — + affichage des tableaux */}
+      <div className="flex flex-wrap items-center gap-3">
+      <div className="overflow-x-auto flex-1 min-w-0">
         <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-max min-w-full sm:w-fit">
           {TABS.map(tab => {
             const Icon = tab.icon;
-            const badge = badges[tab.id];
+            const badge = badges[tab.id as TabId];
             const isActive = tabId === tab.id;
+            if (tab.disabled) {
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  disabled
+                  aria-disabled="true"
+                  title="Module en pause — bientôt disponible"
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium relative whitespace-nowrap text-slate-600 opacity-60 cursor-not-allowed"
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="hidden md:inline">{tab.label}</span>
+                  <Badge className="ml-1 h-5 text-[10px] px-1.5 bg-slate-700/60 text-slate-400 border-0">En pause</Badge>
+                </button>
+              );
+            }
             return (
               <button
                 key={tab.id}
@@ -108,6 +129,8 @@ function IOTInner() {
           })}
         </div>
       </div>
+      {hasTables && <TableDisplayToggle />}
+      </div>
 
       {/* Contenu onglet */}
       <div className="min-h-[400px]">
@@ -116,6 +139,7 @@ function IOTInner() {
         {tabId === 'fichiers'   && <FichiersTab />}
         {tabId === 'nettoyage'  && <NettoyageTab />}
         {tabId === 'tcd'        && <AnalyseTab />}
+        {tabId === 'coupures'   && <CoupuresTab />}
         {tabId === 'parametres' && <ParametresTab />}
       </div>
     </div>
@@ -126,9 +150,11 @@ function IOTInner() {
 export default function IOT() {
   return (
     <IOTProvider>
-      <ErrorBoundary title="Erreur Module IOT">
-        <IOTInner />
-      </ErrorBoundary>
+      <TablePrefsProvider>
+        <ErrorBoundary title="Erreur Module IOT">
+          <IOTInner />
+        </ErrorBoundary>
+      </TablePrefsProvider>
     </IOTProvider>
   );
 }

@@ -6,16 +6,30 @@
 // ============================================================
 
 import { supabase } from '@/lib/supabase';
+import { fetchAccounts } from '@/lib/shelly-account-service';
 
-// ── Compte Shelly Cloud (inféré du site) ─────────────────────
-export const ACCOUNT_BY_SITE: Record<string, string> = {
-  'Ma Maison':      'Compte 1 — Ma Maison',
-  'Académie CER2E': 'Compte 2 — Académie CER2E',
-};
+// ── Comptes Shelly Cloud (lus depuis shelly_accounts) ────────
+// Le site et le libellé de compte viennent de la table des comptes :
+// un nouveau compte apparaît dans les filtres sans toucher au code.
+// Secours si la table est illisible : les sites connus à ce jour.
+const SITES_SECOURS = ['Académie CER2E', 'Donsin', 'Ma Maison'];
 
-// Sites connus statiquement — garantit leur présence dans le filtre
-// même si le polling est inactif depuis plus de CATALOG_WINDOW_HOURS
-const STATIC_KNOWN_SITES = ['Académie CER2E', 'Ma Maison'];
+// Promesse partagée : FilterBar et KPIBand ne déclenchent qu'une requête.
+let accountLabelsPromise: Promise<Record<string, string>> | null = null;
+
+/** Libellé du compte Shelly par site (« Compte 3 — Donsin (PV) »…). */
+export function fetchAccountLabels(): Promise<Record<string, string>> {
+  if (!accountLabelsPromise) {
+    accountLabelsPromise = fetchAccounts()
+      .then(accounts => {
+        const out: Record<string, string> = {};
+        for (const a of accounts) if (a.site) out[a.site] = a.label || a.site;
+        return out;
+      })
+      .catch(err => { accountLabelsPromise = null; throw err; });
+  }
+  return accountLabelsPromise;
+}
 
 export type DeviceFamily =
   | 'ENERGIE_3PH' | 'ENERGIE_2PH' | 'ENERGIE_1PH'
@@ -49,6 +63,15 @@ export interface Device {
   room: string | null;
   device_type: string | null;
   device_family: DeviceFamily;
+  /**
+   * Dernière remontée connue, telle que la porte le catalogue. Le catalogue
+   * est une vue MATÉRIALISÉE rafraîchie par lots : cette date retarde de
+   * plusieurs dizaines de minutes et ne doit jamais servir à dire « en ligne ».
+   * Elle sert uniquement à mesurer l'ANCIENNETÉ d'un silence, où quelques
+   * dizaines de minutes d'écart ne changent rien. La fraîcheur réelle se lit
+   * sur le snapshot.
+   */
+  last_seen: string | null;
 }
 
 export type Period = 'live' | '1h' | '24h' | '7d' | '30d';
@@ -187,56 +210,92 @@ export async function fetchSites(): Promise<string[]> {
     .order('ts', { ascending: false })
     .limit(10000);
   if (error) throw error;
-  // Fusionner avec les sites statiquement connus — garantit leur présence
-  // même si le polling est inactif plus de CATALOG_WINDOW_HOURS
+  // Sites des comptes Shelly + sites vus dans les relevés récents :
+  // un site muet (station de Donsin la nuit) reste dans le filtre.
   const fromDb = (data ?? []).map(r => r.site).filter(Boolean) as string[];
-  return Array.from(new Set([...STATIC_KNOWN_SITES, ...fromDb])).sort();
+  const fromAccounts = await fetchAccountLabels()
+    .then(labels => Object.keys(labels))
+    .catch(() => SITES_SECOURS);
+  return Array.from(new Set([...fromAccounts, ...fromDb])).sort();
 }
 
 // ── 2. Liste des pièces (par site) ───────────────────────────
+// Même correctif que fetchDevices : le balayage de shelly_cl était plafonné à
+// 1000 lignes par PostgREST, soit une trentaine de minutes. Les pièces des
+// appareils momentanément muets disparaissaient donc du filtre.
 export async function fetchRooms(sites?: string[]): Promise<string[]> {
   let q = supabase
-    .from('shelly_cl')
+    .from('shelly_devices_catalog_visible')
     .select('room')
     .not('room', 'is', null)
-    .gte('ts', catalogSince())
-    .order('ts', { ascending: false })
-    .limit(10000);
+    .limit(2000);
   if (sites && sites.length > 0) q = q.in('site', sites);
   const { data, error } = await q;
   if (error) throw error;
   return Array.from(new Set((data ?? []).map(r => r.room).filter(Boolean) as string[])).sort();
 }
 
-// ── 3. Liste des appareils (catalogue, dédupliqué) ───────────
+// ── 3. Liste des appareils (catalogue) ───────────────────────
+// Lit shelly_devices_catalog, qui porte UNE ligne par appareil.
+//
+// Auparavant cette liste se reconstruisait en balayant shelly_cl sur 7 jours
+// avec .limit(20000). Or PostgREST plafonne à 1000 lignes : au rythme actuel
+// (~46 000 lignes/jour) la fenêtre réelle n'était pas de 7 jours mais d'une
+// TRENTAINE DE MINUTES. Un appareil silencieux plus longtemps disparaissait
+// de la liste — et l'alerte « hors-ligne » de computeAlerts, qui itère sur
+// cette liste, ne pouvait plus rien dire de lui. C'est ainsi que quatre
+// capteurs de l'Académie sont restés muets trois jours pendant que le
+// tableau de bord affichait « Tout est OK ». Le catalogue tient en 84 lignes,
+// très loin du plafond.
 export async function fetchDevices(sites?: string[], families?: DeviceFamily[]): Promise<Device[]> {
   let q = supabase
-    .from('shelly_cl')
-    .select('device_id,name,site,room,device_type,device_family,ts')
-    .gte('ts', catalogSince())
-    .order('ts', { ascending: false })
-    .limit(20000);
+    .from('shelly_devices_catalog_visible')
+    .select('device_id,name,site,room,device_type,device_family,derniere_lecture')
+    .limit(2000);
   if (sites && sites.length > 0)       q = q.in('site', sites);
   if (families && families.length > 0) q = q.in('device_family', families);
 
   const { data, error } = await q;
   if (error) throw error;
 
-  const seen = new Set<string>();
-  const devices: Device[] = [];
-  for (const r of data ?? []) {
-    if (seen.has(r.device_id)) continue;
-    seen.add(r.device_id);
-    devices.push({
+  const devices: Device[] = (data ?? []).map(r => ({
+    device_id:     r.device_id,
+    name:          r.name ?? r.device_id,
+    site:          r.site ?? '',
+    room:          r.room,
+    device_type:   r.device_type,
+    device_family: (r.device_family as DeviceFamily) ?? getFamily(r.device_type),
+    last_seen:     r.derniere_lecture ?? null,
+  }));
+  return devices.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Complète la liste du catalogue avec les appareils vus dans le snapshot mais
+ * pas encore catalogués. Le catalogue étant une vue matérialisée rafraîchie
+ * par lots, un appareil qui vient de se mettre à émettre y manque pendant un
+ * moment ; sans cette fusion il serait absent des compteurs et des filtres
+ * alors même qu'il remonte des données.
+ */
+export function mergeSnapshotDevices(devices: Device[], snapshot: ShellyClRow[]): Device[] {
+  const connus = new Set(devices.map(d => d.device_id));
+  const ajouts: Device[] = [];
+  for (const r of snapshot) {
+    if (connus.has(r.device_id)) continue;
+    connus.add(r.device_id);
+    ajouts.push({
       device_id:     r.device_id,
       name:          r.name ?? r.device_id,
       site:          r.site ?? '',
       room:          r.room,
       device_type:   r.device_type,
       device_family: (r.device_family as DeviceFamily) ?? getFamily(r.device_type),
+      last_seen:     r.ts,
     });
   }
-  return devices.sort((a, b) => a.name.localeCompare(b.name));
+  return ajouts.length === 0
+    ? devices
+    : [...devices, ...ajouts].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // ── 4. Snapshot : dernière ligne par device dans les 5 dernières minutes ─
@@ -497,24 +556,82 @@ export interface Alert {
   ts: string;
 }
 
-export function computeAlerts(snapshot: ShellyClRow[], allDevices: Device[]): Alert[] {
+/**
+ * Appareils dont le retrait est encore ouvert (table shelly_device_retraits,
+ * jusqu_a null) : débranchés volontairement ou retirés du site. Leur silence
+ * est attendu, ils ne doivent donc pas lever d'alerte « hors-ligne ».
+ * En cas d'erreur on renvoie un ensemble vide : le dashboard reste utilisable,
+ * il affichera simplement ces alertes comme avant.
+ */
+export async function fetchRetraitsOuverts(): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('shelly_device_retraits')
+    .select('device_id')
+    .is('jusqu_a', null);
+  if (error) {
+    console.warn('[Dashboard] retraits illisibles :', error.message);
+    return new Set();
+  }
+  return new Set((data ?? []).map(r => r.device_id as string));
+}
+
+export function computeAlerts(
+  snapshot: ShellyClRow[],
+  allDevices: Device[],
+  retires: Set<string> = new Set(),
+): Alert[] {
   const alerts: Alert[] = [];
   const onlineIds = new Set(snapshot.map(r => r.device_id));
   const nowIso = new Date().toISOString();
 
-  // Offline : device dans le catalogue mais pas dans le snapshot 5min
+  // Offline : appareil au catalogue mais absent du snapshot 5 min.
+  //
+  // La sévérité suit la DURÉE du silence, parce que les deux situations n'ont
+  // rien à voir : un capteur sur pile qui n'émet que sur événement peut se
+  // taire une heure sans que ce soit un incident, alors qu'un silence de
+  // plusieurs jours en est un. Tout mettre en « warning » noyait les vraies
+  // pannes dans le bruit ; c'est ce qui a permis à quatre capteurs de
+  // l'Académie de rester muets trois jours sans que personne le voie.
+  //
+  // last_seen vient du catalogue, une vue matérialisée rafraîchie par lots :
+  // elle retarde de quelques dizaines de minutes. Sans importance ici,
+  // puisqu'on mesure des heures et des jours, jamais l'état « en ligne ».
   for (const d of allDevices) {
     if (onlineIds.has(d.device_id)) continue;
+    // Retrait ouvert : silence voulu (capteur débranché pour réemploi, etc.).
+    if (retires.has(d.device_id)) continue;
+
+    const silenceMs = d.last_seen ? Date.now() - new Date(d.last_seen).getTime() : null;
+    const heures = silenceMs == null ? null : silenceMs / 3_600_000;
+
+    let severity: AlertSeverity;
+    let message: string;
+    if (heures == null) {
+      severity = 'warning';
+      message  = 'Hors-ligne — aucune remontée connue';
+    } else if (heures >= 24) {
+      const jours = Math.floor(heures / 24);
+      severity = 'critical';
+      message  = `Muet depuis ${jours} jour${jours > 1 ? 's' : ''}`;
+    } else if (heures >= 3) {
+      severity = 'warning';
+      message  = `Muet depuis ${Math.floor(heures)} h`;
+    } else {
+      severity = 'info';
+      message  = `Hors-ligne depuis ${Math.max(5, Math.round(heures * 60))} min`;
+    }
+
     alerts.push({
       id: `offline-${d.device_id}`,
-      severity: 'warning',
+      severity,
       type: 'offline',
       device_id: d.device_id,
       device_name: d.name,
       site: d.site,
       room: d.room,
-      message: `Hors-ligne depuis > 5 min`,
-      ts: nowIso,
+      message,
+      value: heures == null ? undefined : Math.round(heures),
+      ts: d.last_seen ?? nowIso,
     });
   }
 

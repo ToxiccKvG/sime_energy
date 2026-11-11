@@ -1,71 +1,14 @@
 // ============================================================
 // IOT MODULE — Shared Types
-// Note : la couche facturation/tarification SENELEC a été retirée
-// (sera réintroduite par le merge avec le code du dev billing).
-// Conservé ici : sources, mesures énergie, capteurs, calendrier, jours d'activité.
+// Pas de facturation ni de coûts dans le module IOT (module Facturation).
+// Conservé ici : mesures énergie, capteurs, calendrier, jours d'activité.
+//
+// Les « sources » ne sont plus un modèle local : une source est un rôle
+// électrique rattaché à un appareil (table shelly_device_roles, voir
+// lib/shelly-device-role-service.ts et SourcesTab.tsx). L'ancien modèle
+// riche (types SENELEC/PV…, modes A–F, transfert, tableaux, profils Mi)
+// a été retiré le 2026-09-16 : aucun calcul ne le lisait.
 // ============================================================
-
-// ============================================================
-// SOURCES — Onglet Sources
-// ============================================================
-
-export type SourceType = 'SENELEC' | 'PV' | 'BESS' | 'GROUPE' | 'SECOURS' | 'CHARGE' | 'SELECTEUR';
-export type SensorType = 'Shelly' | 'SMA' | 'Voltcraft' | 'Fluke' | 'DENT' | 'Sentinel' | 'Manuel' | 'Autre';
-
-// ---- Configuration avancée (matrice LEGENDE) ----
-export type ModeSource = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
-export type TransfertEnergie = 'Selecteur' | 'Inverseur' | 'Direct';
-export type TypeTableau = 'TGBT' | 'TD1' | 'TD2' | 'TD3' | 'Autre';
-export type ChargeId = 'CH1_TGBT' | 'CH2_TGBT' | 'CH3_TD1' | 'CH4_TD2' | 'Autre' | '';
-export type ProfilMi = 'M1_SENELEC' | 'M2_SELECTEUR' | 'M3_CHARGE' | 'M4_GROUPE' | 'M5_PV';
-export type ModeGrid = 'ON-GRID' | 'OFF-GRID';
-
-export const PROFIL_MI_LABELS: Record<ProfilMi, string> = {
-  M1_SENELEC:   'M1 — SENELEC',
-  M2_SELECTEUR: 'M2 — Sélecteur PV/SENELEC',
-  M3_CHARGE:    'M3 — Charge totale',
-  M4_GROUPE:    'M4 — Groupe électrogène',
-  M5_PV:        'M5 — Production PV',
-};
-
-export const SOURCE_TYPE_COLORS: Record<SourceType, string> = {
-  SENELEC:   '#3b82f6',
-  PV:        '#eab308',
-  BESS:      '#22c55e',
-  GROUPE:    '#f97316',
-  SECOURS:   '#f97316',
-  CHARGE:    '#ef4444',
-  SELECTEUR: '#a855f7',
-};
-
-export const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
-  SENELEC:   'Réseau SENELEC',
-  PV:        'Production solaire (PV)',
-  BESS:      'Batterie (BESS)',
-  GROUPE:    'Groupe électrogène',
-  SECOURS:   'Groupe électrogène (secours)',
-  CHARGE:    'Circuit de consommation',
-  SELECTEUR: 'ATS / Inverseur réseau',
-};
-
-export interface Source {
-  id: string;
-  nom: string;
-  type: SourceType;
-  description: string;
-  couleur: string;
-  capteur: SensorType;
-  actif: boolean;
-  ordre: number;
-  siteId?: string;
-  modes?: ModeSource[];
-  linkedSourceIds?: string[];
-  transfert?: TransfertEnergie;
-  tableau?: TypeTableau;
-  chargeId?: ChargeId;
-  profilMi?: ProfilMi;
-  modeGrid?: ModeGrid;
-}
 
 // ---- Colonnes disponibles pour export Supabase / TCD ----
 export interface ColonneProfilShelly {
@@ -95,7 +38,9 @@ export const COLONNES_PROFIL_SHELLY: ColonneProfilShelly[] = [
   { key: 'Luminosite',        label: 'Luminosité',                groupe: 'entree', unite: 'lux' },
   { key: 'Pression',          label: 'Pression atmosphérique',    groupe: 'entree', unite: 'hPa' },
   { key: 'Tendance_Pression', label: 'Tendance de pression',      groupe: 'entree' },
-  { key: 'Precipitation',     label: 'Précipitations',            groupe: 'entree', unite: 'mm' },
+  { key: 'Precipitation',     label: 'Précipitations (cumul)',    groupe: 'entree', unite: 'mm' },
+  { key: 'Precipitation_Incr', label: 'Pluie par intervalle',     groupe: 'calcule', unite: 'mm' },
+  { key: 'Mesure_Le',         label: 'Heure réelle de mesure',    groupe: 'entree' },
   { key: 'Alarme_Humidite',   label: 'Alarme pluie/humidité',     groupe: 'entree' },
   { key: 'Vent_Vitesse',      label: 'Vitesse du vent',           groupe: 'entree', unite: 'm/s' },
   { key: 'Vent_Rafale',       label: 'Rafale de vent',            groupe: 'entree', unite: 'm/s' },
@@ -154,24 +99,6 @@ export const COLONNES_PROFIL_SHELLY: ColonneProfilShelly[] = [
   { key: 'Emplacement',       label: 'Emplacement',               groupe: 'classifieur' },
   { key: 'Piece',             label: 'Pièce / Zone',              groupe: 'classifieur' },
 ];
-
-// ============================================================
-// SÉRIES TEMPORELLES — données multi-sources normalisées
-// ============================================================
-
-export interface TimeSeriesRow {
-  timestamp: Date;
-  sourceId: string;
-  puissanceKw: number;
-  energieKwh: number;
-  energieCumKwh: number;
-  facteurPuissance?: number;
-  tensionV?: number;
-  courantA?: number;
-  jourActivites?: ShellyRow['jourActivites'];
-  saison?: ShellyRow['saison'];
-  periodeclimatique?: ShellyRow['periodeclimatique'];
-}
 
 // ============================================================
 // CALENDRIER — jours d'activité, horaires, jours fériés
@@ -256,11 +183,13 @@ export interface ShellyRow {
   mois: string;
   annee: number;
   jourActivites: 'Jour ouvré' | 'Weekend' | 'Jour férié';
-  heuresEnsoleillement: 'En ensoleillement' | 'Hors ensoleillement';
-  heuresTravail: "Heures d'activités" | 'Heures hors activités';
+  // 'Journée' : ligne journalière (Courbe de charge), qui couvre les deux tranches
+  heuresEnsoleillement: 'En ensoleillement' | 'Hors ensoleillement' | 'Journée';
+  heuresTravail: "Heures d'activités" | 'Heures hors activités' | 'Journée';
   periodeclimatique: 'Période de fraîcheur' | 'Période chaude';
   saison: 'Sèche' | 'Hivernage';
-  periode: 'Nuit' | 'Matin' | 'Après-midi' | 'Soir';
+  // 'Journée' : ligne journalière (Courbe de charge), pas une tranche horaire
+  periode: 'Nuit' | 'Matin' | 'Après-midi' | 'Soir' | 'Journée';
   profil: 'CHARGE' | 'SOUTIRAGE';
   // ---- Identification appareil ----
   nomAppareil?: string;
@@ -275,7 +204,9 @@ export interface ShellyRow {
   luminosite?: number;
   pression?: number;
   tendancePression?: string;
-  precipitation?: number;
+  precipitation?: number;           // CUMUL du pluviomètre depuis son installation (jamais filtré)
+  precipitationIncr?: number;       // pluie tombée depuis la mesure précédente du même appareil (calculée)
+  mesureAt?: Date;                  // heure RÉELLE de la mesure (measured_at) : distingue une mesure d'une relecture
   alarmeHumidite?: boolean;
   ventVitesse?: number;
   ventRafale?: number;
@@ -287,15 +218,71 @@ export interface ShellyRow {
   batterie?: number;
   batterieV?: number;
   signal?: number;
+  // Grandeurs d'un fichier importé quelconque (PM2.5, tension, CO₂…),
+  // clé = « libellé (unité) » — voir lib/iot-lecture-fichier.ts
+  grandeurs?: Record<string, number>;
+  // ---- Qualité (source fn_profil_charge ; absents pour un fichier importé) ----
+  deviceId?: string;
+  deviceFamily?: string;            // ENERGIE_1PH, LUMIERE…
+  role?: string | null;             // shelly_device_roles : M1_RESEAU, DEPART…
+  departImbrique?: boolean;         // départ alimenté par un autre départ : déjà compté dans son parent
+  nbHeures?: number;                // heures présentes ce jour dans la plage
+  // Part de la journée en quarantaine (fn_qualite, règles d'action « quarantaine »).
+  // Les champs kWh ci-dessus restent BRUTS ; le nettoyage soustrait s'il est activé.
+  quarantaine?: {
+    kwh: number; kwhRetour: number; kwhA: number; kwhB: number; kwhC: number;
+    heures: number; regles: string[];
+  };
   // ---- Helpers ----
   kwhNet: number; // = kwhTotal - kwhRetourTotal
+  // Flux par rôle (ligne synthétique « site », bilanParRole) : kWh
+  flux?: FluxRoles;
   isWeekend: boolean;
   isJourFerie: boolean;
   jourSemaine: string;
 }
 
+// Énergie par rôle électrique (kWh). null = rien mesuré pour ce rôle.
+export interface FluxRoles {
+  reseauSoutire: number | null;   // M1_RESEAU, consommation
+  reseauInjecte: number | null;   // M1_RESEAU, injection
+  pv: number | null;              // M5_PV, production (sens inverse appliqué)
+  groupe: number | null;          // M4_GROUPE
+  charge: number | null;          // M3_CHARGE
+  departs: number | null;         // DEPART
+}
+
+// Une journée calendaire, toutes lignes confondues (appareils, pas horaires)
+export interface JourAgrege {
+  date: Date;
+  mois: string;
+  annee: number;
+  jourActivites: ShellyRow['jourActivites'];
+  isWeekend: boolean;
+  isJourFerie: boolean;
+  kwhA: number;
+  kwhB: number;
+  kwhC: number;
+  kwhTotal: number;
+  kwhRetourTotal: number;
+  kwhNet: number;
+  // Puissance moyenne du jour = kWh / 24 h
+  puissKwA: number;
+  puissKwB: number;
+  puissKwC: number;
+  puissKwTotal: number;
+  nbLignes: number;
+  // Flux par rôle de la journée (somme des lignes « site ») — absent pour un fichier
+  flux?: FluxRoles;
+  // Raison pour laquelle le jour est écarté de la moyenne, du min et du max
+  // (il reste dans le total). Absent = jour retenu.
+  exclu?: string;
+}
+
 export interface ShellyAnalyse {
   rows: ShellyRow[];
+  parJour: JourAgrege[];
+  nbJoursRetenus: number;
   totalKwhConsomme: number;
   totalKwhRetour: number;
   totalKwhNet: number;
@@ -316,18 +303,60 @@ export interface ShellyAnalyse {
 export interface ImportedFile {
   id: string;
   name: string;
-  type: 'shelly' | 'autre' | 'facture';
-  sourceId?: string;
+  type: 'shelly' | 'autre';
   uploadedAt: Date;
   rowCount: number;
   columns: string[];
   preview: Record<string, unknown>[];
+  /**
+   * Contenu complet. Vide tant que `contentLoaded` est false : les
+   * fichiers viennent de la base sans leur contenu, chargé à la demande
+   * via `ensureFileContent` (IOTContext). Ne pas tester `rawData.length`
+   * pour savoir si un fichier est vide — tester `contentLoaded` d'abord.
+   */
   rawData: Record<string, unknown>[];
+  contentLoaded?: boolean;
   statut?: 'original' | 'nettoyé' | 'analysé';
   taille?: number;
   parentId?: string;
   deviceLocation?: string;
   deviceRoom?: string;
+  /** Lecture d'un fichier hors formats Shelly : enregistrée à l'import, rejouée par l'Analyse. */
+  lecture?: LectureFichier;
+}
+
+/** Rôle d'une colonne d'un fichier importé. */
+export type RoleColonne = 'energie' | 'retour' | 'puissance' | 'grandeur' | 'ignorer';
+
+export interface LectureColonne {
+  col: string;
+  libelle: string;
+  unite: string;
+  role: RoleColonne;
+  /** Index cumulatif (compteur) : l'énergie est la différence entre deux relevés. */
+  cumul?: boolean;
+  /** Énergie d'une seule phase (sinon : total). Sans colonne total, le total = A + B + C. */
+  phase?: 'A' | 'B' | 'C';
+  /** Pourquoi la colonne est écartée par défaut (vide, texte, constante…). */
+  motif?: string;
+}
+
+export interface LectureFichier {
+  version: 1;
+  colDate: string;
+  /** Colonne heure séparée ('' si la date porte l'heure). */
+  colHeure: string;
+  /** jma = jour/mois/année, mja = mois/jour/année (exports US), iso = année en tête. */
+  ordreDates: 'jma' | 'mja' | 'iso';
+  colonnes: LectureColonne[];
+  /** Ce que mesure le fichier : une production (PV) est rangée comme le PV des sites (rôle M5_PV). */
+  sens?: 'consommation' | 'production';
+  /**
+   * Colonnes d'identité d'un fichier à plusieurs appareils empilés (export de
+   * l'Analyse : une ligne par appareil et par heure). Sans elles, toutes les
+   * lignes d'une même heure fusionnaient en une seule.
+   */
+  identite?: { appareil?: string; id?: string; role?: string; site?: string; piece?: string };
 }
 
 // ============================================================

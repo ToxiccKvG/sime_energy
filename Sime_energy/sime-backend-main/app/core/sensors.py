@@ -14,6 +14,10 @@ contrat unique consommé par le frontend (`/process-file/measures`) :
         "processing_info": {original_rows, valid_measurements, metadata}
     }
 
+Capteur personnalisé à plusieurs séries (`series_col`, format « long ») :
+`{"series": [<payload ci-dessus>, …], "processing_info": {…}}`, un payload
+par série (voir `_process_series`).
+
 Ce module ne calcule volontairement aucune statistique (moyenne, écart-type,
 percentiles, interprétation...) : le frontend reçoit l'intégralité des mesures
 et calcule lui-même ces indicateurs (voir `src/services/measurementStats.ts`),
@@ -31,8 +35,11 @@ colonne `timestamp` (datetime) + les colonnes normalisées, puis l'enregistrer
 dans `SENSOR_REGISTRY`.
 """
 
+import csv
 import io
 import logging
+import math
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 import chardet
@@ -84,11 +91,18 @@ def _best_timestamp(df: pd.DataFrame, fmt: str, *keywords: str) -> pd.Series:
 
 
 def _to_float(value: Any) -> Optional[float]:
-    """Convertit en float arrondi (3 décimales) ou None si invalide/manquant."""
+    """Convertit en float ou None si invalide/manquant/infini.
+
+    Pas d'arrondi métier : jusqu'au 03/11/2026 la valeur était arrondie à
+    3 décimales, ce qui faussait les petites valeurs (relevés horaires en kWh
+    de quelques millièmes : Woyofal 0,029 kWh au lieu de 0,025, +17 %).
+    L'affichage formate lui-même (formatQuantity côté front) ; on ne retire
+    ici que le bruit de conversion binaire (9 décimales)."""
     try:
         if value is None or pd.isna(value):
             return None
-        return round(float(value), 3)
+        f = float(value)
+        return round(f, 9) if math.isfinite(f) else None
     except (ValueError, TypeError):
         return None
 
@@ -158,7 +172,13 @@ def _build_measurements(
         }
         for label, col in extra_cols.items():
             if col in df.columns:
-                row[label] = _to_float(r[col])
+                v = r[col]
+                # Colonne texte (état, mode, commentaire…) : gardée telle quelle,
+                # visible dans le tableau et l'export, ignorée par les graphiques.
+                if isinstance(v, str):
+                    row[label] = v if v.strip() else None
+                else:
+                    row[label] = _to_float(v)
         rows.append(row)
     return rows
 
@@ -312,6 +332,9 @@ def parse_shelly(text: str) -> pd.DataFrame:
     section_map = {
         "phase a": "phase_a_wh", "phase b": "phase_b_wh", "phase c": "phase_c_wh",
         "total": "total_wh",
+        # Export Shelly Cloud d'un compteur monophasé / d'un total seul :
+        # « Consommation » puis « Retour Total » (même grandeur que « Total »)
+        "consommation": "total_wh",
         "retour phase a": "return_a_wh", "retour phase b": "return_b_wh",
         "retour phase c": "return_c_wh", "retour total": "return_total_wh",
     }
@@ -319,7 +342,9 @@ def parse_shelly(text: str) -> pd.DataFrame:
     current: Optional[str] = None
 
     for line in text.splitlines():
-        stripped = line.strip()
+        # Les exports Shelly Cloud commencent par plusieurs BOM (\ufeff), que
+        # strip() ne retire pas : la section « Phase A » n'était pas reconnue
+        stripped = line.replace("\ufeff", "").strip()
         if not stripped:
             continue
         low = stripped.lower()
@@ -458,38 +483,362 @@ SENSOR_REGISTRY: Dict[str, Dict[str, Any]] = {
 # Parser générique — capteurs personnalisés
 # ---------------------------------------------------------------------------
 
+_TEXT_DELIMITERS = ["\t", ";", ",", "|"]
+
+
+_DATE_RE = re.compile(r"^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}")
+_NUM_RE = re.compile(r"^-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?$")
+
+
+def _cell_text(v: Any) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    return str(v).replace("\ufeff", "").replace("\u200b", "").strip()
+
+
+def _is_date(v: Any) -> bool:
+    return hasattr(v, "year") or bool(_DATE_RE.match(_cell_text(v)))
+
+
+def _is_num(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not pd.isna(v) or bool(_NUM_RE.match(_cell_text(v).replace(" ", "").replace("\u00a0", "")))
+
+
+def _desempiler_sections(rows: List[List[Any]]) -> Optional[tuple]:
+    """Séries empilées en sections → une colonne par section (même règle que
+    le frontend, src/lib/tableau-sections.ts).
+
+    Certains exports (Shelly Cloud) empilent les séries sous un titre et un
+    en-tête répété : « Phase A / Temps, Wh / données / Phase B / Temps, Wh / … ».
+    Lues telles quelles, toutes les valeurs tombaient dans la même colonne
+    (phases, total et retours additionnés). Renvoie (colonnes, lignes, titres)
+    ou None si le tableau n'est pas empilé.
+    """
+    lignes = [r for r in rows if any(_cell_text(c) for c in r)]
+    pleines = lambda r: [c for c in r if _cell_text(c)]
+    est_titre = lambda r: len(pleines(r)) == 1 and not _is_num(pleines(r)[0]) and not _is_date(pleines(r)[0])
+
+    compte: Dict[str, int] = {}
+    for i in range(len(lignes) - 1):
+        r = lignes[i]
+        if est_titre(r) or any(_is_num(c) or _is_date(c) for c in pleines(r)):
+            continue
+        if not lignes[i + 1] or not _is_date(lignes[i + 1][0]):
+            continue
+        cle = _cell_text(r[0]).lower()
+        if cle:
+            compte[cle] = compte.get(cle, 0) + 1
+    if not compte:
+        return None
+    cle_entete, nb = max(compte.items(), key=lambda kv: kv[1])
+    if nb < 2:
+        return None
+
+    sections: List[Dict[str, Any]] = []
+    titre: Optional[str] = None
+    cur: Optional[Dict[str, Any]] = None
+    for r in lignes:
+        if est_titre(r):
+            titre, cur = _cell_text(pleines(r)[0]), None
+            continue
+        if _cell_text(r[0]).lower() == cle_entete:
+            cur = {"titre": titre, "entete": [_cell_text(c) for c in r], "lignes": []}
+            sections.append(cur)
+            titre = None
+            continue
+        if cur is not None and r and _is_date(r[0]):
+            cur["lignes"].append(r)
+    if len(sections) < 2:
+        return None
+    # 1re section sans titre (avalé) : « Phase B » ensuite → « Phase A »
+    for i, sec in enumerate(sections):
+        if sec["titre"]:
+            continue
+        suivant = next((x["titre"] for x in sections[i + 1:] if x["titre"]), None)
+        m = re.match(r"^(.*?)([B2])$", suivant or "", re.I)
+        sec["titre"] = (m.group(1) + {"B": "A", "b": "a", "2": "1"}[m.group(2)]) if m else ("Valeurs" if i == 0 else f"Section {i + 1}")
+
+    colonnes = [sections[0]["entete"][0] or "Temps"]
+    par_ts: Dict[str, Dict[int, Any]] = {}
+    ordre: List[str] = []
+    for sec in sections:
+        valeurs = [(nom, k + 1) for k, nom in enumerate(sec["entete"][1:])
+                   if nom or any(len(l) > k + 1 and _cell_text(l[k + 1]) for l in sec["lignes"])]
+        for nom, k in valeurs:
+            col = (f"{sec['titre']} ({nom})" if nom else sec["titre"]) if len(valeurs) == 1 else f"{sec['titre']} — {nom or f'col {k}'}"
+            idx = len(colonnes)
+            colonnes.append(col)
+            for l in sec["lignes"]:
+                cle = _cell_text(l[0])
+                if cle not in par_ts:
+                    par_ts[cle] = {0: l[0]}
+                    ordre.append(cle)
+                par_ts[cle][idx] = l[k] if len(l) > k else None
+    data = [[par_ts[c].get(i) for i in range(len(colonnes))] for c in ordre]
+    return colonnes, data, [sec["titre"] for sec in sections]
+
+
+def _find_header_row(frame: pd.DataFrame) -> int:
+    """Index de la première ligne au nombre de cellules renseignées majoritaire.
+
+    Les feuilles Excel d'appareils (sonomètre, logger) commencent souvent par
+    un titre, un auteur, une ligne vide… avant l'en-tête. Le tableau, lui,
+    est régulier : sa largeur est la valeur la plus fréquente.
+    """
+    counts = frame.notna().sum(axis=1)
+    nonzero = counts[counts > 0]
+    if nonzero.empty:
+        return 0
+    modal = int(nonzero.mode().iloc[0])
+    if modal < 2:
+        return 0
+    hits = counts[counts >= modal].index
+    return int(hits[0]) if len(hits) else 0
+
+
+def _read_excel_table(contents: bytes) -> tuple:
+    """Lit un classeur Excel (.xlsx via openpyxl, .xls binaire via xlrd) en
+    sautant le préambule ; renvoie (DataFrame, lignes de préambule)."""
+    bio = io.BytesIO(contents)
+    engine = "xlrd" if contents[:4] == b"\xd0\xcf\x11\xe0" else "openpyxl"
+    xls = pd.ExcelFile(bio, engine=engine)
+    raw = xls.parse(xls.sheet_names[0], header=None)
+    d = _desempiler_sections(raw.values.tolist())
+    if d:
+        colonnes, data, _ = d
+        return pd.DataFrame(data, columns=colonnes), []
+    h = _find_header_row(raw)
+    preamble = [
+        " ".join(str(v) for v in row if pd.notna(v)).strip()
+        for _, row in raw.iloc[:h].iterrows()
+    ]
+    preamble = [p for p in preamble if p]
+    header = [str(c).strip() if pd.notna(c) else f"col_{i}" for i, c in enumerate(raw.iloc[h])]
+    df = raw.iloc[h + 1:].copy()
+    df.columns = header
+    df = df.dropna(how="all").reset_index(drop=True)
+    return df, preamble
+
+
+def read_any_table(contents: bytes) -> tuple:
+    """Point d'entrée unique : Excel (xlsx / xls) sinon texte (CSV / TSV).
+    Renvoie (DataFrame, lignes de préambule)."""
+    try:
+        return _read_excel_table(contents)
+    except Exception:
+        return _read_text_table(contents)
+
+
+def _read_text_table(contents: bytes) -> tuple:
+    """Lit un fichier texte tabulaire (CSV / TSV) en sautant un préambule éventuel.
+
+    Les enregistreurs (loggers H&T, analyseurs) écrivent souvent quelques lignes
+    libres avant le tableau — « >>Logging Name:… », « >>Sample Rate:1800 sec. »,
+    une ligne de tirets. Le vrai en-tête est la première ligne qui a le nombre
+    de séparateurs majoritaire du fichier. Le séparateur lui-même est celui qui
+    découpe le plus régulièrement les lignes (tab, ; , |).
+    """
+    encoding = chardet.detect(contents)["encoding"] or "utf-8"
+    try:
+        text = contents.decode(encoding)
+    except (UnicodeDecodeError, LookupError):
+        text = contents.decode("utf-8", errors="replace")
+    text = text.lstrip("\ufeff")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        raise ValueError("Fichier vide")
+
+    # « sep=; » en 1re ligne (indication pour Excel, exports Sunny Portal) :
+    # c'est le séparateur, pas l'en-tête
+    sep_impose = None
+    m_sep = re.match(r'^\s*"?sep=(.)"?\s*$', lines[0], re.I)
+    if m_sep:
+        sep_impose = m_sep.group(1)
+        lines = lines[1:]
+
+    # Séparateur : celui dont le nombre d'occurrences par ligne est le plus
+    # souvent identique et non nul (un tableau régulier).
+    best_sep, best_score, best_count = ",", -1, 0
+    for sep in ([sep_impose] if sep_impose else _TEXT_DELIMITERS):
+        counts = [ln.count(sep) for ln in lines]
+        nonzero = [c for c in counts if c > 0]
+        if not nonzero:
+            continue
+        modal = max(set(nonzero), key=nonzero.count)
+        score = nonzero.count(modal)
+        if score > best_score:
+            best_sep, best_score, best_count = sep, score, modal
+
+    # Virgule décimale avec séparateur virgule (« 01/05/2026 00:00, 165,700 ») :
+    # la valeur est coupée en deux cellules ; on la recolle (même règle que le
+    # frontend, recollerDecimales dans src/lib/excel-utils.ts)
+    if best_sep == ",":
+        lignes_csv = list(csv.reader(lines, delimiter=",", skipinitialspace=True))
+        datees = [r for r in lignes_csv if len(r) > 1 and _DATE_RE.match(r[0].strip())]
+        if len(datees) >= 3:
+            largeurs = [len(r) for r in datees]
+            L = max(set(largeurs), key=largeurs.count)
+            entetes = [r for r in lignes_csv if len(r) > 1 and not _DATE_RE.match(r[0].strip())
+                       and all(not re.match(r"^\s*-?\d", c) for c in r)]
+            coupee = lambda r: len(r) == L and re.fullmatch(r"\s*-?\d+\s*", r[L - 2]) and re.fullmatch(r"\d+\s*", r[L - 1])
+            if largeurs.count(L) / len(datees) >= 0.9 and entetes and all(len(r) == L - 1 for r in entetes) \
+                    and all(coupee(r) for r in datees if len(r) == L):
+                lines = [",".join(r[:L - 2] + [f"{r[L - 2].strip()}.{r[L - 1].strip()}"]) if coupee(r) and _DATE_RE.match(r[0].strip())
+                         else ",".join(r) for r in lignes_csv]
+                best_count = L - 2
+
+    # Séries empilées en sections (export Shelly Cloud) : une colonne par
+    # section, avant de chercher l'en-tête (qui ne serait que la 1re section)
+    d = _desempiler_sections(list(csv.reader(lines, delimiter=best_sep, skipinitialspace=True)))
+    if d:
+        colonnes, data, _ = d
+        return pd.DataFrame(data, columns=colonnes, dtype=str), []
+
+    # En-tête = ligne juste au-dessus des premières lignes de données (une date
+    # et un nombre), une ligne d'unités pouvant s'intercaler ; même règle que
+    # le frontend (lib/iot-lecture-fichier.ts, lireTableau). Un préambule
+    # « clé ; valeur » (Sunny Portal : Version ; 4, Langue ; fr-FR…) a la même
+    # largeur que le tableau : la règle « largeur majoritaire » le prenait pour
+    # l'en-tête. Repli sur cette règle si aucune ligne de données n'est trouvée.
+    cells = list(csv.reader(lines, delimiter=best_sep, skipinitialspace=True))
+    est_donnee = lambda r: any(_is_date(c) for c in r) and any(_is_num(c) for c in r if not _is_date(c))
+    debut = next((i for i in range(len(cells))
+                  if est_donnee(cells[i]) and all(est_donnee(r) for r in cells[i + 1:i + 3])), None)
+    if debut is not None and debut > 0:
+        header_idx = debut - 1
+        unites = [_cell_text(c) for c in cells[header_idx] if _cell_text(c)]
+        if header_idx > 0 and unites and all(len(u) <= 10 and not _is_num(u) for u in unites) \
+                and all(re.fullmatch(r"(%|%rh|°c|℃|°f|v|a|w|kw|wh|kwh|hz|var|va|kva|kvar|varh|ppm|lux|hpa|db|dba|mm|m/s|°|s)", u, re.I) for u in unites):
+            header_idx -= 1  # ligne d'unités sous l'en-tête
+    else:
+        header_idx = next((i for i, ln in enumerate(lines) if ln.count(best_sep) == best_count), 0)
+    body = "\n".join(lines[header_idx:])
+    raw = pd.read_csv(io.StringIO(body), sep=best_sep, engine="python",
+                      on_bad_lines="skip", skipinitialspace=True, dtype=str)
+    raw.columns = [str(c).strip() for c in raw.columns]
+    preamble = [ln.strip() for ln in lines[:header_idx] if ln.strip() and not re.fullmatch(r"-{5,}", ln.strip())]
+    return raw, preamble
+
+
+def _infer_dayfirst(sample: pd.Series) -> Optional[bool]:
+    """Devine si les dates sont jour-mois (FR) ou mois-jour (US).
+
+    Règles, dans l'ordre :
+      1. une composante > 12 tranche immédiatement ;
+      2. sinon, la composante qui CHANGE le plus souvent d'une ligne à l'autre est
+         le jour (un logger change de jour tous les jours, de mois rarement) ;
+      3. sinon (fichier d'un seul jour, valeurs ≤ 12) : None → l'appelant choisit
+         le défaut ; le front affiche l'aperçu pour que l'utilisateur tranche.
+    Les dates ISO (année en tête) ne sont pas concernées.
+    """
+    pairs: List[tuple] = []
+    for v in sample.astype(str).head(400):
+        m = _DATE_TOKENS.match(v.strip())
+        if not m:
+            continue
+        a, b = int(m.group(1)), int(m.group(2))
+        if len(m.group(1)) == 4:      # ISO : rien à deviner
+            return None
+        pairs.append((a, b))
+    if not pairs:
+        return None
+    if any(a > 12 for a, _ in pairs):
+        return True
+    if any(b > 12 for _, b in pairs):
+        return False
+    changes_a = sum(1 for i in range(1, len(pairs)) if pairs[i][0] != pairs[i - 1][0])
+    changes_b = sum(1 for i in range(1, len(pairs)) if pairs[i][1] != pairs[i - 1][1])
+    if changes_a > changes_b:
+        return True
+    if changes_b > changes_a:
+        return False
+    return None
+
+
+_DATE_TOKENS = re.compile(r"^\s*(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})")
+
+
+def _looks_iso(sample: pd.Series) -> bool:
+    """Vrai si les dates sont ISO 8601 (année en tête : 2026-09-05T00:00:17+00:00)."""
+    for v in sample.astype(str).head(400):
+        m = _DATE_TOKENS.match(v.strip())
+        if m:
+            return len(m.group(1)) == 4
+    return False
+
+
+def _parse_timestamps(ts_text: pd.Series, fmt: Optional[str]) -> pd.Series:
+    """Parse la colonne temporelle sans perdre de lignes.
+
+    pandas ≥ 2 déduit le format de la première ligne puis l'applique strictement :
+    une ligne qui s'en écarte (fraction de seconde absente ou plus courte, secondes
+    omises…) devient NaT en silence. Sur un export Shelly, cela faisait perdre
+    des dizaines de milliers de mesures — et `dayfirst=True` appliqué à de l'ISO
+    inversait jour et mois des lignes restantes.
+    """
+    dayfirst: Optional[bool] = None
+    if fmt:
+        parsed = pd.to_datetime(ts_text, format=fmt, errors="coerce")
+        if parsed.isna().all():
+            parsed = pd.to_datetime(ts_text, errors="coerce")
+    elif _looks_iso(ts_text):
+        # Seul le mode ISO8601 accepte des fractions de seconde de longueur variable.
+        try:
+            parsed = pd.to_datetime(ts_text, format="ISO8601", errors="coerce")
+        except ValueError:
+            # Fuseaux mélangés dans le fichier : tout ramener en UTC.
+            parsed = pd.to_datetime(ts_text, format="ISO8601", errors="coerce", utc=True)
+    else:
+        dayfirst = _infer_dayfirst(ts_text)
+        # Fichier d'un seul jour sans indice : jour-mois par défaut (contexte
+        # francophone) ; le front a montré l'aperçu pour corriger si besoin.
+        dayfirst = True if dayfirst is None else dayfirst
+        parsed = pd.to_datetime(ts_text, errors="coerce", dayfirst=dayfirst)
+
+    # Filet : les lignes rejetées par le format strict sont reparsées une à une.
+    missing = parsed.isna() & ~ts_text.str.lower().isin(_EMPTY_TOKENS)
+    if missing.any():
+        try:
+            retry = pd.to_datetime(
+                ts_text[missing], errors="coerce", format="mixed",
+                dayfirst=bool(dayfirst) if dayfirst is not None else False,
+            )
+            parsed = parsed.where(~missing, retry)
+        except (ValueError, TypeError):
+            pass  # fuseaux incompatibles : on garde ce qui a été parsé
+    return parsed
+
+
 def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
     """Parse un fichier CSV ou Excel selon un mapping de colonnes libre.
 
     `config` attendu (correspond à la table custom_sensors) :
-        timestamp_col    : nom de la colonne timestamp dans le fichier
+        timestamp_col    : nom de la colonne timestamp (ou date seule) dans le fichier
+        time_col         : colonne heure séparée, fusionnée avec timestamp_col (optionnel)
         timestamp_format : format strptime optionnel (ex. "%d/%m/%Y %H:%M")
         value_col        : colonne de la grandeur principale
         extra_cols       : liste de {label, col} pour les colonnes supplémentaires
+        series_col       : colonne qui dit à quelle série appartient chaque ligne
+                           (format « long » : une ligne par horodatage ET par
+                           appareil, ex. export de shelly_cl). Optionnel.
+        series_label_col : colonne du nom affiché de la série (optionnel)
     """
-    # Détection CSV vs Excel
-    try:
-        bio = io.BytesIO(contents)
-        xls = pd.ExcelFile(bio, engine="openpyxl")
-        sheet = xls.sheet_names[0]
-        raw = xls.parse(sheet)
-    except Exception:
-        encoding = chardet.detect(contents)["encoding"] or "utf-8"
-        try:
-            text = contents.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            text = contents.decode("utf-8", errors="replace")
-        # Détection séparateur (; ou ,)
-        first_line = text.split("\n", 1)[0]
-        sep = ";" if first_line.count(";") >= first_line.count(",") else ","
-        raw = pd.read_csv(io.StringIO(text), sep=sep, engine="python", on_bad_lines="skip")
+    raw, _ = read_any_table(contents)
 
     ts_col = config["timestamp_col"]
+    time_col = config.get("time_col") or None
     val_col = config["value_col"]
+    series_col = config.get("series_col") or None
+    series_label_col = config.get("series_label_col") or None
 
     if ts_col not in raw.columns:
         raise ValueError(
             f"Colonne timestamp « {ts_col} » introuvable. "
+            f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
+        )
+    if time_col and time_col not in raw.columns:
+        raise ValueError(
+            f"Colonne heure « {time_col} » introuvable. "
             f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
         )
     if val_col not in raw.columns:
@@ -497,24 +846,263 @@ def _parse_generic(contents: bytes, config: Dict[str, Any]) -> pd.DataFrame:
             f"Colonne valeur « {val_col} » introuvable. "
             f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
         )
+    for col, role in ((series_col, "série"), (series_label_col, "nom de série")):
+        if col and col not in raw.columns:
+            raise ValueError(
+                f"Colonne {role} « {col} » introuvable. "
+                f"Colonnes disponibles : {', '.join(raw.columns[:10])}"
+            )
 
     df = pd.DataFrame()
-    fmt = config.get("timestamp_format")
-    if fmt:
-        df["timestamp"] = pd.to_datetime(raw[ts_col].astype(str), format=fmt, errors="coerce")
-        if df["timestamp"].isna().all():
-            df["timestamp"] = pd.to_datetime(raw[ts_col], errors="coerce")
-    else:
-        df["timestamp"] = pd.to_datetime(raw[ts_col], errors="coerce")
+    ts_text = raw[ts_col].astype(str).str.strip()
+    if time_col:
+        ts_text = ts_text + " " + raw[time_col].astype(str).str.strip()
 
-    df[val_col] = pd.to_numeric(raw[val_col], errors="coerce")
+    df["timestamp"] = _parse_timestamps(ts_text, config.get("timestamp_format"))
+
+    df[val_col] = pd.to_numeric(raw[val_col].astype(str).str.replace(",", ".", regex=False), errors="coerce")
 
     for extra in config.get("extra_cols", []):
         col = extra.get("col") or extra.get("column")
         if col and col in raw.columns:
-            df[col] = pd.to_numeric(raw[col], errors="coerce")
+            df[col] = _numeric_or_text(raw[col])
+
+    if series_col:
+        # Noms internes : la même colonne peut aussi être une colonne supplémentaire.
+        df[SERIES_KEY] = raw[series_col].map(_series_text)
+        if series_label_col:
+            df[SERIES_LABEL] = raw[series_label_col].map(_series_text)
+    else:
+        _refuse_mixed_series(raw, df["timestamp"], exclude={ts_col, time_col, val_col})
 
     return df
+
+
+# ---------------------------------------------------------------------------
+# Format « long » : plusieurs séries dans un même fichier
+# ---------------------------------------------------------------------------
+#
+# Un export de table (shelly_cl, portails multi-onduleurs…) range une ligne
+# par horodatage ET par appareil, avec une colonne qui dit à qui appartient la
+# valeur. Lu comme une seule série, les puissances de tous les appareils se
+# suivent dans une même courbe et faussent moyennes, maxima et énergie, sans
+# aucun message. Le capteur personnalisé porte donc la colonne d'appartenance
+# (`series_col`) et le fichier est découpé en une série par valeur AVANT tout
+# calcul ; sans elle, un fichier visiblement multi-séries est refusé.
+
+SERIES_KEY = "__series_key"
+SERIES_LABEL = "__series_label"
+
+# Noms de colonnes qui identifient une série : un identifiant d'abord (stable),
+# un nom ensuite (un appareil peut être renommé en cours de campagne).
+_SERIES_ID_RE = re.compile(r"(^|_)id$|serial|s[ée]rie|canal|channel|voie|mac", re.I)
+_SERIES_NAME_RE = re.compile(r"device|appareil|name|nom|compteur|meter|sensor|capteur|onduleur|inverter", re.I)
+# Part minimale des lignes dont l'horodatage est répété pour soupçonner un format long.
+_MIXED_MIN_SHARE = 0.2
+
+
+def _series_text(v: Any) -> Optional[str]:
+    """Valeur de série en texte stable : 12.0 (lu d'Excel) → « 12 », vide → None."""
+    if isinstance(v, float) and not pd.isna(v) and v.is_integer():
+        v = int(v)
+    text = _cell_text(v)
+    return text or None
+
+
+_TIME_ONLY_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2}([.,]\d+)?)?$")
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+_DECIMAL_RE = re.compile(r"^-?\d*[.,]\d+$")
+
+
+def _not_a_series_key(values: pd.Series) -> bool:
+    """Partie de la date (heure seule d'un logger DATE / TIME, année d'un récap
+    Mois / Année, date) ou mesure décimale : jamais une série, même si elle
+    distingue les lignes — elle complète l'horodatage."""
+    sample = values.head(200)
+    if sample.empty:
+        return True
+    for pattern in (_TIME_ONLY_RE, _YEAR_RE, _DATE_RE):
+        if sample.str.match(pattern).mean() > 0.8:
+            return True
+    return sample.str.match(_DECIMAL_RE).mean() > 0.5
+
+
+def series_candidates(raw: pd.DataFrame, timestamps: pd.Series, exclude: set) -> List[str]:
+    """Colonnes qui rendent l'horodatage unique : (horodatage, colonne) ne se
+    répète presque jamais alors que l'horodatage seul se répète. Identifiants
+    en tête, puis noms d'appareil, puis le reste."""
+    ts = timestamps.reset_index(drop=True)
+    valid = ts.notna()
+    if valid.sum() == 0:
+        return []
+    found: List[str] = []
+    for col in raw.columns:
+        if col in exclude:
+            continue
+        key = raw[col].reset_index(drop=True).map(_series_text)
+        if _not_a_series_key(key[valid].dropna()):
+            continue
+        n_keys = key[valid].nunique()
+        # Une série revient sur plusieurs lignes : une colonne quasi unique par
+        # ligne (id de ligne, horodatage de mesure…) n'en est pas une.
+        if not 2 <= n_keys <= min(500, valid.sum() / 2):
+            continue
+        pairs = pd.DataFrame({"t": ts[valid], "k": key[valid]}).dropna()
+        if pairs.empty or pairs.duplicated().mean() > 0.02:
+            continue
+        found.append(col)
+    def rank(c: str) -> int:
+        if _SERIES_ID_RE.search(str(c)):
+            return 0
+        return 1 if _SERIES_NAME_RE.search(str(c)) else 2
+    return sorted(found, key=lambda c: (rank(c), found.index(c)))
+
+
+def _refuse_mixed_series(raw: pd.DataFrame, timestamps: pd.Series, exclude: set) -> None:
+    """Refuse un fichier où plusieurs lignes partagent le même horodatage ET où
+    une colonne les distingue : ce sont plusieurs séries, les lire comme une
+    seule mélangerait les valeurs. Sans colonne distinctive, rien ne permet de
+    séparer : on laisse passer (comportement inchangé)."""
+    ts = timestamps.dropna()
+    if ts.empty:
+        return
+    share = ts.duplicated(keep=False).mean()
+    if share < _MIXED_MIN_SHARE:
+        return
+    candidates = series_candidates(raw, timestamps, exclude)
+    if not candidates:
+        return
+    best = candidates[0]
+    n = raw[best].map(_series_text).nunique()
+    raise ValueError(
+        f"Ce fichier contient plusieurs séries : {round(share * 100)} % des lignes partagent leur "
+        f"horodatage, et la colonne « {best} » les distingue ({n} valeurs). Les lire comme une seule "
+        f"série mélangerait les valeurs. Modifiez le capteur et indiquez « {best} » dans "
+        f"« Une série par »."
+    )
+
+
+def _series_label(group: pd.DataFrame, key: str) -> str:
+    """Nom affiché : le plus récent du groupe (un appareil peut être renommé
+    en cours de campagne — on garde son nom actuel), sinon la clé."""
+    if SERIES_LABEL in group.columns:
+        names = group.sort_values("timestamp")[SERIES_LABEL].dropna()
+        if not names.empty:
+            return str(names.iloc[-1])
+    return key
+
+
+def _numeric_or_text(series: pd.Series) -> pd.Series:
+    """Colonne supplémentaire : numérique si ≥ 80 % des valeurs non vides sont
+    des nombres (tolère quelques « -- » ou « n/a »), sinon conservée en texte
+    (état, mode, commentaire…) — utile dans le tableau et l'export."""
+    text = series.astype(str).str.strip()
+    # « -- », « n/a », « - »… = valeur manquante, pas du texte
+    empty = text.str.lower().isin(_EMPTY_TOKENS)
+    nonempty = text[~empty]
+    if nonempty.empty:
+        return pd.to_numeric(text.where(~empty, None).str.replace(",", ".", regex=False), errors="coerce")
+    as_num = pd.to_numeric(nonempty.str.replace(",", ".", regex=False), errors="coerce")
+    if as_num.notna().mean() >= 0.8:
+        return pd.to_numeric(text.where(~empty, None).str.replace(",", ".", regex=False), errors="coerce")
+    return text.where(~empty, None)
+
+
+_EMPTY_TOKENS = {"", "nan", "none", "null", "-", "--", "---", "n/a", "na", "n.a."}
+
+
+def preview_table(contents: bytes, max_rows: int = 5000) -> Dict[str, Any]:
+    """Aperçu d'un fichier tabulaire pour le formulaire de capteur personnalisé :
+    colonnes, préambule, nombre de lignes, et un échantillon régulier de lignes
+    (toutes si ≤ max_rows) pour trier les colonnes vides / constantes et
+    prévisualiser les dates. Sert surtout aux .xls binaires, que le navigateur
+    ne sait pas lire."""
+    df, preamble = read_any_table(contents)
+    n = len(df)
+    if n > max_rows:
+        step = -(-n // max_rows)
+        idx = list(range(0, n, step))
+        if idx[-1] != n - 1:
+            idx.append(n - 1)
+        sample = df.iloc[idx]
+    else:
+        sample = df
+
+    def cell(v: Any) -> Any:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        if hasattr(v, "isoformat"):
+            return v.isoformat()
+        if isinstance(v, (int, float, str, bool)):
+            return v
+        return str(v)
+
+    rows = [{c: cell(v) for c, v in zip(df.columns, r)} for r in sample.itertuples(index=False, name=None)]
+    return {"columns": [str(c) for c in df.columns], "preamble": preamble, "row_count": n, "rows": rows}
+
+
+def _process_series(
+    df: pd.DataFrame,
+    config: Dict[str, Any],
+    value_col: str,
+    extra_cols: Dict[str, str],
+    keep_negative: bool,
+) -> Dict[str, Any]:
+    """Capteur à `series_col` : un payload complet par série (même grandeur,
+    même unité, mêmes colonnes que le capteur), regroupés sous `series`."""
+    sensor_name = config.get("name", "Capteur personnalisé")
+    own_cols = {config.get("series_col"), config.get("series_label_col")}
+    without_key = int(df[SERIES_KEY].isna().sum())
+
+    series: List[Dict[str, Any]] = []
+    skipped: List[str] = []
+    for key, group in df[df[SERIES_KEY].notna()].groupby(SERIES_KEY, sort=False):
+        label = _series_label(group, key)
+        # Colonnes propres à la série seulement : celles qui l'identifient sont
+        # constantes, et une colonne vide pour cet appareil (P b, P c d'un
+        # monophasé) ne ferait qu'encombrer le tableau.
+        cols = {
+            lab: col for lab, col in extra_cols.items()
+            if col not in own_cols and col in group.columns and group[col].notna().any()
+        }
+        measurements = _build_measurements(group, value_col=value_col, extra_cols=cols, keep_negative=keep_negative)
+        if not measurements:
+            skipped.append(label)
+            continue
+        stamps = pd.Series([m["timestamp"] for m in measurements])
+        series.append({
+            "measurements": measurements,
+            "sensor_type": "CUSTOM",
+            "metric_label": config.get("metric_label", "Valeur"),
+            "unit": config.get("unit", ""),
+            "quantity_kind": config.get("quantity_kind", "energy"),
+            "series_key": key,
+            "series_label": label,
+            "processing_info": {
+                "original_rows": len(group),
+                "valid_measurements": len(measurements),
+                "sensor_label": sensor_name,
+                "series_key": key,
+                "series_label": label,
+                "duplicate_timestamps": int(stamps.duplicated().sum()),
+            },
+        })
+
+    if not series:
+        raise ValueError("Aucune mesure exploitable après nettoyage des données (aucune série n'a de valeur)")
+    series.sort(key=lambda s: s["series_label"].lower())
+
+    return {
+        "series": series,
+        "sensor_type": "CUSTOM",
+        "processing_info": {
+            "original_rows": len(df),
+            "series_count": len(series),
+            "skipped_series": skipped,
+            "rows_without_series": without_key,
+            "sensor_label": sensor_name,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -530,7 +1118,11 @@ def process_measurement_file(
 
     Pour un capteur personnalisé, passer `sensor_type='CUSTOM'` et fournir
     `custom_config` avec les clés : timestamp_col, value_col, unit, metric_label,
-    extra_cols (liste), keep_negative, timestamp_format (optionnel).
+    extra_cols (liste), keep_negative, timestamp_format (optionnel),
+    series_col / series_label_col (optionnels).
+
+    Avec `series_col`, la réponse est `{"series": [payload, …], "processing_info"}` :
+    un payload complet par série, au lieu d'un seul.
     """
     if sensor_type == "CUSTOM":
         if not custom_config:
@@ -551,6 +1143,9 @@ def process_measurement_file(
             raise ValueError(
                 f"Colonne « {value_col} » introuvable ou fichier vide après parsing."
             )
+
+        if SERIES_KEY in df.columns:
+            return _process_series(df, custom_config, value_col, extra_cols, keep_negative)
 
         original_rows = len(df)
         measurements = _build_measurements(

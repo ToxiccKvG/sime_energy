@@ -60,8 +60,10 @@ Deno.serve(async (req: Request) => {
     });
     const data = await resp.json();
     if (data?.isok) {
-      const devices = data?.data?.deviceList ?? [];
-      return json({ ok: true, nb_devices: devices.length });
+      // device/list renvoie `data.devices`, un objet indexé par device_id
+      // (pas de tableau `deviceList` : l'ancien code comptait toujours 0).
+      const devices = data?.data?.devices ?? {};
+      return json({ ok: true, nb_devices: Object.keys(devices).length });
     }
     return json({ ok: false, error: JSON.stringify(data?.errors ?? "Réponse invalide") });
   } catch (e) {

@@ -9,13 +9,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   fetchLatestSnapshot, fetchDevices, fetchEnergyByDevice,
-  fetchHourlyHeatmap, fetchCalendarActivity, computeAlerts,
+  fetchHourlyHeatmap, fetchCalendarActivity, computeAlerts, mergeSnapshotDevices, fetchRetraitsOuverts,
   DEFAULT_FILTERS,
   type ShellyClRow, type Device, type EnergyAgg, type HeatmapCell, type CalendarDay, type Alert,
   type Filters,
 } from '@/lib/iot-dashboard-service';
 import { fetchAccounts, type ShellyAccount } from '@/lib/shelly-account-service';
 import { fetchDeviceRoles, indexRolesByDevice, type ShellyDeviceRole } from '@/lib/shelly-device-role-service';
+import { plageDetail } from '@/lib/iot-energy-detail-service';
 import { useIOT } from '@/components/iot/IOTContext';
 import { FilterBar } from './dashboard/FilterBar';
 import { KPIBand } from './dashboard/KPIBand';
@@ -34,6 +35,8 @@ export function DashboardTab() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [snapshot, setSnapshot] = useState<ShellyClRow[]>([]);
   const [allDevices, setAllDevices] = useState<Device[]>([]);
+  // Nombre de sites réellement présents au catalogue (filtres compris).
+  const nbSites = useMemo(() => new Set(allDevices.map(d => d.site).filter(Boolean)).size, [allDevices]);
   const [energyAgg, setEnergyAgg] = useState<EnergyAgg[]>([]);
   const [heatmap, setHeatmap] = useState<HeatmapCell[]>([]);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
@@ -92,7 +95,7 @@ export function DashboardTab() {
     setLoading(true);
     setError(null);
     try {
-      const [snap, devs, energy, heat, cal] = await Promise.all([
+      const [snap, devs, energy, heat, cal, retires] = await Promise.all([
         fetchLatestSnapshot(filters),
         fetchDevices(
           filters.sites.length > 0 ? filters.sites : undefined,
@@ -101,14 +104,18 @@ export function DashboardTab() {
         fetchEnergyByDevice(filters, filters.period),
         fetchHourlyHeatmap(filters, filters.period === 'live' || filters.period === '1h' ? '24h' : filters.period),
         fetchCalendarActivity(filters),
+        fetchRetraitsOuverts(),
       ]);
       if (ctrl.signal.aborted) return;
       setSnapshot(snap);
-      setAllDevices(devs);
+      // Le catalogue est une vue matérialisée rafraîchie par lots : un appareil
+      // qui vient de se mettre à émettre n'y figure pas encore. On le récupère
+      // depuis le snapshot pour qu'il ne manque ni aux compteurs ni aux filtres.
+      setAllDevices(mergeSnapshotDevices(devs, snap));
       setEnergyAgg(energy);
       setHeatmap(heat);
       setCalendarDays(cal);
-      setAlerts(computeAlerts(snap, devs));
+      setAlerts(computeAlerts(snap, mergeSnapshotDevices(devs, snap), retires));
       setLastUpdate(new Date());
     } catch (e) {
       console.error('[Dashboard] fetchAll error:', e);
@@ -144,6 +151,11 @@ export function DashboardTab() {
   }, [alerts]);
 
   const alertDeviceIds = useMemo(() => new Set(alerts.map(a => a.device_id)), [alerts]);
+
+  // Plage analysée par les popups de détail. Calculée ici et non dans chaque
+  // carte : les trois cartes cliquables doivent parler de la MÊME période que
+  // les chiffres qu'elles affichent.
+  const plage = useMemo(() => plageDetail(filters), [filtersKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isHistoric = filters.period !== 'live';
   const ageSec = lastUpdate ? Math.floor((Date.now() - lastUpdate.getTime()) / 1000) : null;
@@ -195,7 +207,7 @@ export function DashboardTab() {
             <h2 className="text-white font-bold text-base flex items-center gap-2">
               {isHistoric ? 'Historique de consommation' : 'Dashboard temps réel'}
               {isHistoric && (
-                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[10px] px-1.5 py-0">
+                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[0.625rem] px-1.5 py-0">
                   Wh / kWh
                 </Badge>
               )}
@@ -203,7 +215,7 @@ export function DashboardTab() {
             <p className="text-slate-500 text-xs">
               {isHistoric
                 ? 'Consommation cumulée · phases A/B/C · Supabase'
-                : 'Vue globale Shelly Cloud · 2 sites · polling Supabase 30 s'}
+                : `Vue globale Shelly Cloud · ${nbSites} site${nbSites > 1 ? 's' : ''} · polling Supabase 30 s`}
             </p>
           </div>
         </div>
@@ -254,12 +266,20 @@ export function DashboardTab() {
         period={filters.period}
         energyAgg={energyAgg}
         roles={deviceRoles}
+        plage={plage}
       />
 
       {/* Section 4 + 5 : Flux énergétique par site + Qualité 3 phases */}
       <div className="grid grid-cols-1 xl:grid-cols-[2fr,1fr] gap-3">
-        <EnergyFlowCard snapshot={snapshot} energyAgg={energyAgg} period={filters.period} roles={deviceRoles} />
-        <PhaseQualityCard snapshot={snapshot} />
+        <EnergyFlowCard
+          snapshot={snapshot}
+          energyAgg={energyAgg}
+          period={filters.period}
+          roles={deviceRoles}
+          allDevices={allDevices}
+          plage={plage}
+        />
+        <PhaseQualityCard snapshot={snapshot} plage={plage} />
       </div>
 
       {/* Section 2 + 9 : Top consommateurs + Alertes */}

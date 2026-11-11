@@ -71,7 +71,7 @@ export function CalendarCard({ days }: Props) {
         <h3 className="text-white font-semibold text-sm flex items-center gap-2">
           <CalendarDays className="h-4 w-4 text-emerald-400" /> Calendrier d'activité — 90 derniers jours
         </h3>
-        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+        <div className="flex items-center gap-2 text-[0.625rem] text-slate-400">
           <span>Moins</span>
           {[0.1, 0.3, 0.5, 0.7, 0.9].map(i => (
             <span key={i} className="w-3 h-3 rounded-sm" style={{ backgroundColor: colorFor(i) }} />
@@ -84,7 +84,7 @@ export function CalendarCard({ days }: Props) {
         <div className="flex gap-1">
           <div className="flex flex-col gap-1 mr-1 pt-3">
             {JOURS_FR.map((j, i) => (
-              <div key={i} className="h-3 text-[9px] text-slate-500 leading-3">{i % 2 === 1 ? j : ''}</div>
+              <div key={i} className="h-3 text-[0.5625rem] text-slate-500 leading-3">{i % 2 === 1 ? j : ''}</div>
             ))}
           </div>
           {weeks.map((week, wi) => (

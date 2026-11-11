@@ -29,6 +29,7 @@ import {
   fetchDeviceRoles, upsertDeviceRole, confirmDeviceRoles, deleteDeviceRole,
   DEVICE_ROLES, type ShellyDeviceRole, type DeviceRole,
 } from '@/lib/shelly-device-role-service';
+import { DEVICE_FAMILIES } from '@/lib/shelly-device-config-service';
 import { fetchDisponibles } from '@/lib/iot-supabase-service';
 
 interface Appareil {
@@ -57,6 +58,8 @@ function RoleBadge({ role }: { role: DeviceRole }) {
     </Badge>
   );
 }
+
+const AUCUN_PARENT = '__aucun__';
 
 export function ShellyDeviceRolesPanel() {
   const [roles, setRoles]         = useState<ShellyDeviceRole[]>([]);
@@ -145,6 +148,27 @@ export function ShellyDeviceRolesPanel() {
 
   const changerSensInverse = (r: ShellyDeviceRole, v: boolean) =>
     action(r.device_id, () => upsertDeviceRole({ ...r, sens_inverse: v }));
+
+  const changerParent = (r: ShellyDeviceRole, parent: string | null) =>
+    action(r.device_id, () => upsertDeviceRole({ ...r, parent_device_id: parent }));
+
+  /** Compteurs possibles en amont : même site, compteur d'énergie, sans créer de boucle. */
+  const parentsPossibles = (r: ShellyDeviceRole, site: string | undefined) => {
+    const descendants = new Set<string>([r.device_id]);
+    for (let ajout = true; ajout;) {
+      ajout = false;
+      for (const x of roles) {
+        if (x.parent_device_id && descendants.has(x.parent_device_id) && !descendants.has(x.device_id)) {
+          descendants.add(x.device_id);
+          ajout = true;
+        }
+      }
+    }
+    return roles
+      .filter(x => !descendants.has(x.device_id) && x.role !== 'AMBIANCE' && x.role !== 'AUTRE' && parId.get(x.device_id)?.site === site)
+      .map(x => ({ id: x.device_id, nom: parId.get(x.device_id)?.name ?? x.libelle ?? x.device_id }))
+      .sort((a, b) => a.nom.localeCompare(b.nom));
+  };
 
   const changerRole = (r: ShellyDeviceRole, role: DeviceRole) =>
     action(r.device_id, () => upsertDeviceRole({ ...r, role }));
@@ -270,9 +294,9 @@ export function ShellyDeviceRolesPanel() {
                       <Button size="sm" variant="ghost" onClick={() => rattacherSuggeres(site, liste)}
                         disabled={saving != null}
                         className="h-7 px-2 text-xs text-blue-300 hover:text-blue-200 hover:bg-blue-500/10"
-                        title="DEPART pour les prises/éclairages, AMBIANCE pour les capteurs, AUTRE pour les contacts — les compteurs 3PH/2PH restent à trancher un par un">
+                        title="Départ pour les prises et éclairages, Ambiance pour les capteurs, Autre pour les contacts — les compteurs triphasés et biphasés restent à trancher un par un">
                         <Wand2 className="h-3.5 w-3.5 mr-1" />
-                        Rattacher les {nbSuggeres} déductibles
+                        {nbSuggeres > 1 ? `Rattacher les ${nbSuggeres} déductibles` : 'Rattacher le déductible'}
                       </Button>
                     )}
                   </div>
@@ -286,9 +310,11 @@ export function ShellyDeviceRolesPanel() {
                             <TableRow key={a.device_id} className="border-white/5 hover:bg-white/5">
                               <TableCell className="text-white text-xs min-w-40">
                                 {a.name}
-                                {a.room && <span className="text-slate-500 block text-[10px]">{a.room}</span>}
+                                {a.room && <span className="text-slate-500 block text-[0.625rem]">{a.room}</span>}
                               </TableCell>
-                              <TableCell className="text-slate-500 text-xs">{a.device_family}</TableCell>
+                              <TableCell className="text-slate-500 text-xs">
+                                {DEVICE_FAMILIES.find(f => f.value === a.device_family)?.label ?? a.device_family}
+                              </TableCell>
                               <TableCell>
                                 <SelectRole
                                   value={choix}
@@ -333,6 +359,7 @@ export function ShellyDeviceRolesPanel() {
                   <TableHead className="text-slate-400 text-xs">Appareil</TableHead>
                   <TableHead className="text-slate-400 text-xs">Site</TableHead>
                   <TableHead className="text-slate-400 text-xs">Rôle</TableHead>
+                  <TableHead className="text-slate-400 text-xs" title="Compteur en amont de ce circuit. Sans lui, le circuit compte comme une branche distincte : une branche imbriquée n'est jamais additionnée à son parent">Alimenté par</TableHead>
                   <TableHead className="text-slate-400 text-xs" title="Compteur dont le TC est monté à l'envers : production comptée en soutirage">Sens inversé</TableHead>
                   <TableHead className="text-slate-400 text-xs w-12" />
                 </TableRow>
@@ -349,6 +376,19 @@ export function ShellyDeviceRolesPanel() {
                         <SelectRole value={r.role} onChange={role => changerRole(r, role)} disabled={saving != null} />
                       </TableCell>
                       <TableCell>
+                        {r.role === 'AMBIANCE' || r.role === 'AUTRE' ? <span className="text-slate-600 text-xs">—</span> : (
+                          <Select value={r.parent_device_id ?? AUCUN_PARENT} onValueChange={v => changerParent(r, v === AUCUN_PARENT ? null : v)} disabled={saving != null}>
+                            <SelectTrigger className="h-8 w-full sm:w-56 text-xs bg-white/5 border-white/20 text-white" aria-label={`Compteur en amont de ${a?.name ?? r.device_id}`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1a1d2e] border-white/20">
+                              <SelectItem value={AUCUN_PARENT} className="text-xs">Aucun compteur en amont</SelectItem>
+                              {parentsPossibles(r, a?.site).map(p => <SelectItem key={p.id} value={p.id} className="text-xs">{p.nom}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         <div className="flex items-center gap-2">
                           <Switch
                             id={`inv-${r.device_id}`}
@@ -358,7 +398,7 @@ export function ShellyDeviceRolesPanel() {
                             className="data-[state=checked]:bg-amber-500 scale-75"
                           />
                           {r.sens_inverse && (
-                            <Label htmlFor={`inv-${r.device_id}`} className="text-amber-400 text-[10px]">inversé</Label>
+                            <Label htmlFor={`inv-${r.device_id}`} className="text-amber-400 text-[0.625rem]">inversé</Label>
                           )}
                         </div>
                       </TableCell>

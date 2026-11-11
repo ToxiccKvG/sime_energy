@@ -1,4 +1,35 @@
 import { supabase } from './supabase';
+import { metaFromPreambleLines, type SpreadsheetMeta } from './excel-utils';
+import { backendHeaders } from '@/services/backend-client';
+
+const API_URL = import.meta.env.VITE_API_URL;
+
+export interface TablePreview {
+  columns: string[];
+  meta: SpreadsheetMeta;
+  rowCount: number;
+  /** Toutes les lignes si ≤ 5 000, sinon un échantillon régulier (dernière ligne comprise). */
+  rows: Record<string, unknown>[];
+}
+
+/**
+ * Aperçu d'un fichier par le backend (pandas : xlsx, .xls binaire, csv/tsv).
+ * Le navigateur ne sait pas lire un .xls binaire (format Excel 97-2003) ;
+ * le backend, lui, a xlrd. Utilisé par le formulaire de capteur personnalisé
+ * et la reconnaissance des fichiers au dépôt.
+ */
+export async function previewTableViaBackend(file: File): Promise<TablePreview> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(`${API_URL}/processing/process-file/measures/preview`, { method: 'POST', headers: await backendHeaders(), body: formData });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try { const body = await response.json(); if (body?.detail) detail = body.detail; } catch { /* non-JSON */ }
+    throw new Error(detail);
+  }
+  const data = await response.json() as { columns: string[]; preamble: string[]; row_count: number; rows: Record<string, unknown>[] };
+  return { columns: data.columns, meta: metaFromPreambleLines(data.preamble ?? []), rowCount: data.row_count, rows: data.rows };
+}
 
 export interface ExtraCol {
   label: string;
@@ -31,7 +62,11 @@ export interface CustomSensor {
   organization_id: string;
   name: string;
   timestamp_col: string;
+  /** Colonne heure séparée (loggers DATE + TIME), fusionnée côté backend. */
+  time_col?: string | null;
   timestamp_format?: string;
+  /** Empreinte des en-têtes du fichier exemple — reconnaissance automatique des fichiers du même appareil. */
+  columns_signature?: string | null;
   value_col: string;
   unit: string;
   metric_label: string;
@@ -39,6 +74,14 @@ export interface CustomSensor {
   keep_negative: boolean;
   /** Puissance instantanée (intégrée en énergie) / Énergie déjà cumulable (sommée) / Autre (pas de cumul). */
   quantity_kind?: QuantityKind;
+  /**
+   * Fichier « long » (une ligne par horodatage ET par appareil, ex. export de
+   * shelly_cl) : colonne qui dit à quelle série appartient chaque ligne. Le
+   * backend découpe le fichier en un relevé par valeur. NULL = une seule série.
+   */
+  series_col?: string | null;
+  /** Colonne du nom affiché de chaque série (le plus récent est gardé). */
+  series_label_col?: string | null;
   created_at: string;
 }
 
@@ -60,7 +103,10 @@ export async function saveCustomSensor(sensor: CustomSensorInput): Promise<Custo
     .insert(sensor)
     .select()
     .single();
-  if (error) throw error;
+  // PostgrestError n'est pas une Error : affiché tel quel par un toast il
+  // donne « [object Object] ». On remonte un message lisible (c'est ainsi
+  // qu'on a vu la colonne quantity_kind manquante, migration 20260917).
+  if (error) throw new Error(`${error.message}${error.hint ? ` — ${error.hint}` : ''}`);
   return data as CustomSensor;
 }
 
@@ -78,4 +124,372 @@ export async function updateCustomSensor(id: string, patch: Partial<CustomSensor
     .single();
   if (error) throw error;
   return data as CustomSensor;
+}
+
+// ============================================================
+// Aide à la configuration : signature, suggestions, aperçu des dates
+// ============================================================
+
+/** Empreinte des en-têtes : normalisés, triés, joints — insensible à l'ordre et à la casse. */
+export function columnsSignature(columns: string[]): string {
+  return columns
+    .map(c => c.trim().toLowerCase().replace(/\s+/g, ' '))
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
+/** Retrouve le capteur dont le fichier exemple avait exactement ces en-têtes. */
+export function findSensorBySignature(sensors: CustomSensor[], columns: string[]): CustomSensor | undefined {
+  const sig = columnsSignature(columns);
+  return sig ? sensors.find(s => s.columns_signature === sig) : undefined;
+}
+
+const DATE_RE = /^\s*(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})/;
+const TIME_ONLY_RE = /^\s*\d{1,2}:\d{2}(:\d{2})?\s*$/;
+const HAS_TIME_RE = /\d{1,2}:\d{2}/;
+const INDEX_COL_RE = /^(no\.?|n°|#|index|idx|id|row|ligne|num(?:ero)?)$/i;
+
+/** Extrait l'unité d'un en-tête « Temperature(°C) », « Tension (V) », « Power [kW] ». */
+export function unitFromHeader(header: string): string {
+  const m = header.match(/[([]\s*([^)\]]{1,12}?)\s*[)\]]\s*$/);
+  return m ? m[1].trim() : '';
+}
+
+/** Libellé lisible à partir d'un en-tête : « RELATIVE-HUMIDITY » → « Relative humidity ». */
+export function labelFromHeader(header: string): string {
+  const base = header.replace(/[([][^)\]]*[)\]]\s*$/, '').replace(/[_-]+/g, ' ').trim();
+  if (!base) return header;
+  const lower = base.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+/** Unité devinée d'après le NOM de la colonne quand l'en-tête n'en donne pas (exports de tables, loggers). */
+const UNIT_BY_NAME: [RegExp, string][] = [
+  [/sonor|sound|noise|bruit|\bdb\b|dba|leq|lp\b|spl/i, 'dB'],
+  [/temp|t°|celsius|ressenti|feels|dew|ros[ée]e/i, '°C'],
+  [/humid|hum\b|rh\b|moisture|battery_pct|batterie|pct|percent|taux/i, '%'],
+  [/pression|pressure|hpa/i, 'hPa'],
+  [/lux|illumin|lumino/i, 'lux'],
+  [/uv/i, ''],
+  [/ppm|co2|concentration/i, 'ppm'],
+  // « kWh Total » est en kWh, pas en Wh : sinon ses valeurs sont divisées par 1 000
+  [/mwh/i, 'MWh'],
+  [/kwh/i, 'kWh'],
+  [/energ|^wh|_wh|wh_/i, 'Wh'],
+  [/power|puiss|_w$|^p_[abc]$/i, 'W'],
+  [/volt|tension|^v_[abc]$|_v$/i, 'V'],
+  [/current|courant|intensit|^i_[abc]$|_a$/i, 'A'],
+  [/freq|hz/i, 'Hz'],
+  [/wind|vent|_ms$|m\/s/i, 'm/s'],
+  [/rain|pluie|precip|_mm$/i, 'mm'],
+  [/rssi|signal|dbm/i, 'dBm'],
+  [/direction|_deg$|angle|tilt/i, '°'],
+];
+
+export function unitFromName(header: string): string {
+  const h = header.trim();
+  for (const [re, u] of UNIT_BY_NAME) if (re.test(h)) return u;
+  return '';
+}
+
+function unitFromMeta(meta: Record<string, string>, header: string): string {
+  // « Temperature Unit:Celsius » → °C, « Fahrenheit » → °F
+  const key = Object.keys(meta).find(k => /unit/i.test(k) && new RegExp(header.split(/[^a-z]/i)[0] || '.', 'i').test(k));
+  const v = key ? meta[key].toLowerCase() : '';
+  if (/celsius/.test(v)) return '°C';
+  if (/fahrenheit/.test(v)) return '°F';
+  return v ? meta[key!] : '';
+}
+
+const NUM_RE = /^-?\d{1,3}(?:[ \u00a0]\d{3})*(?:[.,]\d+)?$|^-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?$/;
+
+/**
+ * Une colonne est numérique si ≥ 80 % de ses valeurs non vides (sur l'échantillon)
+ * sont des nombres — tolère quelques « -- », « n/a » ou cellules texte d'un logger,
+ * sans prendre pour numérique une colonne de texte ou de booléens.
+ */
+const EMPTY_TOKENS = new Set(['', 'nan', 'none', 'null', '-', '--', '---', 'n/a', 'na', 'n.a.']);
+
+export function isNumericColumn(sample: Record<string, unknown>[], col: string): boolean {
+  let n = 0, ok = 0;
+  for (const r of sample) {
+    const v = r[col];
+    if (v === null || v === undefined || EMPTY_TOKENS.has(String(v).trim().toLowerCase())) continue;
+    n++;
+    if (typeof v === 'number' || (typeof v === 'string' && NUM_RE.test(v.trim()))) ok++;
+    if (n >= 200) break;
+  }
+  return n > 0 && ok / n >= 0.8;
+}
+
+/** Vrai si la colonne contient au moins une valeur (hors vides et « -- », « n/a »…) sur l'échantillon. */
+export function hasAnyValue(sample: Record<string, unknown>[], col: string): boolean {
+  return sample.some(r => { const v = r[col]; return v !== null && v !== undefined && !EMPTY_TOKENS.has(String(v).trim().toLowerCase()); });
+}
+
+/**
+ * Vrai si la colonne a la même valeur sur toutes les lignes renseignées de
+ * l'échantillon (≥ 2 lignes) : site, pièce, nom d'appareil, identifiant… Ce sont
+ * des métadonnées d'export, pas des mesures — on les écarte par défaut, elles
+ * restent disponibles via « Ajouter ».
+ */
+export function isConstantColumn(sample: Record<string, unknown>[], col: string): boolean {
+  let firstVal: string | null = null; let n = 0;
+  for (const r of sample) {
+    const v = r[col];
+    if (v === null || v === undefined || EMPTY_TOKENS.has(String(v).trim().toLowerCase())) continue;
+    const sv = v instanceof Date ? v.toISOString() : String(v).trim();
+    if (firstVal === null) firstVal = sv;
+    else if (sv !== firstVal) return false;
+    n++;
+  }
+  return n >= 2;
+}
+
+export interface ExtraColsTriage {
+  proposed: ExtraCol[];
+  /** Colonnes sans aucune valeur dans ce fichier. */
+  empty: string[];
+  /** Colonnes à valeur unique (métadonnées : site, pièce, appareil…). */
+  constant: string[];
+}
+
+/** Tri des colonnes candidates : proposées / vides / constantes. */
+export function triageExtraCols(columns: string[], sample: Record<string, unknown>[], exclude: string[]): ExtraColsTriage {
+  const empty: string[] = []; const constant: string[] = []; const proposed: ExtraCol[] = [];
+  for (const c of columns) {
+    if (exclude.includes(c) || INDEX_COL_RE.test(c.trim())) continue;
+    if (!hasAnyValue(sample, c)) { empty.push(c); continue; }
+    if (isConstantColumn(sample, c)) { constant.push(c); continue; }
+    const u = unitFromHeader(c);
+    proposed.push({ col: c, label: u ? `${labelFromHeader(c)} (${u})` : labelFromHeader(c) });
+  }
+  return { proposed, empty, constant };
+}
+
+/**
+ * Toutes les colonnes d'un fichier prêtes à servir de colonnes supplémentaires —
+ * texte compris (le backend garde une colonne texte telle quelle : état, mode,
+ * commentaire… visible dans le tableau et l'export, ignorée par les graphiques).
+ * Écartées : les colonnes déjà mappées, le compteur de lignes, et les colonnes
+ * ENTIÈREMENT VIDES — un export de table brute (ex. shelly_cl pour une station
+ * météo) traîne des dizaines de colonnes qui ne concernent pas cet appareil.
+ */
+export function allExtraCols(columns: string[], sample: Record<string, unknown>[], exclude: string[]): ExtraCol[] {
+  return triageExtraCols(columns, sample, exclude).proposed;
+}
+
+export interface MappingSuggestion {
+  name: string;
+  timestampCol: string;
+  timeCol: string;
+  valueCol: string;
+  unit: string;
+  metricLabel: string;
+  extraCols: ExtraCol[];
+}
+
+/**
+ * Propose un mapping complet à partir des en-têtes, de quelques lignes et du
+ * préambule éventuel. Tout reste modifiable par l'utilisateur : ce sont des
+ * valeurs par défaut, pas des décisions.
+ */
+export function suggestMapping(
+  columns: string[],
+  sample: Record<string, unknown>[],
+  meta: Record<string, string>,
+  fileName: string,
+): MappingSuggestion {
+  const first = (c: string) => sample.map(r => r[c]).find(v => v !== null && v !== undefined && String(v).trim() !== '');
+  const str = (v: unknown) => (v instanceof Date ? v.toISOString() : String(v ?? ''));
+
+  const dateCols = columns.filter(c => { const v = first(c); return v instanceof Date || DATE_RE.test(str(v)); });
+  const timeOnlyCols = columns.filter(c => TIME_ONLY_RE.test(str(first(c))));
+  // Horodatage : une colonne date qui porte déjà l'heure, sinon date seule + heure séparée
+  const tsWithTime = dateCols.find(c => HAS_TIME_RE.test(str(first(c))) || first(c) instanceof Date);
+  const timestampCol = tsWithTime ?? dateCols[0] ?? columns.find(c => /time|date|heure|horodat|timestamp/i.test(c)) ?? '';
+  const timeCol = !tsWithTime && dateCols[0] ? (timeOnlyCols[0] ?? '') : '';
+
+  const numericCols = columns.filter(c => c !== timestampCol && c !== timeCol && !INDEX_COL_RE.test(c.trim()) && isNumericColumn(sample, c));
+  // Grandeur principale : le total s'il existe (fichier réorganisé par sections :
+  // Phase A, Phase B, Phase C, Total, Retour…), jamais une phase ni un retour
+  const valueCol = numericCols.find(c => /total|global|somme/i.test(c) && !/retour|inject/i.test(c))
+    ?? numericCols.find(c => !/retour|inject/i.test(c))
+    ?? numericCols[0] ?? '';
+  // Unité : en-tête « (°C) », sinon préambule « Temperature Unit:Celsius », sinon nom de
+  // colonne, sinon le titre du fichier (« MESURE SONORE … » → dB).
+  const unit = valueCol
+    ? (unitFromHeader(valueCol) || unitFromMeta(meta, valueCol) || unitFromName(valueCol) || unitFromName(meta._lines ?? ''))
+    : '';
+  const metricLabel = valueCol ? labelFromHeader(valueCol) : '';
+
+  // Toutes les autres colonnes, texte compris (choix de l'utilisateur, 17/09) :
+  // le tableau et l'export les gardent, les graphiques ne tracent que le numérique.
+  const extraCols: ExtraCol[] = allExtraCols(columns, sample, [timestampCol, timeCol, valueCol]);
+
+  // Nom : « Logging Name:… » d'un logger, sinon la ligne de titre du préambule
+  // (celle qui ressemble à un intitulé : plusieurs mots, pas un simple auteur),
+  // sinon le nom du fichier.
+  const metaName = Object.entries(meta).find(([k]) => k !== '_lines' && /logging name|name|nom|point|location|site/i.test(k))?.[1];
+  const titleLine = (meta._lines ?? '').split('\n').find(l => /[ _]/.test(l.trim()) && !/^[^:]{1,40}:/.test(l) && l.length >= 8);
+  const name = (metaName ?? titleLine ?? fileName.replace(/\.[^.]+$/, '')).trim();
+
+  return { name, timestampCol, timeCol, valueCol, unit, metricLabel, extraCols };
+}
+
+// ============================================================
+// Format « long » : plusieurs séries dans un même fichier
+// ============================================================
+
+// Même règles que le backend (`series_candidates` dans sensors.py) : un
+// identifiant d'abord (stable), un nom ensuite (renommable en cours de campagne).
+const SERIES_ID_RE = /(^|_)id$|serial|s[ée]rie|canal|channel|voie|mac/i;
+const SERIES_NAME_RE = /device|appareil|name|nom|compteur|meter|sensor|capteur|onduleur|inverter/i;
+const LABEL_COL_RE = /name|nom|libell|label|d[ée]signation/i;
+const DECIMAL_RE = /^-?\d*[.,]\d+$/;
+// Parties de la date : heure seule (fractions de seconde comprises), année, date
+const DATE_PART_RES = [/^\d{1,2}:\d{2}(:\d{2}([.,]\d+)?)?$/, /^(19|20)\d{2}$/, DATE_RE];
+
+export interface SeriesSuggestion {
+  /** Colonne d'appartenance proposée. */
+  col: string;
+  /** Colonne du nom affiché, si le fichier en a une. */
+  labelCol: string;
+  /** Nombre de séries trouvées dans l'échantillon. */
+  count: number;
+  /** Part des lignes dont l'horodatage se répète (0-1). */
+  repeatedShare: number;
+}
+
+const cellText = (v: unknown): string => (v instanceof Date ? v.toISOString() : v == null ? '' : String(v).trim());
+
+/**
+ * Détecte un fichier « long » : l'horodatage se répète sur au moins 20 % des
+ * lignes et une colonne rend chaque couple (horodatage, colonne) unique. Sert
+ * à proposer « Une série par » à la création du capteur ; le backend applique
+ * la même règle pour refuser un fichier multi-séries lu comme une seule série.
+ */
+export function suggestSeries(
+  columns: string[],
+  sample: Record<string, unknown>[],
+  timestampCol: string,
+  timeCol: string,
+  valueCol: string,
+): SeriesSuggestion | null {
+  if (!timestampCol || sample.length < 4) return null;
+  const stamps = sample.map(r => `${cellText(r[timestampCol])} ${timeCol ? cellText(r[timeCol]) : ''}`.trim());
+  const counts = new Map<string, number>();
+  for (const s of stamps) if (s) counts.set(s, (counts.get(s) ?? 0) + 1);
+  const filled = stamps.filter(Boolean).length;
+  const repeated = stamps.filter(s => s && (counts.get(s) ?? 0) > 1).length;
+  const repeatedShare = filled ? repeated / filled : 0;
+  if (repeatedShare < 0.2) return null;
+
+  const found: { col: string; count: number }[] = [];
+  for (const col of columns) {
+    if ([timestampCol, timeCol, valueCol].includes(col)) continue;
+    const keys = sample.map(r => cellText(r[col]));
+    const filledKeys = keys.filter(Boolean);
+    if (filledKeys.length === 0) continue;
+    const head = filledKeys.slice(0, 200);
+    // Partie de la date (elle complète l'horodatage) ou mesure décimale : jamais une série
+    if (DATE_PART_RES.some(re => head.filter(k => re.test(k)).length > 0.8 * head.length)) continue;
+    if (head.filter(k => DECIMAL_RE.test(k)).length > 0.5 * head.length) continue;
+    const distinct = new Set(filledKeys).size;
+    if (distinct < 2 || distinct > Math.min(500, filled / 2)) continue;
+    const pairs = new Set<string>(); let dup = 0; let n = 0;
+    stamps.forEach((s, i) => {
+      if (!s || !keys[i]) return;
+      n++;
+      const p = `${s}\u0000${keys[i]}`;
+      if (pairs.has(p)) dup++; else pairs.add(p);
+    });
+    if (n === 0 || dup / n > 0.02) continue;
+    found.push({ col, count: distinct });
+  }
+  if (found.length === 0) return null;
+  const rank = (c: string) => (SERIES_ID_RE.test(c) ? 0 : SERIES_NAME_RE.test(c) ? 1 : 2);
+  const best = [...found].sort((a, b) => rank(a.col) - rank(b.col))[0];
+  const labelCol = columns.find(c => c !== best.col && LABEL_COL_RE.test(c) && !isNumericColumn(sample, c)) ?? '';
+  return { col: best.col, labelCol, count: best.count, repeatedShare };
+}
+
+/**
+ * Même heuristique que le backend (`_infer_dayfirst`) : une composante > 12
+ * tranche ; sinon celle qui change le plus souvent est le jour ; sinon null.
+ */
+/** true = jour-mois, false = mois-jour, 'iso' = année en tête (rien à deviner), null = ambigu. */
+export type DayFirst = boolean | 'iso' | null;
+
+export function inferDayFirst(samples: string[]): DayFirst {
+  const pairs: [number, number][] = [];
+  for (const v of samples) {
+    const m = v.match(DATE_RE);
+    if (!m) continue;
+    if (m[1].length === 4) return 'iso';
+    pairs.push([Number(m[1]), Number(m[2])]);
+  }
+  if (pairs.length === 0) return null;
+  if (pairs.some(([a]) => a > 12)) return true;
+  if (pairs.some(([, b]) => b > 12)) return false;
+  let ca = 0, cb = 0;
+  for (let i = 1; i < pairs.length; i++) { if (pairs[i][0] !== pairs[i - 1][0]) ca++; if (pairs[i][1] !== pairs[i - 1][1]) cb++; }
+  return ca > cb ? true : cb > ca ? false : null;
+}
+
+/** Interprète un horodatage texte comme le fera le backend (sans format explicite). */
+export function parseTimestampLike(text: string, dayFirst: boolean): Date | null {
+  const t = text.trim();
+  const m = t.match(/^(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!m) { const d = new Date(t); return isNaN(d.getTime()) ? null : d; }
+  let y: number, mo: number, d: number;
+  if (m[1].length === 4) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+  else if (dayFirst) { d = +m[1]; mo = +m[2]; y = +m[3]; }
+  else { mo = +m[1]; d = +m[2]; y = +m[3]; }
+  if (y < 100) y += 2000;
+  const date = new Date(y, mo - 1, d, +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0));
+  return isNaN(date.getTime()) || mo < 1 || mo > 12 || d < 1 || d > 31 ? null : date;
+}
+
+export interface TimestampPreview {
+  dayFirst: DayFirst;
+  first: Date | null;
+  last: Date | null;
+  /** Pas médian entre deux relevés, en secondes (null si < 2 relevés). */
+  stepSeconds: number | null;
+  invalid: number;
+  total: number;
+}
+
+/**
+ * Aperçu des dates telles qu'elles seront interprétées — c'est le seul moyen
+ * sûr de lever l'ambiguïté 09-05-2026 = 5 septembre (US) ou 9 mai (FR).
+ */
+export function previewTimestamps(
+  rows: Record<string, unknown>[],
+  timestampCol: string,
+  timeCol: string,
+  forcedDayFirst?: boolean | null,
+): TimestampPreview {
+  const texts = rows.map(r => {
+    const d = r[timestampCol]; const t = timeCol ? r[timeCol] : '';
+    const ds = d instanceof Date ? d.toISOString() : String(d ?? '');
+    return `${ds} ${t instanceof Date ? '' : String(t ?? '')}`.trim();
+  }).filter(Boolean);
+  const inferred = inferDayFirst(texts);
+  const dayFirst: DayFirst = inferred === 'iso' ? 'iso' : (forcedDayFirst !== undefined && forcedDayFirst !== null ? forcedDayFirst : inferred);
+  const dates = texts.map(t => parseTimestampLike(t, dayFirst === true || dayFirst === null));
+  const valid = dates.filter((d): d is Date => d !== null);
+  const steps: number[] = [];
+  for (let i = 1; i < valid.length; i++) steps.push(Math.abs(valid[i].getTime() - valid[i - 1].getTime()) / 1000);
+  steps.sort((a, b) => a - b);
+  return {
+    dayFirst,
+    first: valid[0] ?? null,
+    last: valid[valid.length - 1] ?? null,
+    stepSeconds: steps.length ? steps[Math.floor(steps.length / 2)] : null,
+    invalid: texts.length - valid.length,
+    total: texts.length,
+  };
 }

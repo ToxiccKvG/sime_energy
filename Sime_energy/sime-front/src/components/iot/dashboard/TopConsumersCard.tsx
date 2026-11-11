@@ -5,15 +5,26 @@
 
 import { useMemo } from 'react';
 import { TrendingUp } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import type { ShellyClRow, EnergyAgg, Period } from '@/lib/iot-dashboard-service';
 
 const fmtFr = (n: number, d = 1) => n.toFixed(d).replace('.', ',');
 
+// Couleurs historiques conservées ; tout autre site (Donsin, futurs
+// comptes) reçoit une couleur stable déduite de son nom.
 const SITE_COLORS: Record<string, string> = {
   'Ma Maison':       '#3b82f6',
   'Académie CER2E':  '#a855f7',
 };
+const SITE_PALETTE = ['#10b981', '#f59e0b', '#06b6d4', '#f43f5e', '#84cc16', '#f97316'];
+
+function siteColor(site: string): string {
+  if (SITE_COLORS[site]) return SITE_COLORS[site];
+  let h = 0;
+  for (const c of site) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return SITE_PALETTE[h % SITE_PALETTE.length];
+}
 
 interface Props {
   snapshot: ShellyClRow[];
@@ -86,7 +97,8 @@ export function TopConsumersCard({ snapshot, energyAgg, period }: Props) {
                 if (!active || !payload?.length) return null;
                 const d = payload[0].payload as typeof top10[number];
                 return (
-                  <div className="px-3 py-2 text-xs space-y-1">
+                  // Fond explicite : une bulle « faite main » ne reprend pas contentStyle, elle était transparente.
+                  <div className="px-3 py-2 text-xs space-y-1 rounded-lg border border-slate-400/35 bg-[#0f172a] shadow-lg">
                     <p className="text-white font-semibold">{d.fullName}</p>
                     <p className="text-slate-400">Site : <span className="text-blue-300">{d.site}</span></p>
                     {d.room && <p className="text-slate-400">Pièce : <span className="text-purple-300">{d.room}</span></p>}
@@ -99,7 +111,7 @@ export function TopConsumersCard({ snapshot, energyAgg, period }: Props) {
             />
             <Bar dataKey="value" radius={[0, 4, 4, 0]}>
               {top10.map((d, i) => (
-                <Cell key={i} fill={SITE_COLORS[d.site] ?? '#06b6d4'} />
+                <Cell key={i} fill={siteColor(d.site)} />
               ))}
             </Bar>
           </BarChart>

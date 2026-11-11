@@ -47,7 +47,7 @@ export function AlertsCard({ alerts }: Props) {
           <Bell className="h-4 w-4 text-amber-400" /> Alertes &amp; anomalies live
           <span className="text-slate-500 text-xs font-normal">· {alerts.length}</span>
         </h3>
-        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+        <div className="flex flex-wrap items-center gap-1.5 text-[0.625rem]">
           <span className="px-2 py-0.5 rounded-full bg-red-500/15 text-red-400">{counts.critical} critique{counts.critical > 1 ? 's' : ''}</span>
           <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400">{counts.warning} warning{counts.warning > 1 ? 's' : ''}</span>
           <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400">{counts.info} info</span>
@@ -75,7 +75,7 @@ export function AlertsCard({ alerts }: Props) {
                 <div className="flex-1 min-w-0">
                   <p className="text-white text-xs font-medium truncate">{a.device_name}</p>
                   <p className={`text-xs ${s.text}`}>{a.message}</p>
-                  <p className="text-slate-500 text-[10px]">
+                  <p className="text-slate-500 text-[0.625rem]">
                     {a.site}{a.room ? ' · ' + a.room : ''} · {timeAgo(a.ts)}
                   </p>
                 </div>

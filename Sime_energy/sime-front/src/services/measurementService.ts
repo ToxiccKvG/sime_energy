@@ -4,9 +4,14 @@
  */
 
 import { computeMeasurementKpis, MeasurementKpis, QuantityKind } from './measurementStats';
+import { backendHeaders } from './backend-client';
 
 export interface MeasurementData {
+  /** Identifiant du relevé en base (measurement_files) ; absent tant qu'il n'est pas persisté. */
+  id?: string;
   measurements?: any[];
+  /** Renvoyé par le backend : original_rows, valid_measurements, sensor_label… */
+  processing_info?: { original_rows?: number; valid_measurements?: number; sensor_label?: string; [k: string]: unknown };
   /** Calculé côté client (voir measurementStats.ts) à partir des mesures brutes reçues du backend. */
   kpis?: MeasurementKpis;
   /** Clé du capteur (cf. SENSOR_REGISTRY backend). */
@@ -17,6 +22,15 @@ export interface MeasurementData {
   unit?: string;
   /** Nature de la grandeur principale — détermine le calcul du cumul (voir measurementStats.ts). */
   quantity_kind?: QuantityKind;
+  /** Nom du fichier importé (renseigné côté client à l'upload). */
+  file_name?: string;
+  /** Alias libre donné par l'utilisateur (ex. « Départ TGBT — CA 8335 »), prioritaire sur le nom de fichier. */
+  alias?: string;
+}
+
+/** Libellé d'un relevé : alias, sinon nom de fichier, sinon type de capteur. */
+export function measurementLabel(d: MeasurementData, index: number): string {
+  return d.alias?.trim() || d.file_name || d.sensor_type || `Fichier ${index + 1}`;
 }
 
 export interface HierarchyNode {
@@ -44,13 +58,18 @@ export interface EnergyLabelAnalysis {
 const API_URL = import.meta.env.VITE_API_URL;
 
 /**
- * Upload et traite un fichier de mesure (CSV, XLSX, XLS)
+ * Upload et traite un fichier de mesure (CSV, XLSX, XLS).
+ *
+ * Renvoie un relevé par série : un seul en général, plusieurs pour un capteur
+ * personnalisé à `series_col` (fichier « long », ex. export de shelly_cl avec
+ * une ligne par appareil et par horodatage). Chaque série devient un relevé à
+ * part, nommé d'après l'appareil — jamais une courbe qui mélange les appareils.
  */
 export async function uploadMeasurementFile(
   file: File,
   sensorType: string = "",
   sensorConfig?: object,
-): Promise<MeasurementData> {
+): Promise<MeasurementData[]> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("sensor_type", sensorType || "CUSTOM");
@@ -60,6 +79,7 @@ export async function uploadMeasurementFile(
 
   const response = await fetch(`${API_URL}/processing/process-file/measures`, {
     method: "POST",
+    headers: await backendHeaders(),
     body: formData,
   });
 
@@ -76,17 +96,25 @@ export async function uploadMeasurementFile(
     throw new Error(detail);
   }
 
-  const data: MeasurementData = await response.json();
-  try {
-    data.kpis = computeMeasurementKpis(data.measurements ?? [], {
-      unit: data.unit ?? '',
-      metricLabel: data.metric_label ?? 'Valeur',
-      quantityKind: data.quantity_kind ?? 'energy',
-    });
-  } catch (e) {
-    console.warn('Impossible de calculer les statistiques du fichier :', e);
+  const body: MeasurementData & { series?: (MeasurementData & { series_label?: string })[] } = await response.json();
+  // Une série par appareil : nommée d'après lui (alias renommable), le fichier
+  // d'origine reste visible à côté dans la liste des relevés.
+  const parts: MeasurementData[] = body.series
+    ? body.series.map(({ series_label, ...s }) => ({ ...s, alias: series_label }))
+    : [body];
+  for (const data of parts) {
+    data.file_name = file.name;
+    try {
+      data.kpis = computeMeasurementKpis(data.measurements ?? [], {
+        unit: data.unit ?? '',
+        metricLabel: data.metric_label ?? 'Valeur',
+        quantityKind: data.quantity_kind ?? 'energy',
+      });
+    } catch (e) {
+      console.warn('Impossible de calculer les statistiques du fichier :', e);
+    }
   }
-  return data;
+  return parts;
 }
 
 /**
@@ -98,6 +126,7 @@ export async function analyzeEnergyLabel(file: File): Promise<EnergyLabelAnalysi
 
   const response = await fetch(`${API_URL}/processing/process-file/analyze-energy-label`, {
     method: "POST",
+    headers: await backendHeaders(),
     body: formData,
   });
 
@@ -116,9 +145,7 @@ export async function processHierarchy(
 ): Promise<{ hierarchy: HierarchyData; [key: string]: any }> {
   const response = await fetch(`${API_URL}/processing/process-file/process-hierarchy`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: await backendHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       hierarchy: hierarchyData,
     }),

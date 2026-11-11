@@ -1,10 +1,15 @@
-import { useMemo, useState, useEffect } from 'react';
-import { exportMultiSheetXlsx } from '@/lib/excel-utils';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, ReferenceLine,
+  Tooltip, Legend, ReferenceLine, Brush,
 } from 'recharts';
-import { Download, Zap, Calendar, Database, RefreshCw, ChevronDown, X } from 'lucide-react';
+import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
+import { CouleursDonnees } from '@/components/shared/CouleursDonnees';
+import { couleurDonnee, useChartPreferences } from '@/lib/chart-preferences';
+import { Download, Zap, Calendar, Database, RefreshCw, ChevronDown, Info, X } from 'lucide-react';
+import { Portal as TooltipPortal } from '@radix-ui/react-tooltip';
+import { BarreAvancement, laisserAfficher, type Avancement } from './BarreAvancement';
+import { Tooltip as Bulle, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -12,67 +17,69 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useIOT } from './IOTContext';
-import { analyserDonneesShelly, calculerStats } from '@/lib/iot-profil-engine';
+import { analyserDonneesShelly, calculerStats, nettoyerProfil, cleJour, type RapportNettoyage, type NaturePrincipale } from '@/lib/iot-profil-engine';
 import type { ShellyRow } from './shared';
 import { supabase } from '@/lib/supabase';
-import { fetchDisponibles } from '@/lib/iot-supabase-service';
+import { fetchDisponibles, fetchProfilCharge, fetchSiteBilan, type ProfilChargeJour, type SiteBilan } from '@/lib/iot-supabase-service';
+import type { PerimetreAnalyse } from './PerimetreBar';
+import { fetchDeviceRoles } from '@/lib/shelly-device-role-service';
+import {
+  fetchCapteursHoraire, fetchCoherence, fetchEtatsAppareils, fetchPicsMinute, fetchProfilHoraire, fetchRelevesBruts, fetchTemperatureJour, fetchVoiesMinute,
+  type CoherenceCircuit, type EtatAppareil, type LigneCapteur, type LigneHoraire, type PerimetreRapport, type PicMinute, type VoieMinute,
+} from '@/lib/iot-rapport-service';
+import { construireCapteurs, lignesCapteursDepuisFichier } from '@/services/iotRapportCapteurs';
+import {
+  construireAnalyses, lignesHorairesDepuisFichier, preparerReleves, TRANCHES_DEFAUT,
+  type RelevesRapport, type TranchesHoraires,
+} from '@/services/iotRapportAnalyses';
+import { departsImbriques } from '@/lib/iot-circuits';
+import { fetchRegles, fetchSignalements, versionRegles, type RegleQualite, type Signalement } from '@/lib/iot-qualite-service';
+import { fetchAccounts } from '@/lib/shelly-account-service';
+import { fetchDevicePeriodes } from '@/lib/shelly-device-period-service';
+import { useAuth } from '@/context/AuthContext';
+import { construireRapport, etatDuFlux, type EntreeRapport } from '@/services/iotRapport';
+import { exporterRapportExcel } from '@/services/iotRapportExcel';
+import { exporterRapportPdf } from '@/services/iotRapportPdf';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+
+/** Clé de couleur partagée avec Analyse (communs.METRIQUES) quand la donnée est la même. */
+const CLE_COULEUR: Partial<Record<string, string>> = {
+  total: 'kwhTotal', net: 'kwhNet', retour: 'kwhRetourTotal',
+  phaseA: 'kwhA', phaseB: 'kwhB', phaseC: 'kwhC',
+  puissTotal: 'puissKwTotal', puissA: 'puissKwA', puissB: 'puissKwB', puissC: 'puissKwC',
+};
 
 // Format français : remplace . par ,
 const fmtFr = (n: number, digits = 2) => n.toFixed(digits).replace('.', ',');
 
-// ── Transformation shelly_cl_horaire → ShellyRow[] ────────────
-interface HoraireRow {
-  ts_heure: string;
-  site: string;
-  device_id: string;
-  name: string | null;
-  room?: string | null;
-  device_family: string | null;
-  wh_conso: number | null;
-  wh_inj: number | null;
-  power_w_moy: number | null;
-  p_a_moy: number | null;
-  p_b_moy: number | null;
-  p_c_moy: number | null;
-}
-
-function horaireToShellyRows(rows: HoraireRow[]): ShellyRow[] {
-  // Groupement par (date, device_id) pour conserver l'identité appareil
-  const grouped = new Map<string, HoraireRow[]>();
-  for (const r of rows) {
-    const dateKey = r.ts_heure.substring(0, 10);
-    const key = `${dateKey}|${r.device_id}`;
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key)!.push(r);
-  }
-
-  const result: ShellyRow[] = [];
-  for (const [key, hrs] of grouped.entries()) {
-    const dateKey = key.split('|')[0];
-    const date = new Date(dateKey + 'T00:00:00');
+// ── Transformation fn_profil_charge → ShellyRow[] (un appareil-jour) ──
+function profilJourToShellyRows(
+  rows: ProfilChargeJour[],
+  roomByDevice: Map<string, string>,
+  heuresParJour: number,
+  imbriques: Set<string> = new Set(),
+): ShellyRow[] {
+  return rows.map(r => {
+    const date = new Date(r.jour + 'T00:00:00');
     const dow = date.getDay();
     const month = date.getMonth();
 
-    // Identité appareil (commune à toutes les heures du même device-jour)
-    const head = hrs[0];
-    const nomAppareil = head.name ?? head.device_id;
-    const deviceLocation = head.site ?? undefined;
-    const deviceRoom = head.room ?? undefined;
-
-    const whTotal = hrs.reduce((s, r) => s + (r.wh_conso ?? (r.power_w_moy ?? 0)), 0);
-    const whInj = hrs.reduce((s, r) => s + (r.wh_inj ?? 0), 0);
-    const whA = hrs.reduce((s, r) => s + Math.max(0, r.p_a_moy ?? 0), 0);
-    const whB = hrs.reduce((s, r) => s + Math.max(0, r.p_b_moy ?? 0), 0);
-    const whC = hrs.reduce((s, r) => s + Math.max(0, r.p_c_moy ?? 0), 0);
-
+    const whTotal = r.wh_conso ?? 0;
+    const whInj = r.wh_inj ?? 0;
+    const whA = r.wh_a ?? 0;
+    const whB = r.wh_b ?? 0;
+    const whC = r.wh_c ?? 0;
     const kwhTotal = whTotal / 1000;
     const kwhInj = whInj / 1000;
     const kwhA = whA / 1000;
     const kwhB = whB / 1000;
     const kwhC = whC / 1000;
     const kwhNet = Math.max(0, kwhTotal - kwhInj);
+    // Puissance moyenne sur les heures analysées (plage De/À), pas sur 24 h
+    const h = heuresParJour;
 
-    result.push({
+    return {
       date,
       whPhaseA: whA, whPhaseB: whB, whPhaseC: whC, whTotal,
       whRetourA: 0, whRetourB: 0, whRetourC: 0, whRetourTotal: whInj,
@@ -80,8 +87,8 @@ function horaireToShellyRows(rows: HoraireRow[]): ShellyRow[] {
       kwhRetourA: 0, kwhRetourB: 0, kwhRetourC: 0, kwhRetourTotal: kwhInj,
       kwhCumA: 0, kwhCumB: 0, kwhCumC: 0, kwhCumTotal: kwhTotal,
       kwhCumRetourA: 0, kwhCumRetourB: 0, kwhCumRetourC: 0, kwhCumRetourTotal: 0,
-      puissKwA: kwhA / 24, puissKwB: kwhB / 24, puissKwC: kwhC / 24,
-      puissKwTotal: kwhTotal / 24,
+      puissKwA: kwhA / h, puissKwB: kwhB / h, puissKwC: kwhC / h,
+      puissKwTotal: kwhTotal / h,
       puissKwRetourA: 0, puissKwRetourB: 0, puissKwRetourC: 0, puissKwRetourTotal: 0,
       kwhNet,
       jour: date.toLocaleDateString('fr-FR', { weekday: 'long' }),
@@ -91,16 +98,203 @@ function horaireToShellyRows(rows: HoraireRow[]): ShellyRow[] {
       periodeclimatique: [11, 0, 1, 2].includes(month) ? 'Période de fraîcheur' : 'Période chaude',
       saison: [6, 7, 8, 9].includes(month) ? 'Hivernage' : 'Sèche',
       periode: 'Journée',
+      heuresEnsoleillement: 'Journée',
+      heuresTravail: 'Journée',
       profil: kwhInj > kwhTotal ? 'SOUTIRAGE' : 'CHARGE',
       isWeekend: [0, 6].includes(dow),
       isJourFerie: false,
       jourSemaine: date.toLocaleDateString('fr-FR', { weekday: 'short' }),
-      nomAppareil,
-      deviceLocation,
-      deviceRoom,
-    });
-  }
-  return result.sort((a, b) => a.date.getTime() - b.date.getTime());
+      nomAppareil: r.name ?? r.device_id,
+      deviceLocation: r.site ?? undefined,
+      deviceRoom: roomByDevice.get(r.device_id),
+      deviceId: r.device_id,
+      deviceFamily: r.device_family ?? undefined,
+      role: r.role,
+      departImbrique: imbriques.has(r.device_id),
+      nbHeures: r.nb_heures,
+      quarantaine: r.nb_h_exclues > 0 ? {
+        kwh: (r.wh_conso_exclu ?? 0) / 1000, kwhRetour: (r.wh_inj_exclu ?? 0) / 1000,
+        kwhA: (r.wh_a_exclu ?? 0) / 1000, kwhB: (r.wh_b_exclu ?? 0) / 1000, kwhC: (r.wh_c_exclu ?? 0) / 1000,
+        heures: r.nb_h_exclues, regles: r.regles_exclues ?? [],
+      } : undefined,
+    };
+  });
+}
+
+/** Heures de la plage De/À appliquée chaque jour (22 → 6 passe minuit). */
+function heuresDansPlage(debut: number, fin: number): number {
+  return debut <= fin ? fin - debut + 1 : 24 - debut + fin + 1;
+}
+
+// ── Bandeau Nettoyage : ce qui est écarté, et pourquoi ────────
+// Les règles et leurs textes viennent de la base (qualite_regles) ; ce
+// bandeau ne fait qu'afficher les signalements de fn_qualite et les choix.
+type OptsNettoyage = { completude: boolean; masquerZeros: boolean; quarantaine: boolean };
+const LIGNES_PAR_PAGE = 200;
+const MAX_RELEVES = 150_000;
+
+/** Les six réglages des tranches horaires du rapport, et ce que dit la bulle de chacun. */
+const REGLAGES_TRANCHES: { libelle: string; cle: keyof TranchesHoraires; bulle: string }[] = [
+  { libelle: 'Jour : de', cle: 'jourDebut', bulle: "Heure où commence la journée. Sert à séparer l'énergie consommée le jour de celle consommée la nuit. Conseillé : 7 h." },
+  { libelle: 'Jour : à', cle: 'jourFin', bulle: "Heure où finit la journée, non comprise. Tout ce qui est en dehors du jour compte comme la nuit. Conseillé : 19 h." },
+  { libelle: 'Soirée : de', cle: 'soirDebut', bulle: "Début de la période à surveiller à part, souvent quand la consommation monte. Sert à voir la part d'énergie consommée sur ces quelques heures. Conseillé : 19 h." },
+  { libelle: 'Soirée : à', cle: 'soirFin', bulle: "Fin de la période à surveiller, non comprise. La soirée reste comptée dans le jour ou la nuit. Si elle couvre toute la nuit, elle n'apprend rien de plus. Conseillé : 23 h." },
+  { libelle: 'Conso. de fond : de', cle: 'talonDebut', bulle: "Début du moment où presque tout est éteint. Ce qui consomme encore à ce moment-là tourne en permanence : veille, frigo, éclairage laissé allumé. Conseillé : 0 h." },
+  { libelle: 'Conso. de fond : à', cle: 'talonFin', bulle: "Fin de ce moment calme, non comprise. Choisissez une heure avant la reprise d'activité. Conseillé : 3 h." },
+];
+const jjmm = (cle: string) => `${cle.slice(8, 10)}/${cle.slice(5, 7)}`;
+const fmtPlage = (sg: Signalement) => {
+  const d = new Date(sg.debut);
+  const date = d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+  if (sg.niveau === 'jour') return date;
+  if (sg.niveau === 'appareil') return `${sg.nom ?? sg.device_id} muet depuis le ${date} (${fmtFr(sg.valeur ?? 0, 0)} j)`;
+  const h = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  return `${date} ${h}${sg.nb_heures && sg.nb_heures > 1 ? ` (${sg.nb_heures} h)` : ''}`;
+};
+// Ce que représente la série principale, et comment la consommation est obtenue (site_bilan)
+const LIBELLE_NATURE: Record<NaturePrincipale, string> = {
+  consommation: 'consommation du site',
+  reseau: 'énergie soutirée au réseau (pas la consommation)',
+  departs: 'somme des départs mesurés (partielle)',
+  lignes: 'somme des lignes du fichier',
+  aucune: 'rien de mesuré',
+};
+// Titre court des cartes et de la courbe principale
+const TITRE_NATURE: Record<NaturePrincipale, string> = {
+  consommation: 'Consommation',
+  reseau: 'Énergie réseau soutirée',
+  departs: 'Départs mesurés',
+  lignes: 'Consommation totale',
+  aucune: 'Énergie mesurée (voir détail)',
+};
+const LIBELLE_METHODE: Record<string, string> = {
+  arrivee: "compteur d'arrivée",
+  charge_M3: 'compteur de charge M3',
+  departs: 'somme des départs',
+  indeterminee: 'indéterminée',
+  non_declaree: 'non déclarée',
+};
+const COULEUR_ACTION: Record<string, string> = {
+  quarantaine: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+  signaler: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+  doublon: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
+};
+
+function BandeauNettoyage({ rapport, options, onChange, nbJours, nbJoursRetenus, heuresParJour, version, avecQualite }: {
+  rapport: RapportNettoyage;
+  options: OptsNettoyage;
+  onChange: (o: OptsNettoyage) => void;
+  nbJours: number;
+  nbJoursRetenus: number;
+  heuresParJour: number | null;
+  version: string | null;
+  avecQualite: boolean;
+}) {
+  const [ouvert, setOuvert] = useState(false);
+  const exclus = rapport.jours.filter(j => j.exclu);
+
+  const resume = [
+    `${nbJours} jours · ${nbJoursRetenus} retenus pour la moyenne`,
+    exclus.length > 0 && `${exclus.length} écarté${exclus.length > 1 ? 's' : ''}`,
+    rapport.joursSansDonnee.length > 0 && `${rapport.joursSansDonnee.length} sans donnée`,
+    rapport.kwhQuarantaine > 0 && `${fmtFr(rapport.kwhQuarantaine, 2)} kWh en quarantaine`,
+    rapport.horsTotal.length > 0 && `${rapport.horsTotal.length} appareils hors de la série principale`,
+    rapport.groupes.length > 0 && `${rapport.groupes.length} type${rapport.groupes.length > 1 ? 's' : ''} de signalement`,
+    rapport.appareilsMasques.length > 0 && `${rapport.appareilsMasques.length} appareils à 0 masqués`,
+  ].filter(Boolean).join(' · ');
+
+  const Case = ({ k, label, aide }: { k: keyof OptsNettoyage; label: string; aide: string }) => (
+    <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer" title={aide}>
+      <input type="checkbox" className="mt-0.5 accent-violet-500" checked={options[k]}
+        onChange={e => onChange({ ...options, [k]: e.target.checked })} />
+      <span>{label}</span>
+    </label>
+  );
+
+  return (
+    <div className="bg-white/5 rounded-xl border border-white/10 p-3 space-y-2">
+      <button onClick={() => setOuvert(o => !o)} className="w-full flex items-center justify-between gap-3 text-left">
+        <span className="text-sm text-slate-300">
+          <span className="text-white font-medium">Nettoyage</span>
+          <span className="text-slate-400"> — {resume}</span>
+        </span>
+        <ChevronDown className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${ouvert ? 'rotate-180' : ''}`} />
+      </button>
+
+      {ouvert && (
+        <div className="space-y-3 pt-2 border-t border-white/10">
+          <p className="text-xs text-slate-500">
+            Les données en base ne sont jamais modifiées et rien n'est extrapolé : les contrôles choisissent
+            seulement ce qui entre dans les calculs.
+            {version && <> Règles de qualité en vigueur au {new Date(version).toLocaleDateString('fr-FR')} (Paramètres → Qualité).</>}
+          </p>
+          {!avecQualite && (
+            <p className="text-xs text-amber-300/80">
+              Fichier importé : les contrôles de qualité du moteur ne s'appliquent pas encore aux fichiers.
+            </p>
+          )}
+          <div className="grid md:grid-cols-3 gap-3">
+            <Case k="quarantaine" label="Retirer l'énergie des heures en quarantaine"
+              aide="Heures écartées par une règle d'action « quarantaine » (ex. capteur hors de sa période d'affectation)." />
+            <Case k="completude" label="Écarter les journées incomplètes ou en cours de la moyenne, du min et du max (elles restent dans le total)"
+              aide="Règle « Journée incomplète » : une heure de coupure compte comme présente." />
+            <Case k="masquerZeros" label="Masquer du détail les appareils à 0 sur toute la période"
+              aide="Un départ à 0 = appareil éteint, pas une anomalie. Sans effet sur les calculs." />
+          </div>
+
+          <ul className="text-xs text-slate-400 space-y-1 list-disc pl-4">
+            {heuresParJour != null && options.completude && (
+              <li>Complétude jugée sur {heuresParJour} h/jour, d'après : {rapport.referenceCompletude.join(', ')}.</li>
+            )}
+            {exclus.map(j => (
+              <li key={`x${j.cle}`}><span className="text-amber-300">{jjmm(j.cle)}</span> écarté — {j.exclu}</li>
+            ))}
+            {rapport.joursSansDonnee.length > 0 && (
+              <li>Aucune donnée : {rapport.joursSansDonnee.map(jjmm).join(', ')}.</li>
+            )}
+            {rapport.sites.map(s => (
+              <li key={`s${s.site}`}>
+                <span className="text-slate-300">{s.site}</span> — {LIBELLE_NATURE[s.nature]}
+                {s.nature === 'consommation' ? ` (${LIBELLE_METHODE[s.methode]})` : s.raison ? ` : ${s.raison}` : ''}
+                {s.nonMesure != null && `. Non mesuré (consommation − départs) : ${fmtFr(s.nonMesure, 2)} kWh`}.
+              </li>
+            ))}
+            {rapport.horsTotal.length > 0 && (
+              <li>Hors de la série principale (comptés par un autre compteur, ou d'un autre rôle) : {rapport.horsTotal.join(', ')}.</li>
+            )}
+            {rapport.appareilsMasques.length > 0 && (
+              <li>Masqués (0 kWh sur la période) : {rapport.appareilsMasques.join(', ')}.</li>
+            )}
+          </ul>
+
+          {rapport.groupes.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-slate-300">Signalements du moteur de qualité</p>
+              {rapport.groupes.map(g => (
+                <div key={g.regle} className="rounded-lg border border-white/10 bg-white/[0.02] p-2.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-white font-medium">{g.libelle}</span>
+                    <span className={`px-1.5 py-0.5 rounded border text-[0.625rem] ${COULEUR_ACTION[g.action] ?? COULEUR_ACTION.signaler}`}>{g.action}</span>
+                    <span className="text-slate-400">
+                      {g.plages.length} plage{g.plages.length > 1 ? 's' : ''}
+                      {g.heures > 0 && ` · ${g.heures} h`}
+                      {g.kwh > 0.005 && ` · ${fmtFr(g.kwh, 2)} kWh`}
+                      {` · ${g.appareils.slice(0, 4).join(', ')}${g.appareils.length > 4 ? ` +${g.appareils.length - 4}` : ''}`}
+                    </span>
+                  </div>
+                  <p className="text-slate-500 mt-1">{g.explication}</p>
+                  <p className="text-slate-400 mt-1">
+                    {g.plages.slice(0, 8).map(fmtPlage).join(' · ')}
+                    {g.plages.length > 8 && ` · … +${g.plages.length - 8}`}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 type ViewMode = 'journalier' | 'mensuel' | 'phases';
@@ -124,7 +318,14 @@ function KPICard({ label, value, unit, sub, color = 'blue' }: {
   );
 }
 
-const SITES = ['Ma Maison', 'Académie CER2E'];
+// Secours si la lecture des comptes Shelly échoue ; sinon les sites viennent de shelly_accounts
+const SITES_SECOURS = ['Académie CER2E', 'Donsin', 'Ma Maison'];
+
+// Familles qui ne mesurent pas d'énergie (station météo, H&T, portes,
+// boutons…) : exclues de la courbe de charge, sinon leurs journées à 0 kWh
+// faussent moyenne, minimum et médiane. Le classement type → famille se
+// règle dans Paramètres → Types d'appareils.
+const FAMILLES_SANS_ENERGIE = ['CAPTEUR_ENV', 'ETAT'];
 
 interface TooltipEntry { name: string; value: number | string; unit?: string; color?: string; fill?: string }
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: TooltipEntry[]; label?: string }) {
@@ -133,8 +334,12 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
     <div style={{ backgroundColor: '#1a1d2e', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: '8px 12px', minWidth: 190 }}>
       <p style={{ color: '#e2e8f0', marginBottom: 6, fontSize: 12, fontWeight: 600 }}>{label}</p>
       {payload.map((entry) => (
-        <p key={entry.name} style={{ color: entry.color || entry.fill || '#94a3b8', fontSize: 12, margin: '3px 0', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-          <span>{entry.name}</span>
+        // Texte clair + pastille de couleur : le texte coloré était illisible avec les palettes foncées.
+        <p key={entry.name} style={{ color: '#e2e8f0', fontSize: 12, margin: '3px 0', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 9999, flexShrink: 0, backgroundColor: entry.color || entry.fill || '#94a3b8', boxShadow: '0 0 0 1px rgba(255,255,255,0.5)' }} />
+            {entry.name}
+          </span>
           <span style={{ fontWeight: 700 }}>{entry.value}{entry.unit ? ` ${entry.unit}` : ''}</span>
         </p>
       ))}
@@ -142,15 +347,37 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
   );
 }
 
-export function ProfilChargeTab() {
+/**
+ * @param perimetre  fourni par l'onglet Analyse : la courbe se charge sur CE
+ *   périmètre (même site, appareils, période, plage horaire que les autres
+ *   vues) et n'affiche plus son propre chargeur.
+ * @param lignes     lignes d'un fichier importé dans Analyse (sinon le contexte).
+ */
+export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
+  perimetre?: PerimetreAnalyse | null;
+  lignes?: ShellyRow[];
+  /** Incrémenté par le bouton « Rapport » de la barre d'Analyse : ouvre la fenêtre du rapport. */
+  demandeRapport?: number;
+} = {}) {
   const { state } = useIOT();
-  const { shellyRows: csvRows } = state;
+  const csvRows = lignes ?? state.shellyRows;
 
   // ── Mode source ───────────────────────────────────────────────
-  const [sourceMode, setSourceMode] = useState<'csv' | 'supabase'>('csv');
+  // Avec un périmètre, dès le premier rendu : sinon celui-ci traiterait
+  // state.shellyRows (relevés à la minute) le temps que l'effet s'exécute
+  const [sourceMode, setSourceMode] = useState<'csv' | 'supabase'>(perimetre ? 'supabase' : 'csv');
   const [supabaseRows, setSupabaseRows] = useState<ShellyRow[]>([]);
   // Filtres multi-sélection
-  const [sbSelectedSites, setSbSelectedSites] = useState<string[]>(['Académie CER2E']);
+  const [sbSelectedSites, setSbSelectedSites] = useState<string[]>(['Ma Maison']);
+  const [sbSites, setSbSites] = useState<string[]>(SITES_SECOURS);
+  useEffect(() => {
+    fetchAccounts()
+      .then(accounts => {
+        const sites = Array.from(new Set(accounts.map(a => a.site).filter(Boolean))).sort();
+        if (sites.length > 0) setSbSites(sites);
+      })
+      .catch(() => { /* liste de secours conservée */ });
+  }, []);
   const [sbSelectedRooms, setSbSelectedRooms] = useState<string[]>([]);
   const [sbSelectedDeviceIds, setSbSelectedDeviceIds] = useState<string[]>([]);
   // Catalogues disponibles (chargés depuis Supabase)
@@ -163,6 +390,16 @@ export function ProfilChargeTab() {
   const [sbDateFin, setSbDateFin] = useState(() => new Date().toISOString().substring(0, 10));
   const [sbHeureDebut, setSbHeureDebut] = useState(0);
   const [sbHeureFin, setSbHeureFin] = useState(23);
+  // Paramètres du DERNIER chargement : le nettoyage s'y réfère, pas aux
+  // sélecteurs, qu'on peut avoir modifiés depuis sans recharger
+  const [chargement, setChargement] = useState<{
+    debut: string; fin: string; heureDebut: number; heureFin: number; heures: number;
+  } | null>(null);
+  // Qualité : signalements et règles du dernier chargement
+  const [signalements, setSignalements] = useState<Signalement[]>([]);
+  const [regles, setRegles] = useState<RegleQualite[]>([]);
+  // Méthode de consommation de chaque site (site_bilan)
+  const [sitesBilan, setSitesBilan] = useState<SiteBilan[]>([]);
   const [sbLoading, setSbLoading] = useState(false);
   const [sbError, setSbError] = useState<string | null>(null);
 
@@ -191,7 +428,7 @@ export function ProfilChargeTab() {
     }
 
     const devices = allDevices
-      .filter(d => sites.includes(d.site))
+      .filter(d => sites.includes(d.site) && !FAMILLES_SANS_ENERGIE.includes(d.device_family))
       .map(d => ({ ...d, room: roomByDevice.get(d.device_id) ?? null }))
       .sort((a, b) => a.site.localeCompare(b.site) || a.name.localeCompare(b.name));
 
@@ -237,6 +474,7 @@ export function ProfilChargeTab() {
     setSbLoading(true);
     setSbError(null);
     try {
+      if (sbDateFin < sbDateDebut) { setSbError('La date de fin précède la date de début.'); setSbLoading(false); return; }
       // Résoudre les device_ids : appareils sélectionnés > pièces sélectionnées > tous
       let deviceIds: string[] | undefined;
       if (sbSelectedDeviceIds.length > 0) {
@@ -248,36 +486,11 @@ export function ProfilChargeTab() {
         if (deviceIds.length === 0) { setSbError('Aucun appareil dans les pièces sélectionnées.'); setSbLoading(false); return; }
       }
 
-      let query = supabase
-        .from('shelly_cl_horaire')
-        .select('ts_heure,site,device_id,name,device_family,wh_conso,wh_inj,power_w_moy,p_a_moy,p_b_moy,p_c_moy')
-        .in('site', sbSelectedSites)
-        .gte('ts_heure', `${sbDateDebut}T${String(sbHeureDebut).padStart(2, '0')}:00:00`)
-        .lte('ts_heure', `${sbDateFin}T${String(sbHeureFin).padStart(2, '0')}:59:59`)
-        .order('ts_heure', { ascending: true });
-      if (deviceIds) query = query.in('device_id', deviceIds);
-
-      // Mapping device_id → room depuis shelly_cl
-      let roomQuery = supabase.from('shelly_cl').select('device_id,room')
-        .in('site', sbSelectedSites).not('room', 'is', null).limit(5000);
-      if (deviceIds) roomQuery = roomQuery.in('device_id', deviceIds);
-
-      const [{ data, error }, { data: roomData }] = await Promise.all([query, roomQuery]);
-      if (error) throw error;
-
-      const roomMap = new Map<string, string>();
-      for (const r of roomData ?? []) {
-        if (r.room && !roomMap.has(r.device_id)) roomMap.set(r.device_id, r.room);
-      }
-
-      const enriched = ((data ?? []) as HoraireRow[]).map(r => ({
-        ...r,
-        room: roomMap.get(r.device_id) ?? null,
-      }));
-
-      const rows = horaireToShellyRows(enriched);
-      setSupabaseRows(rows);
-      if (rows.length === 0) setSbError('Aucune donnée pour cette sélection.');
+      await chargerPerimetre({
+        dateDebut: sbDateDebut, dateFin: sbDateFin,
+        heureDebut: sbHeureDebut, heureFin: sbHeureFin,
+        sites: sbSelectedSites, deviceIds,
+      });
     } catch (e) {
       setSbError(e instanceof Error ? e.message : 'Erreur inconnue');
     } finally {
@@ -285,7 +498,63 @@ export function ProfilChargeTab() {
     }
   };
 
+  // Chargement d'un périmètre (depuis le panneau ci-dessous, ou imposé par Analyse)
+  const chargerPerimetre = async (perimetre: {
+    dateDebut: string; dateFin: string; heureDebut: number; heureFin: number; sites: string[]; deviceIds?: string[];
+  }) => {
+    // Agrégé côté serveur et lu par pages : toute la période, sans troncature.
+    // Les familles sans énergie (shelly_familles) sont écartées par la fonction.
+    // Qualité : signalements du moteur fn_qualite sur le même périmètre
+    const [data, sig, rg, sb, roles] = await Promise.all([
+      fetchProfilCharge(perimetre),
+      fetchSignalements(perimetre),
+      fetchRegles(),
+      fetchSiteBilan(),
+      fetchDeviceRoles(),
+    ]);
+    setSignalements(sig);
+    setRegles(rg);
+    setSitesBilan(sb);
+
+    // Pièces : déjà connues par la liste des appareils (loadDevices)
+    const roomMap = new Map(sbDevices.filter(d => d.room).map(d => [d.device_id, d.room as string]));
+    const heures = heuresDansPlage(perimetre.heureDebut, perimetre.heureFin);
+    const rows = profilJourToShellyRows(data, roomMap, heures, departsImbriques(roles));
+    setChargement({ debut: perimetre.dateDebut, fin: perimetre.dateFin, heureDebut: perimetre.heureDebut, heureFin: perimetre.heureFin, heures });
+    setSupabaseRows(rows);
+    if (rows.length === 0) setSbError('Aucune donnée pour cette sélection.');
+  };
+
+  // Périmètre imposé par l'onglet Analyse : un seul chargement pour toutes les vues
+  useEffect(() => {
+    if (!perimetre) return;
+    setSourceMode('supabase');
+    setSbLoading(true);
+    setSbError(null);
+    // « Tous les sites » : la vraie liste, pas sbSites qui vaut encore la liste
+    // de secours quand ce chargement part au montage (retour sur l'onglet)
+    const sites = perimetre.sites.length > 0
+      ? Promise.resolve(perimetre.sites)
+      : fetchAccounts()
+        .then(accounts => {
+          const liste = Array.from(new Set(accounts.map(a => a.site).filter(Boolean))).sort();
+          return liste.length > 0 ? liste : sbSites;
+        })
+        .catch(() => sbSites);
+    sites
+      .then(liste => chargerPerimetre({
+        dateDebut: perimetre.dateDebut, dateFin: perimetre.dateFin,
+        heureDebut: perimetre.heureDebut, heureFin: perimetre.heureFin,
+        sites: liste,
+        deviceIds: perimetre.deviceIds.length > 0 ? perimetre.deviceIds : undefined,
+      }))
+      .catch(e => setSbError(e instanceof Error ? e.message : 'Erreur inconnue'))
+      .finally(() => setSbLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perimetre?.version]);
+
   const [viewMode, setViewMode] = useState<ViewMode>('journalier');
+  const [pageTableau, setPageTableau] = useState(0);
   const [chartType, setChartType] = useState<ChartType>('aire');
   const [filterType, setFilterType] = useState<'tous' | 'ouvrés' | 'weekends' | 'fériés'>('tous');
 
@@ -300,19 +569,8 @@ export function ProfilChargeTab() {
   const isHidden = (key: string) => hiddenSeries.has(key);
 
   // Sélecteur multi-métriques affichées dans les graphiques journalier/mensuel
-  type MetricKey = 'total' | 'net' | 'retour' | 'phaseA' | 'phaseB' | 'phaseC' | 'puissTotal' | 'puissA' | 'puissB' | 'puissC';
-  const METRICS: { key: MetricKey; label: string; color: string; unit: string; mensuelKey?: string }[] = [
-    { key: 'total', label: 'Consommation totale', color: '#3b82f6', unit: 'kWh', mensuelKey: 'kwhTotal' },
-    { key: 'net', label: 'Énergie nette', color: '#06b6d4', unit: 'kWh', mensuelKey: 'kwhNet' },
-    { key: 'retour', label: 'Énergie injectée (retour)', color: '#a78bfa', unit: 'kWh', mensuelKey: 'kwhRetour' },
-    { key: 'phaseA', label: 'Phase A — Consommation', color: '#a855f7', unit: 'kWh' },
-    { key: 'phaseB', label: 'Phase B — Consommation', color: '#f59e0b', unit: 'kWh' },
-    { key: 'phaseC', label: 'Phase C — Consommation', color: '#ec4899', unit: 'kWh' },
-    { key: 'puissTotal', label: 'Puissance totale', color: '#10b981', unit: 'kW' },
-    { key: 'puissA', label: 'Puissance — Phase A', color: '#34d399', unit: 'kW' },
-    { key: 'puissB', label: 'Puissance — Phase B', color: '#fbbf24', unit: 'kW' },
-    { key: 'puissC', label: 'Puissance — Phase C', color: '#f87171', unit: 'kW' },
-  ];
+  type MetricKey = 'total' | 'net' | 'retour' | 'phaseA' | 'phaseB' | 'phaseC' | 'puissTotal' | 'puissA' | 'puissB' | 'puissC'
+    | 'pv' | 'groupe' | 'reseau' | 'departs';
   const [selectedMetrics, setSelectedMetrics] = useState<Set<MetricKey>>(new Set(['total', 'net']));
   const toggleMetric = (k: MetricKey) =>
     setSelectedMetrics(prev => {
@@ -332,23 +590,90 @@ export function ProfilChargeTab() {
     }
   }, [shellyRows, filterType]);
 
-  const analyse = useMemo(() => analyserDonneesShelly(filteredRows), [filteredRows]);
-  // const facturation = useMemo(
-  //   () => calculerFacturationShelly(filteredRows, paramsTarif),
-  //   [filteredRows, paramsTarif]
-  // );
+  // Nettoyage (la base n'est jamais modifiée) : chaque contrôle se désactive
+  const [optsNettoyage, setOptsNettoyage] = useState<OptsNettoyage>({ completude: true, masquerZeros: true, quarantaine: true });
+  const enSupabase = sourceMode === 'supabase' && chargement !== null;
+  // Fichier importé : pas encore de signalements (étape 4, table de transit)
+  const nettoyage = useMemo(() => nettoyerProfil(
+    filteredRows,
+    enSupabase ? signalements : [],
+    regles,
+    {
+      ...optsNettoyage,
+      sitesBilan: enSupabase ? sitesBilan : undefined,
+      periode: enSupabase ? { debut: chargement.debut, fin: chargement.fin } : undefined,
+    },
+  ), [filteredRows, signalements, regles, sitesBilan, optsNettoyage, enSupabase, chargement]);
+
+  // Page ramenée dans les limites quand les filtres réduisent le tableau
+  const nbPagesTableau = Math.ceil(nettoyage.rowsAffichage.length / LIGNES_PAR_PAGE);
+  const pageCourante = Math.min(pageTableau, Math.max(0, nbPagesTableau - 1));
+  const lignesTableau = nettoyage.rowsAffichage.slice(pageCourante * LIGNES_PAR_PAGE, (pageCourante + 1) * LIGNES_PAR_PAGE);
+
+  // Bilan par rôle (données Supabase uniquement) : flux totaux, non mesuré, méthodes
+  const nettoyageFlux = useMemo(() => {
+    if (!nettoyage.fluxTotal) return null;
+    const nonMesures = nettoyage.sites.map(s => s.nonMesure).filter((v): v is number => v != null);
+    return {
+      nature: nettoyage.nature,
+      flux: nettoyage.fluxTotal,
+      nonMesure: nonMesures.length ? nonMesures.reduce((a, b) => a + b, 0) : null,
+      methodes: nettoyage.sites.map(s => `${s.site} : ${s.nature === 'consommation' ? LIBELLE_METHODE[s.methode] : LIBELLE_NATURE[s.nature]}`).join(' · '),
+      raisons: nettoyage.sites.filter(s => s.raison).map(s => `${s.site} : ${s.raison}`).join(' · '),
+    };
+  }, [nettoyage]);
+
+  // Bilan par rôle (données Supabase) : la série principale est nommée pour ce
+  // qu'elle est (consommation, énergie réseau, départs) ; « nette » n'a plus de
+  // sens à l'échelle du site et les flux par rôle deviennent des courbes à part.
+  const bilan = nettoyageFlux;
+  const prefsGraph = useChartPreferences();
+  const METRICS_DEFAUT: { key: MetricKey; label: string; color: string; unit: string; mensuelKey?: string }[] = [
+    { key: 'total', label: bilan ? TITRE_NATURE[bilan.nature] : 'Consommation totale', color: '#3b82f6', unit: 'kWh', mensuelKey: 'kwhTotal' },
+    ...(bilan ? [] : [{ key: 'net' as MetricKey, label: 'Énergie nette', color: '#06b6d4', unit: 'kWh', mensuelKey: 'kwhNet' }]),
+    // Injection : seulement s'il y a un compteur réseau pour la mesurer
+    ...(!bilan || bilan.flux.reseauInjecte != null
+      ? [{ key: 'retour' as MetricKey, label: bilan ? 'Injection au réseau' : 'Énergie injectée (retour)', color: '#a78bfa', unit: 'kWh', mensuelKey: 'kwhRetour' }]
+      : []),
+    ...(bilan?.flux.pv != null ? [{ key: 'pv' as MetricKey, label: 'Production PV', color: '#facc15', unit: 'kWh' }] : []),
+    ...(bilan?.flux.groupe != null ? [{ key: 'groupe' as MetricKey, label: 'Groupe électrogène', color: '#f97316', unit: 'kWh' }] : []),
+    ...(bilan && bilan.nature !== 'reseau' && bilan.flux.reseauSoutire != null ? [{ key: 'reseau' as MetricKey, label: 'Soutirage réseau', color: '#64748b', unit: 'kWh' }] : []),
+    ...(bilan && bilan.nature !== 'departs' && bilan.flux.departs != null ? [{ key: 'departs' as MetricKey, label: 'Départs mesurés', color: '#22c55e', unit: 'kWh' }] : []),
+    { key: 'phaseA', label: 'Phase A — Consommation', color: '#a855f7', unit: 'kWh' },
+    { key: 'phaseB', label: 'Phase B — Consommation', color: '#f59e0b', unit: 'kWh' },
+    { key: 'phaseC', label: 'Phase C — Consommation', color: '#ec4899', unit: 'kWh' },
+    { key: 'puissTotal', label: 'Puissance totale', color: '#10b981', unit: 'kW' },
+    { key: 'puissA', label: 'Puissance — Phase A', color: '#34d399', unit: 'kW' },
+    { key: 'puissB', label: 'Puissance — Phase B', color: '#fbbf24', unit: 'kW' },
+    { key: 'puissC', label: 'Puissance — Phase C', color: '#f87171', unit: 'kW' },
+  ];
+  // Couleur choisie par la personne (sélecteur « Couleurs »). Mêmes clés que
+  // dans Analyse quand la donnée est la même, pour qu'elle garde sa couleur.
+  const METRICS = METRICS_DEFAUT.map(m => ({
+    ...m, color: couleurDonnee(prefsGraph, CLE_COULEUR[m.key] ?? `courbe:${m.key}`, m.color),
+  }));
+
+  const analyse = useMemo(
+    () => analyserDonneesShelly(nettoyage.rowsCalcul, nettoyage.joursExclus, enSupabase ? chargement.heures : 24),
+    [nettoyage, enSupabase, chargement]
+  );
+  const ctxFlux = { lignes: filteredRows, nettoyage, nbJours: analyse.nbJours, quarantaine: optsNettoyage.quarantaine };
   const statsKwh = useMemo(
-    () => calculerStats(filteredRows.map(r => r.kwhNet)),
-    [filteredRows]
+    () => calculerStats(analyse.parJour.filter(j => !j.exclu).map(j => j.kwhNet)),
+    [analyse]
   );
 
-  // Données graphique journalier
+  // Données graphique journalier : un point par jour, appareils additionnés
   const chartDataJournalier = useMemo(() =>
-    filteredRows.map(r => ({
-      date: (r.date instanceof Date ? r.date : new Date(r.date as string)).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
+    analyse.parJour.map(r => ({
+      date: r.date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
       total: +((r.kwhTotal ?? 0).toFixed(2)),
       net: +((r.kwhNet ?? 0).toFixed(2)),
       retour: +((r.kwhRetourTotal ?? 0).toFixed(2)),
+      pv: r.flux?.pv != null ? +r.flux.pv.toFixed(2) : null,
+      groupe: r.flux?.groupe != null ? +r.flux.groupe.toFixed(2) : null,
+      reseau: r.flux?.reseauSoutire != null ? +r.flux.reseauSoutire.toFixed(2) : null,
+      departs: r.flux?.departs != null ? +r.flux.departs.toFixed(2) : null,
       phaseA: +((r.kwhA ?? 0).toFixed(2)),
       phaseB: +((r.kwhB ?? 0).toFixed(2)),
       phaseC: +((r.kwhC ?? 0).toFixed(2)),
@@ -359,7 +684,7 @@ export function ProfilChargeTab() {
       isWeekend: r.isWeekend,
       isFerie: r.isJourFerie,
     })),
-    [filteredRows]
+    [analyse]
   );
 
   // Données graphique mensuel
@@ -374,47 +699,300 @@ export function ProfilChargeTab() {
     [analyse]
   );
 
-  // Export Excel
-  const exportExcel = async () => {
-    await exportMultiSheetXlsx(
-      [
-        {
-          name: 'PROFIL CHARGE',
-          data: filteredRows.map(r => ({
-            'Date': (r.date instanceof Date ? r.date : new Date(r.date as string)).toLocaleDateString('fr-FR'),
-            'Jour': r.jour,
-            'Mois': r.mois,
-            'Année': r.annee,
-            'Wh Phase A': r.whPhaseA, 'Wh Phase B': r.whPhaseB, 'Wh Phase C': r.whPhaseC, 'Wh Total': r.whTotal,
-            'Wh Retour A': r.whRetourA, 'Wh Retour B': r.whRetourB, 'Wh Retour C': r.whRetourC, 'Wh Retour Total': r.whRetourTotal,
-            'kWh A': +((r.kwhA ?? 0).toFixed(3)), 'kWh B': +((r.kwhB ?? 0).toFixed(3)), 'kWh C': +((r.kwhC ?? 0).toFixed(3)), 'kWh Total': +((r.kwhTotal ?? 0).toFixed(3)),
-            'kWh Retour A': +((r.kwhRetourA ?? 0).toFixed(3)), 'kWh Retour B': +((r.kwhRetourB ?? 0).toFixed(3)), 'kWh Retour C': +((r.kwhRetourC ?? 0).toFixed(3)), 'kWh Retour Total': +((r.kwhRetourTotal ?? 0).toFixed(3)),
-            'kWh Cum Total': +((r.kwhCumTotal ?? 0).toFixed(3)),
-            'Puiss. kW A': +((r.puissKwA ?? 0).toFixed(3)), 'Puiss. kW B': +((r.puissKwB ?? 0).toFixed(3)), 'Puiss. kW C': +((r.puissKwC ?? 0).toFixed(3)), 'Puiss. kW Total': +((r.puissKwTotal ?? 0).toFixed(3)),
-            'kWh Net': +((r.kwhNet ?? 0).toFixed(3)),
-            'Profil': r.profil,
-          })),
+  // ── Rapport Excel ─────────────────────────────────────────
+  // Remplace l'ancien export, dont la colonne « kWh Total » additionnait
+  // arrivée et départs. Le rapport reprend les objets de l'écran tels quels
+  // (services/iotRapport.ts) : il ne recalcule aucune énergie.
+  const { user } = useAuth();
+  const [rapportOuvert, setRapportOuvert] = useState(false);
+  const [commentaire, setCommentaire] = useState('');
+  const [rapportEnCours, setRapportEnCours] = useState(false);
+  const [rapportErreur, setRapportErreur] = useState<string | null>(null);
+  const [periodes, setPeriodes] = useState<Awaited<ReturnType<typeof fetchDevicePeriodes>>>([]);
+  useEffect(() => {
+    if (demandeRapport > 0) setRapportOuvert(true);
+  }, [demandeRapport]);
+  useEffect(() => {
+    if (!rapportOuvert || !enSupabase) return;
+    fetchDevicePeriodes().then(setPeriodes).catch(() => setPeriodes([]));
+  }, [rapportOuvert, enSupabase]);
+
+  // ── Analyses du rapport : heures, circuits, pics ────────────
+  const [tranchesRapport, setTranchesRapport] = useState<TranchesHoraires>(TRANCHES_DEFAUT);
+  const [aRetenir, setARetenir] = useState('');
+  const [aVerifier, setAVerifier] = useState('');
+  const [inclureReleves, setInclureReleves] = useState(false);
+  const [donneesRapport, setDonneesRapport] = useState<{
+    lignes: LigneHoraire[]; voies: VoieMinute[] | null; pics: PicMinute[] | null; compteur: string | null;
+    picsParCompteur: { compteur: string; pics: PicMinute[] }[] | null;
+    coherence: CoherenceCircuit[] | null; temperatures: Map<string, number> | null; manques: string[];
+    capteurs: LigneCapteur[]; etats: EtatAppareil[] | null;
+  } | null>(null);
+  const [chargeRapport, setChargeRapport] = useState(false);
+  const [energiePrete, setEnergiePrete] = useState(false);
+  const [essaiRapport, setEssaiRapport] = useState(0);
+  const [avancementCalcul, setAvancementCalcul] = useState<Avancement | null>(null);
+  const [avancementFichier, setAvancementFichier] = useState<Avancement | null>(null);
+  const perimetreRapport = useMemo<PerimetreRapport | null>(() => (enSupabase ? {
+    dateDebut: chargement.debut, dateFin: chargement.fin,
+    heureDebut: chargement.heureDebut, heureFin: chargement.heureFin,
+    sites: perimetre?.sites.length ? perimetre.sites : [...new Set(shellyRows.map(r => r.deviceLocation).filter((s): s is string => !!s))],
+    deviceIds: perimetre?.deviceIds.length ? perimetre.deviceIds : null,
+  } : null), [enSupabase, chargement, perimetre?.sites, perimetre?.deviceIds, shellyRows]);
+  // Déjà chargé pour ce périmètre : rouvrir la fenêtre ne relance pas le calcul
+  const donneesChargeesPour = useRef<string | null>(null);
+  useEffect(() => {
+    if (!rapportOuvert) return;
+    const cle = JSON.stringify([perimetreRapport, nettoyage.nature, perimetreRapport ? 0 : csvRows.length, essaiRapport]);
+    if (donneesChargeesPour.current === cle) return;
+    donneesChargeesPour.current = cle;
+    if (!perimetreRapport) {
+      setEnergiePrete(true);
+      setDonneesRapport({
+        lignes: lignesHorairesDepuisFichier(csvRows), voies: null, pics: null, compteur: null, picsParCompteur: null,
+        coherence: null, temperatures: null, manques: [], capteurs: lignesCapteursDepuisFichier(csvRows), etats: [],
+      });
+      return;
+    }
+    let annule = false;
+    let termine = false;
+    setChargeRapport(true);
+    setEnergiePrete(false);
+    const compteur = nettoyage.idsPrincipaux.size === 1 ? [...nettoyage.idsPrincipaux][0] : null;
+    // Les appareils du chargement : lus dans les lignes, sans requête de plus
+    const appareilsCharges = [...new Set(shellyRows.map(r => r.deviceId).filter((d): d is string => !!d))];
+    // Plusieurs sites : les pics de chaque compteur de référence, jusqu'à 6 compteurs
+    const compteurs = !compteur && nettoyage.idsPrincipaux.size > 1 && nettoyage.idsPrincipaux.size <= 6 && nettoyage.sites.length > 1
+      ? [...nettoyage.idsPrincipaux] : [];
+
+    // Avancement réel : chaque lecture terminée fait progresser la barre, qui ne recule jamais.
+    // Le nombre de capteurs d'état n'est connu qu'en cours de route.
+    let fait = 0;
+    let total = 5 + appareilsCharges.length + (compteur ? 1 : 0) + compteurs.length;
+    let maxPct = 0;
+    const annoncer = () => {
+      if (annule) return;
+      maxPct = Math.max(maxPct, Math.min(99, (fait / total) * 100));
+      setAvancementCalcul({ libelle: `Calcul en cours : ${fait} lecture${fait > 1 ? 's' : ''} sur ${total}`, pct: maxPct });
+    };
+    const uneDePlus = () => { fait++; annoncer(); };
+    const suivre = <T,>(lecture: Promise<T>) => lecture.finally(uneDePlus);
+    annoncer();
+
+    // L'énergie d'abord : dès qu'elle est là, on peut générer le fichier sans attendre le reste
+    const horaire = suivre(fetchProfilHoraire(perimetreRapport));
+    horaire
+      .then(lignes => {
+        if (annule) return;
+        setDonneesRapport({
+          lignes, voies: null, pics: null, compteur, picsParCompteur: null,
+          coherence: null, temperatures: null, manques: [], capteurs: [], etats: null,
+        });
+      })
+      .catch(() => { /* signalé avec les autres lectures */ })
+      .finally(() => { if (!annule) setEnergiePrete(true); });
+
+    Promise.allSettled([
+      horaire,
+      fetchVoiesMinute(perimetreRapport, appareilsCharges, { debut: TRANCHES_DEFAUT.talonDebut, fin: TRANCHES_DEFAUT.talonFin }, uneDePlus),
+      suivre(compteur ? fetchPicsMinute(perimetreRapport, compteur) : Promise.resolve(null)),
+      suivre(fetchCoherence(perimetreRapport)),
+      suivre(fetchTemperatureJour(perimetreRapport)),
+      Promise.all(compteurs.map(id => suivre(fetchPicsMinute(perimetreRapport, id, 5).then(pics => ({ compteur: id, pics }))))),
+      suivre(fetchCapteursHoraire(perimetreRapport)).then(async l => {
+        const ids = [...new Set(l.filter(x => x.famille === 'ETAT').map(x => x.deviceId))];
+        total += ids.length;
+        annoncer();
+        const etats = await fetchEtatsAppareils(perimetreRapport, ids, uneDePlus);
+        return { lignes: l, etats: etats.etats, echecs: etats.echecs };
+      }),
+    ]).then(([h, v, p, c, t, pc, cap]) => {
+      if (annule) return;
+      const manques: string[] = [];
+      if (h.status === 'rejected') manques.push('analyse par heures');
+      if (v.status === 'rejected') manques.push('puissances et tensions par circuit');
+      else if (v.value.echecs > 0) manques.push(`puissances et tensions de ${v.value.echecs} circuit${v.value.echecs > 1 ? 's' : ''}`);
+      if (p.status === 'rejected') manques.push('pics à la minute');
+      if (c.status === 'rejected') manques.push('cohérence des compteurs');
+      if (pc.status === 'rejected') manques.push('pics par site');
+      if (cap.status === 'rejected') manques.push('capteurs');
+      else if (cap.value.echecs > 0) manques.push(`états de ${cap.value.echecs} capteur${cap.value.echecs > 1 ? 's' : ''}`);
+      setDonneesRapport({
+        lignes: h.status === 'fulfilled' ? h.value : [],
+        voies: v.status === 'fulfilled' ? v.value.voies : null,
+        pics: p.status === 'fulfilled' ? p.value : null,
+        compteur,
+        coherence: c.status === 'fulfilled' ? c.value : null,
+        temperatures: t.status === 'fulfilled' ? t.value : null,
+        picsParCompteur: pc.status === 'fulfilled' && pc.value.length ? pc.value : null,
+        capteurs: cap.status === 'fulfilled' ? cap.value.lignes : [],
+        etats: cap.status === 'fulfilled' ? cap.value.etats : null,
+        manques,
+      });
+    }).finally(() => { if (!annule) { termine = true; setChargeRapport(false); setAvancementCalcul(null); } });
+    return () => { annule = true; if (!termine) donneesChargeesPour.current = null; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- rechargé à l'ouverture, si le périmètre change, ou sur « Réessayer »
+  }, [rapportOuvert, perimetreRapport, essaiRapport]);
+
+  const analysesRapport = useMemo(() => {
+    if (!donneesRapport || donneesRapport.lignes.length === 0) return null;
+    // Même filtre de jours que l'écran
+    const lignes = donneesRapport.lignes.filter(l => {
+      const d = l.ts.getUTCDay();
+      const finSemaine = d === 0 || d === 6;
+      return filterType === 'ouvrés' ? !finSemaine : filterType === 'weekends' ? finSemaine : filterType === 'fériés' ? false : true;
+    });
+    const pieces = new Map<string, string>();
+    for (const r of shellyRows) if (r.deviceId && r.deviceRoom) pieces.set(r.deviceId, r.deviceRoom);
+    return construireAnalyses({
+      lignes,
+      idsPrincipaux: perimetreRapport ? nettoyage.idsPrincipaux : null,
+      nettoyage,
+      libellePrincipal: nettoyageFlux ? TITRE_NATURE[nettoyageFlux.nature] : 'Consommation totale',
+      debut: perimetreRapport?.dateDebut, fin: perimetreRapport?.dateFin,
+      heureDebut: perimetreRapport?.heureDebut, heureFin: perimetreRapport?.heureFin,
+      tranches: tranchesRapport,
+      signalements: enSupabase ? signalements : [],
+      retirerQuarantaine: optsNettoyage.quarantaine,
+      piecesParAppareil: pieces,
+      totalEcranKwh: perimetreRapport && nettoyage.nature !== 'aucune' ? analyse.totalKwhConsomme : null,
+      voies: donneesRapport.voies,
+      pics: donneesRapport.pics,
+      compteurPics: donneesRapport.compteur,
+      picsParCompteur: donneesRapport.picsParCompteur,
+      coherence: donneesRapport.coherence,
+      temperatures: donneesRapport.temperatures,
+      aRetenir, aVerifier,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [donneesRapport, filterType, tranchesRapport, aRetenir, aVerifier, nettoyage, optsNettoyage.quarantaine, analyse]);
+
+  // Capteurs du même périmètre : mêmes jours que l'écran, jamais de moyenne entre sites
+  const capteursRapport = useMemo(() => {
+    if (!donneesRapport) return null;
+    const garder = (d: Date) => {
+      const j = d.getUTCDay();
+      const finSemaine = j === 0 || j === 6;
+      return filterType === 'ouvrés' ? !finSemaine : filterType === 'weekends' ? finSemaine : filterType === 'fériés' ? false : true;
+    };
+    const energie = new Map<string, Map<string, number>>();
+    for (const l of donneesRapport.lignes) {
+      if (!nettoyage.idsPrincipaux.has(l.deviceId) || l.nbMesures === 0) continue;
+      const parJour = energie.get(l.site) ?? new Map<string, number>();
+      const cle = l.ts.toISOString().slice(0, 10);
+      parJour.set(cle, (parJour.get(cle) ?? 0) + l.wh / 1000);
+      energie.set(l.site, parJour);
+    }
+    return construireCapteurs({
+      lignes: donneesRapport.capteurs.filter(l => garder(l.ts)),
+      etats: donneesRapport.etats,
+      tranches: tranchesRapport,
+      debut: perimetreRapport?.dateDebut, fin: perimetreRapport?.dateFin,
+      heureDebut: perimetreRapport?.heureDebut, heureFin: perimetreRapport?.heureFin,
+      energieParJourEtSite: energie,
+    });
+  }, [donneesRapport, filterType, tranchesRapport, nettoyage.idsPrincipaux, perimetreRapport]);
+
+  const entreeRapport = useMemo<EntreeRapport>(() => {
+    const meta = user?.user_metadata ?? {};
+    // Compte connecté ; espaces en trop du profil retirés (« Maurice  DIOUF »)
+    const auteur = (meta.first_name && meta.last_name ? `${meta.first_name} ${meta.last_name}` : (user?.email ?? 'utilisateur'))
+      .replace(/\s+/g, ' ').trim();
+    const uniques = (f: (r: ShellyRow) => string | undefined) =>
+      [...new Set(shellyRows.map(f).filter((x): x is string => Boolean(x)))].sort();
+    return {
+      analyse, nettoyage, bilan: nettoyageFlux, lignes: filteredRows,
+      libellePrincipal: nettoyageFlux ? TITRE_NATURE[nettoyageFlux.nature] : 'Consommation totale',
+      perimetre: {
+        source: enSupabase ? 'base' : 'fichier',
+        sites: uniques(r => r.deviceLocation),
+        appareils: uniques(r => r.nomAppareil),
+        debut: enSupabase ? chargement.debut : undefined,
+        fin: enSupabase ? chargement.fin : undefined,
+        heureDebut: enSupabase ? chargement.heureDebut : undefined,
+        heureFin: enSupabase ? chargement.heureFin : undefined,
+        filtreJours: { tous: 'tous les jours', 'ouvrés': 'jours ouvrés seulement', weekends: 'week-ends seulement', 'fériés': 'jours fériés seulement' }[filterType],
+      },
+      options: optsNettoyage,
+      versionRegles: versionRegles(regles) ?? '—',
+      periodes,
+      auteur,
+      commentaire,
+      couvertureParJour: analysesRapport?.couvertureParJour,
+      // Couleurs des courbes de l'écran (palette + choix « Couleurs ») → graphiques du rapport
+      couleurs: {
+        principal: METRICS.find(m => m.key === 'total')?.color,
+        flux: {
+          reseauSoutire: METRICS.find(m => m.key === 'reseau')?.color,
+          reseauInjecte: METRICS.find(m => m.key === 'retour')?.color,
+          pv: METRICS.find(m => m.key === 'pv')?.color,
+          groupe: METRICS.find(m => m.key === 'groupe')?.color,
+          departs: METRICS.find(m => m.key === 'departs')?.color,
         },
-        {
-          name: 'Mensuel',
-          data: chartDataMensuel.map(m => ({
-            'Mois': m.mois,
-            'kWh Total': m.kwhTotal,
-            'kWh Net': m.kwhNet,
-            'kWh Retour': m.kwhRetour,
-            'Nb jours': m.nbJours,
-          })),
-        },
-      ],
-      'profil_charge_shelly.xlsx'
-    );
+      },
+      dateExport: new Date(),
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- METRICS est recalculé à chaque rendu (prefsGraph suivi)
+  }, [analyse, nettoyage, nettoyageFlux, prefsGraph, filteredRows, enSupabase, chargement, shellyRows, filterType, optsNettoyage, regles, periodes, user, commentaire, analysesRapport]);
+  const apercuRapport = useMemo(() => (rapportOuvert ? construireRapport(entreeRapport) : null), [rapportOuvert, entreeRapport]);
+
+  // Connu avant le clic : au-delà de la limite, la case est bloquée et le dit tout de suite
+  const estimationReleves = useMemo(() => (donneesRapport?.lignes ?? []).reduce((s, l) => s + l.nbMesures, 0), [donneesRapport?.lignes]);
+  const relevesPossibles = estimationReleves <= MAX_RELEVES;
+
+  const exporterRapport = async (format: 'excel' | 'pdf') => {
+    setRapportEnCours(true);
+    setRapportErreur(null);
+    setAvancementFichier({ libelle: format === 'excel' ? 'Construction du fichier Excel…' : 'Construction du fichier PDF…', pct: null });
+    await laisserAfficher();
+    try {
+      const rapport = construireRapport({ ...entreeRapport, dateExport: new Date() });
+      const p = entreeRapport.perimetre;
+      const nom = [
+        'Rapport_courbe_de_charge',
+        p.sites.length === 1 ? p.sites[0] : p.sites.length ? `${p.sites.length}_sites` : 'fichier',
+        p.debut, p.fin,
+      ].filter(Boolean).join('_').replace(/[^\p{L}\p{N}_-]+/gu, '_');
+      if (format === 'excel') {
+        let releves: RelevesRapport | null = null;
+        if (inclureReleves && relevesPossibles && perimetreRapport && donneesRapport) {
+          const ids = [...new Set(donneesRapport.lignes.map(l => l.deviceId))];
+          const estimation = estimationReleves;
+          if (estimation > MAX_RELEVES) {
+            throw new Error(`Environ ${estimation.toLocaleString('fr-FR')} relevés : trop pour un classeur (limite ${MAX_RELEVES.toLocaleString('fr-FR')}). Réduisez la période, ou décochez les onglets Brut et Nettoyé.`);
+          }
+          // La lecture est le plus long : 0 à 70 % de la barre
+          const brut = await fetchRelevesBruts(perimetreRapport, ids, n => setAvancementFichier({
+            libelle: `Lecture des relevés bruts : ${n.toLocaleString('fr-FR')} sur environ ${estimation.toLocaleString('fr-FR')}`,
+            pct: Math.min(70, estimation ? (n / estimation) * 70 : 0),
+          }));
+          setAvancementFichier({ libelle: 'Préparation des onglets Brut et Nettoyé…', pct: 70 });
+          await laisserAfficher();
+          releves = preparerReleves(brut);
+        }
+        await exporterRapportExcel(rapport, `${nom}.xlsx`, analysesRapport, releves, capteursRapport, (libelle, pct) => setAvancementFichier({ libelle, pct }));
+      } else exporterRapportPdf(rapport, `${nom}.pdf`, analysesRapport, capteursRapport);
+      setRapportOuvert(false);
+    } catch (e) {
+      setRapportErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRapportEnCours(false);
+      setAvancementFichier(null);
+    }
   };
 
 
   return (
     <div className="space-y-6">
 
-      {/* ── Panneau source de données ─────────────────────────── */}
+      {perimetre && (sbLoading || sbError) && (
+        <p className={`text-xs ${sbError ? 'text-red-400' : 'text-slate-400'}`}>
+          {sbError ?? 'Chargement de la courbe de charge sur le périmètre choisi…'}
+        </p>
+      )}
+
+      {/* ── Panneau source de données (sans périmètre imposé par Analyse) ── */}
+      {!perimetre && (
       <div className="bg-white/5 rounded-xl border border-white/10 p-4 space-y-3">
         <div className="flex items-center gap-3">
           <span className="text-slate-400 text-sm font-medium">Source :</span>
@@ -425,7 +1003,7 @@ export function ProfilChargeTab() {
                 : 'bg-white/5 text-slate-400 hover:bg-white/10'
               }`}
           >
-            Fichiers importés {csvRows.length > 0 && <span className="ml-1 opacity-60">({csvRows.length}j)</span>}
+            Fichiers importés {csvRows.length > 0 && <span className="ml-1 opacity-60">({csvRows.length.toLocaleString('fr-FR')} lignes)</span>}
           </button>
           <button
             onClick={() => { setSourceMode('supabase'); if (sbDevices.length === 0) loadDevices(sbSelectedSites); }}
@@ -456,7 +1034,7 @@ export function ProfilChargeTab() {
                   </button>
                 </PopoverTrigger>
                 <PopoverContent className="w-56 p-2 bg-[#1a1d2e] border-white/20" align="start">
-                  {SITES.map(s => (
+                  {sbSites.map(s => (
                     <label key={s} className="flex items-center gap-2 px-2 py-1.5 rounded text-sm text-slate-300 hover:bg-white/5 cursor-pointer">
                       <input type="checkbox" checked={sbSelectedSites.includes(s)} onChange={() => toggleSite(s)} className="accent-violet-500" />
                       {s}
@@ -518,7 +1096,7 @@ export function ProfilChargeTab() {
                         return Object.entries(bySite).map(([site, devs]) => (
                           <div key={site}>
                             {Object.keys(bySite).length > 1 && (
-                              <p className="text-[10px] text-slate-500 uppercase tracking-wide px-2 pt-2 pb-1">{site}</p>
+                              <p className="text-[0.625rem] text-slate-500 uppercase tracking-wide px-2 pt-2 pb-1">{site}</p>
                             )}
                             {devs.map(d => (
                               <label key={d.device_id} className="flex items-center gap-2 px-2 py-1.5 rounded text-xs text-slate-300 hover:bg-white/5 cursor-pointer">
@@ -595,49 +1173,112 @@ export function ProfilChargeTab() {
             {sbError && <p className="text-red-400 text-xs self-center">{sbError}</p>}
             {supabaseRows.length > 0 && !sbLoading && (
               <Badge className="bg-violet-500/20 text-violet-300 border-violet-500/30 self-center">
-                {supabaseRows.length} jours chargés
+                {new Set(supabaseRows.map(r => cleJour(r.date))).size} jours chargés · {new Set(supabaseRows.map(r => r.deviceId)).size} appareils
               </Badge>
             )}
           </div>
         )}
       </div>
+      )}
 
-      {shellyRows.length === 0 && (
+      {shellyRows.length === 0 && !sbLoading && (
         <div className="flex flex-col items-center justify-center py-16 text-slate-500">
           <Zap className="h-12 w-12 opacity-20 mb-4" />
           {sourceMode === 'csv'
             ? <><p className="text-lg font-medium">Aucune donnée Shelly 3EM</p>
-              <p className="text-sm mt-1">Importez un fichier dans l'onglet <strong className="text-slate-400">Import</strong> ou basculez sur Supabase.</p></>
+              <p className="text-sm mt-1">Importez un fichier dans l'onglet <strong className="text-slate-400">Fichiers</strong> ou basculez sur Supabase.</p></>
             : <><p className="text-lg font-medium">Aucune donnée chargée</p>
-              <p className="text-sm mt-1">Sélectionnez un site et une période, puis cliquez sur <strong className="text-slate-400">Charger</strong>.</p></>
+              <p className="text-sm mt-1">Sélectionnez un site et une période, puis cliquez sur <strong className="text-slate-400">Analyser</strong>.</p></>
           }
         </div>
       )}
 
       {shellyRows.length > 0 && <>
+        <BandeauNettoyage
+          rapport={nettoyage}
+          options={optsNettoyage}
+          onChange={setOptsNettoyage}
+          nbJours={analyse.nbJours}
+          nbJoursRetenus={analyse.nbJoursRetenus}
+          heuresParJour={enSupabase ? chargement.heures : null}
+          version={versionRegles(regles)}
+          avecQualite={enSupabase}
+        />
+
         {/* KPI row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <KPICard
-            label="Consommation totale"
-            value={analyse.totalKwhNet.toLocaleString('fr-FR', { maximumFractionDigits: 0 }).replace(/\./g, ',')}
-            unit="kWh net"
-            sub={`${analyse.nbJours} jours`}
+            label={nettoyageFlux ? TITRE_NATURE[nettoyageFlux.nature] : 'Consommation totale'}
+            value={nettoyageFlux?.nature === 'aucune'
+              ? '—'
+              : analyse.totalKwhNet.toLocaleString('fr-FR', { maximumFractionDigits: 0 }).replace(/\./g, ',')}
+            unit={nettoyageFlux?.nature === 'aucune' ? '' : 'kWh'}
+            sub={nettoyageFlux
+              ? (nettoyageFlux.nature === 'aucune' && nettoyageFlux.raisons ? nettoyageFlux.raisons : `${analyse.nbJours} jours · ${nettoyageFlux.methodes}`)
+              : `${analyse.nbJours} jours`}
             color="blue"
           />
           <KPICard
             label="Moyenne journalière"
-            value={fmtFr(analyse.moyenneJournaliere, 1).replace('.', ',')}
-            unit="kWh/j"
-            sub={`Max: ${fmtFr(analyse.maxJournalier, 0).replace('.', ',')} · Min: ${fmtFr(analyse.minJournalier, 0).replace('.', ',')}`}
+            value={nettoyageFlux?.nature === 'aucune' ? '—' : fmtFr(analyse.moyenneJournaliere, 1).replace('.', ',')}
+            unit={nettoyageFlux?.nature === 'aucune' ? '' : 'kWh/j'}
+            sub={nettoyageFlux?.nature === 'aucune'
+              ? 'Non calculable : rien de mesuré pour la série principale'
+              : `Sur ${analyse.nbJoursRetenus} j retenus · Max ${fmtFr(analyse.maxJournalier, 1)} · Min ${fmtFr(analyse.minJournalier, 1)}`}
             color="green"
           />
-          <KPICard
-            label="Énergie retournée"
-            value={analyse.totalKwhRetour.toLocaleString('fr-FR', { maximumFractionDigits: 0 }).replace(/\./g, ',')}
-            unit="kWh"
-            sub={`${((analyse.totalKwhRetour / analyse.totalKwhConsomme) * 100).toFixed(1).replace('.', ',')}% du brut`}
-            color="purple"
-          />
+          {nettoyageFlux ? <>
+            {nettoyageFlux.flux.reseauSoutire != null && (() => {
+              // Même règle que le rapport : un compteur qui émet mais compte 0
+              // n'est pas « 0 kWh soutirés » (Académie, août 2026)
+              const etat = etatDuFlux('reseauSoutire', nettoyageFlux.flux.reseauSoutire, ctxFlux);
+              return (
+                <KPICard
+                  label="Réseau (arrivée)"
+                  value={etat.valeur == null ? '—' : fmtFr(etat.valeur, 0)}
+                  unit={etat.valeur == null ? '' : 'kWh soutirés'}
+                  sub={etat.valeur == null || Math.abs(etat.valeur) < 0.0005
+                    ? etat.precision
+                    : `Injectés : ${fmtFr(nettoyageFlux.flux.reseauInjecte ?? 0, 1)} kWh`}
+                  color="purple"
+                />
+              );
+            })()}
+            {(nettoyageFlux.flux.pv != null || nettoyageFlux.flux.groupe != null) && (
+              <KPICard
+                label={nettoyageFlux.flux.pv != null ? 'Production PV' : 'Groupe électrogène'}
+                value={fmtFr((nettoyageFlux.flux.pv ?? nettoyageFlux.flux.groupe) ?? 0, 0)}
+                unit="kWh"
+                sub={nettoyageFlux.flux.pv != null && nettoyageFlux.flux.groupe != null ? `Groupe : ${fmtFr(nettoyageFlux.flux.groupe, 1)} kWh` : 'Mesuré à part, non additionné'}
+                color="green"
+              />
+            )}
+            {nettoyageFlux.flux.departs != null && nettoyageFlux.nature !== 'departs' && Math.abs(nettoyageFlux.flux.departs) < 0.0005 ? (
+              <KPICard
+                label="Départs mesurés"
+                value={etatDuFlux('departs', nettoyageFlux.flux.departs, ctxFlux).valeur == null ? '—' : '0'}
+                unit="kWh"
+                sub={etatDuFlux('departs', nettoyageFlux.flux.departs, ctxFlux).precision}
+                color="blue"
+              />
+            ) : nettoyageFlux.flux.departs != null && nettoyageFlux.nature !== 'departs' && (
+              <KPICard
+                label="Départs mesurés"
+                value={fmtFr(nettoyageFlux.flux.departs, 0)}
+                unit="kWh"
+                sub={nettoyageFlux.nonMesure != null ? `Non mesuré : ${fmtFr(nettoyageFlux.nonMesure, 1)} kWh` : 'Hors bilan (autre arrivée ou série principale)'}
+                color="blue"
+              />
+            )}
+          </> : (
+            <KPICard
+              label="Énergie retournée"
+              value={analyse.totalKwhRetour.toLocaleString('fr-FR', { maximumFractionDigits: 0 }).replace(/\./g, ',')}
+              unit="kWh"
+              sub={analyse.totalKwhConsomme > 0 ? `${((analyse.totalKwhRetour / analyse.totalKwhConsomme) * 100).toFixed(1).replace('.', ',')}% du brut` : undefined}
+              color="purple"
+            />
+          )}
         </div>
 
         {/* Profil par type de jour */}
@@ -649,8 +1290,16 @@ export function ProfilChargeTab() {
           ].map(({ label, data, color }) => (
             <div key={label} className="bg-white/5 rounded-xl border border-white/10 p-3 text-center">
               <p className="text-slate-400 text-xs">{label}</p>
-              <p className={`${color} text-xl font-bold mt-1`}>{fmtFr(data.kwhMoyen, 1)}</p>
-              <p className="text-slate-500 text-xs">kWh moyen/j · {data.nbJours}j</p>
+              {/* Non mesuré ou aucun jour : « — », jamais 0,0 (même règle que le rapport) */}
+              {nettoyageFlux?.nature === 'aucune' || data.nbJours === 0 ? <>
+                <p className="text-slate-500 text-xl font-bold mt-1">—</p>
+                <p className="text-slate-500 text-xs">
+                  {nettoyageFlux?.nature === 'aucune' ? 'Non calculable : consommation non mesurée' : 'Aucun jour de ce type retenu'}
+                </p>
+              </> : <>
+                <p className={`${color} text-xl font-bold mt-1`}>{fmtFr(data.kwhMoyen, 1)}</p>
+                <p className="text-slate-500 text-xs">kWh moyen/j · {data.nbJours}j</p>
+              </>}
             </div>
           ))}
         </div>
@@ -694,9 +1343,10 @@ export function ProfilChargeTab() {
               size="sm"
               variant="outline"
               className="border-white/20 text-white hover:bg-white/10"
-              onClick={exportExcel}
+              onClick={() => setRapportOuvert(true)}
+              title="Rapport Excel ou PDF : synthèse, journalier, types de jour, mensuel, qualité"
             >
-              <Download className="h-4 w-4 mr-1" /> Export Excel
+              <Download className="h-4 w-4 mr-1" /> Rapport
             </Button>
           </div>
         </div>
@@ -728,6 +1378,11 @@ export function ProfilChargeTab() {
               {selectedMetrics.size === 0 && (
                 <span className="text-amber-400 text-xs ml-2">Aucune métrique sélectionnée</span>
               )}
+              <span className="ml-2">
+                <CouleursDonnees donnees={METRICS.filter(m => isMetric(m.key)).map(m => ({
+                  key: CLE_COULEUR[m.key] ?? `courbe:${m.key}`, label: `${m.label} (${m.unit})`, color: m.color,
+                }))} />
+              </span>
             </div>
           </div>
 
@@ -751,7 +1406,7 @@ export function ProfilChargeTab() {
               <AreaChart data={chartDataJournalier} margin={{ top: 10, right: 30, bottom: 30, left: 30 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                 <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} interval="preserveStartEnd"
-                  label={{ value: 'Date', position: 'insideBottom', offset: -5, fill: '#94a3b8', fontSize: 11 }} />
+                  label={{ value: 'Date', position: 'insideBottom', offset: 2, fill: '#94a3b8', fontSize: 11 }} />
                 <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }}
                   label={{ value: 'Valeur', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11, offset: 10 }} />
                 <Tooltip content={<ChartTooltip />} />
@@ -764,12 +1419,13 @@ export function ProfilChargeTab() {
                     stroke={m.color} fill={`${m.color}25`} strokeWidth={m.key === 'total' ? 2.5 : 1.5}
                     hide={isHidden(m.key)} />
                 ))}
+                <Brush dataKey="date" height={22} stroke="#60a5fa" fill="rgba(255,255,255,0.04)" travellerWidth={8} />
               </AreaChart>
             ) : (
               <BarChart data={chartDataJournalier} margin={{ top: 10, right: 30, bottom: 30, left: 30 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                 <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} interval="preserveStartEnd"
-                  label={{ value: 'Date', position: 'insideBottom', offset: -5, fill: '#94a3b8', fontSize: 11 }} />
+                  label={{ value: 'Date', position: 'insideBottom', offset: 2, fill: '#94a3b8', fontSize: 11 }} />
                 <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }}
                   label={{ value: 'Valeur', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11, offset: 10 }} />
                 <Tooltip content={<ChartTooltip />} />
@@ -779,51 +1435,211 @@ export function ProfilChargeTab() {
                   <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} unit={m.unit}
                     radius={[2, 2, 0, 0]} hide={isHidden(m.key)} />
                 ))}
+                <Brush dataKey="date" height={22} stroke="#60a5fa" fill="rgba(255,255,255,0.04)" travellerWidth={8} />
               </BarChart>
             )}
           </ResponsiveContainer>
         </div>
 
-        {/* Tableau de données journalières */}
+        <Dialog open={rapportOuvert} onOpenChange={setRapportOuvert}>
+          <DialogContent
+            className="max-w-2xl bg-[#0f111a] border-white/10 text-slate-100 outline-none focus:outline-none"
+            // Le focus reste sur la fenêtre : sur la première liste, il ouvrirait sa bulle tout seul
+            onOpenAutoFocus={e => { e.preventDefault(); (e.currentTarget as HTMLElement).focus(); }}
+          >
+            <DialogHeader>
+              <DialogTitle>Rapport — courbe de charge</DialogTitle>
+            </DialogHeader>
+            {apercuRapport && (
+              <div className="space-y-4 text-sm max-h-[60vh] overflow-y-auto pr-1">
+                <div className="space-y-1">
+                  {apercuRapport.perimetre.slice(0, 5).map(([k, v]) => (
+                    <p key={k} className="text-xs"><span className="text-slate-400">{k} : </span><span className="text-slate-200">{v}</span></p>
+                  ))}
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-300 mb-1">Synthèse calculée (reprise telle quelle dans le fichier)</p>
+                  <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
+                    {apercuRapport.phrases.map((p, i) => <li key={i}>{p}</li>)}
+                  </ul>
+                </div>
+                <div className="rounded-lg border border-white/10 p-3 space-y-3">
+                  <p className="text-xs font-medium text-slate-300">Analyse par heures, circuits et pics</p>
+                  {!chargeRapport && donneesRapport && !analysesRapport && (
+                    <p className="text-xs text-amber-300">Pas d'analyse par heures sur ces données{perimetreRapport ? '' : ' : le fichier ne porte pas d’heures'}. Le rapport garde ses feuilles habituelles.</p>
+                  )}
+                  {!chargeRapport && donneesRapport && donneesRapport.manques.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="flex-1 min-w-48 text-xs text-amber-300">
+                        Non lu : {donneesRapport.manques.join(', ')}. La lecture a été trop longue, souvent parce que plusieurs calculs tournent en même temps. Le reste du rapport est complet.
+                      </p>
+                      <Button size="sm" variant="outline" className="h-7 text-xs border-white/20 text-slate-200" onClick={() => setEssaiRapport(n => n + 1)}>Réessayer</Button>
+                    </div>
+                  )}
+                  {/* Bulle sur chaque réglage. Portail : sans lui, la zone défilante de la fenêtre couperait la bulle */}
+                  <TooltipProvider delayDuration={150}>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {REGLAGES_TRANCHES.map(({ libelle, cle, bulle }) => (
+                        <Bulle key={cle}>
+                          <TooltipTrigger asChild>
+                            <div>
+                              <Label htmlFor={`tranche-${cle}`} className="text-[0.6875rem] text-slate-400 inline-flex items-center gap-1">
+                                {libelle} <Info className="h-3 w-3 text-slate-500" aria-hidden="true" />
+                              </Label>
+                              <select id={`tranche-${cle}`} value={tranchesRapport[cle]}
+                                onChange={e => setTranchesRapport(t => ({ ...t, [cle]: Number(e.target.value) }))}
+                                className="mt-0.5 h-8 w-full rounded-md bg-white/5 border border-white/15 text-slate-100 text-xs px-2">
+                                {Array.from({ length: 25 }, (_, h) => <option key={h} value={h} className="bg-[#1a1d2e]">{h} h</option>)}
+                              </select>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipPortal>
+                            <TooltipContent side="top" className="z-[60] max-w-xs bg-slate-800 border-white/15 text-slate-100 text-xs leading-relaxed">
+                              {bulle}
+                            </TooltipContent>
+                          </TooltipPortal>
+                        </Bulle>
+                      ))}
+                    </div>
+                  </TooltipProvider>
+                  {analysesRapport && (
+                    <>
+                      <div>
+                        <p className="text-xs font-medium text-slate-300 mb-1">Constats calculés</p>
+                        <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
+                          {analysesRapport.constats.map((p, i) => <li key={i}>{p}</li>)}
+                        </ul>
+                        {analysesRapport.controle && (
+                          <p className={`text-xs mt-1 ${analysesRapport.controle.ok ? 'text-emerald-300' : 'text-amber-300'}`}>{analysesRapport.controle.texte}</p>
+                        )}
+                      </div>
+                      {capteursRapport && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-300 mb-1">Capteurs : {capteursRapport.resume}</p>
+                          <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
+                            {capteursRapport.constats.slice(0, 12).map((p, i) => <li key={i}>{p}</li>)}
+                            {capteursRapport.aVerifierAuto.map((p, i) => <li key={`v${i}`}>À vérifier : {p}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                      {analysesRapport.aVerifierAuto.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-300 mb-1">À vérifier, détecté automatiquement</p>
+                          <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
+                            {analysesRapport.aVerifierAuto.map((p, i) => <li key={i}>{p}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <div>
+                    <Label htmlFor="a-retenir-rapport" className="text-xs text-slate-300">Ce qu'il faut retenir, selon vous (facultatif)</Label>
+                    <Textarea id="a-retenir-rapport" value={aRetenir} onChange={e => setARetenir(e.target.value)}
+                      placeholder="Ce que les chiffres ne disent pas seuls : la consommation suit les prières…"
+                      className="mt-1 min-h-16 bg-white/5 border-white/15 text-slate-100 text-xs" />
+                  </div>
+                  <div>
+                    <Label htmlFor="a-verifier-rapport" className="text-xs text-slate-300">À vérifier sur site, selon vous (facultatif)</Label>
+                    <Textarea id="a-verifier-rapport" value={aVerifier} onChange={e => setAVerifier(e.target.value)}
+                      placeholder="Les questions à poser sur place : qu'alimente vraiment ce circuit ?"
+                      className="mt-1 min-h-16 bg-white/5 border-white/15 text-slate-100 text-xs" />
+                  </div>
+                  {perimetreRapport && (
+                    <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer">
+                      <input type="checkbox" className="mt-0.5 accent-blue-500" checked={inclureReleves && relevesPossibles} disabled={!relevesPossibles} onChange={e => setInclureReleves(e.target.checked)} />
+                      <span>
+                        Ajouter à l'Excel les onglets Brut et Nettoyé (relevés à la minute). Fichier lourd : limité à {MAX_RELEVES.toLocaleString('fr-FR')} relevés.
+                        {!relevesPossibles && <span className="block text-amber-300 mt-0.5">Indisponible ici : environ {estimationReleves.toLocaleString('fr-FR')} relevés sur cette période. Réduisez la période ou le nombre d'appareils.</span>}
+                      </span>
+                    </label>
+                  )}
+                </div>
+                <div>
+                  <Label htmlFor="commentaire-rapport" className="text-xs text-slate-300">Commentaire de l'analyste (facultatif)</Label>
+                  <Textarea
+                    id="commentaire-rapport"
+                    value={commentaire}
+                    onChange={e => setCommentaire(e.target.value)}
+                    placeholder="Votre interprétation : contexte, incident connu, recommandation…"
+                    className="mt-1 min-h-24 bg-white/5 border-white/15 text-slate-100 text-xs"
+                  />
+                  <p className="text-[0.6875rem] text-slate-500 mt-1">
+                    Signé {entreeRapport.auteur} et présenté comme l'avis de l'analyste, distinct des chiffres mesurés.
+                  </p>
+                </div>
+              </div>
+            )}
+            {/* Hors de la zone défilante : toujours visible, juste au-dessus des boutons */}
+            {rapportErreur && <p className="text-xs text-red-400" role="alert">{rapportErreur}</p>}
+            {(avancementFichier || avancementCalcul) && (
+              <div className="space-y-1">
+                <BarreAvancement avancement={(avancementFichier ?? avancementCalcul)!} />
+                {!avancementFichier && energiePrete && (
+                  <p className="text-[0.6875rem] text-slate-400">L'énergie est prête : vous pouvez déjà générer le fichier. Ce qui n'est pas encore lu n'y figurera pas.</p>
+                )}
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="ghost" className="text-slate-300" onClick={() => setRapportOuvert(false)}>Annuler</Button>
+              <Button onClick={() => exporterRapport('pdf')} disabled={rapportEnCours || !energiePrete} variant="outline" className="border-white/20 text-white hover:bg-white/10"
+                title="Document à lire : synthèse, chiffres clés, journalier, types de jour, mois, qualité">
+                <Download className="h-4 w-4 mr-1" /> PDF
+              </Button>
+              <Button onClick={() => exporterRapport('excel')} disabled={rapportEnCours || !energiePrete} className="bg-blue-600 hover:bg-blue-500"
+                title="Classeur complet, avec le détail par appareil et par jour">
+                <Download className="h-4 w-4 mr-1" /> {rapportEnCours ? 'Préparation…' : 'Excel'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Tableau de données journalières (par pages : un fichier à la minute
+            ferait dessiner des dizaines de milliers de lignes d'un coup) */}
         <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
           <div className="flex items-center justify-between p-4 border-b border-white/10">
             <h3 className="text-white font-semibold flex items-center gap-2">
               <Calendar className="h-4 w-4" /> Données journalières
             </h3>
             <Badge variant="outline" className="border-white/20 text-slate-300">
-              {filteredRows.length} jours
+              {nettoyage.rowsAffichage.length} lignes · {analyse.nbJours} jours
             </Badge>
           </div>
           <div className="overflow-x-auto max-h-96">
             <table className="min-w-full text-xs">
               <thead className="sticky top-0 bg-[#1a1d2e] z-10">
                 <tr>
-                  {['Date', 'Jour', 'kWh Tot', 'kWh Ret', 'kWh Cum'].map(h => (
-                    <th key={h} className="px-2 py-2 text-left text-slate-400 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">
+                  {['Date', 'Jour', 'Appareil', 'kWh Tot', 'kWh Ret', 'kWh Cum'].map(h => (
+                    <th key={h} className="px-2 py-2 text-left text-slate-400 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">
                       {h}
                     </th>
                   ))}
                   {/* Conso. par phase */}
-                  <th className="px-2 py-2 text-right text-purple-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Conso. A</th>
-                  <th className="px-2 py-2 text-right text-yellow-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Conso. B</th>
-                  <th className="px-2 py-2 text-right text-pink-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Conso. C</th>
-                  <th className="px-2 py-2 text-right text-cyan-400/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">kWh Net</th>
+                  <th className="px-2 py-2 text-right text-purple-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Conso. A</th>
+                  <th className="px-2 py-2 text-right text-yellow-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Conso. B</th>
+                  <th className="px-2 py-2 text-right text-pink-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Conso. C</th>
+                  <th className="px-2 py-2 text-right text-cyan-400/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">kWh Net</th>
                   {/* Puissance par phase */}
-                  <th className="px-2 py-2 text-right text-green-400/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Puiss. Tot</th>
-                  <th className="px-2 py-2 text-right text-purple-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Puiss. A</th>
-                  <th className="px-2 py-2 text-right text-yellow-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Puiss. B</th>
-                  <th className="px-2 py-2 text-right text-pink-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Puiss. C</th>
-                  <th className="px-2 py-2 text-left text-slate-400 font-medium whitespace-nowrap border-b border-white/10 text-[10px] uppercase tracking-wide">Profil</th>
+                  <th className="px-2 py-2 text-right text-green-400/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Puiss. Tot</th>
+                  <th className="px-2 py-2 text-right text-purple-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Puiss. A</th>
+                  <th className="px-2 py-2 text-right text-yellow-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Puiss. B</th>
+                  <th className="px-2 py-2 text-right text-pink-300/80 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Puiss. C</th>
+                  <th className="px-2 py-2 text-left text-slate-400 font-medium whitespace-nowrap border-b border-white/10 text-[0.625rem] uppercase tracking-wide">Profil</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r, i) => {
+                {lignesTableau.map((r, i) => {
                   return (
                     <tr key={i} className={`border-t border-white/5 hover:bg-white/5 ${r.jourActivites === 'Jour férié' ? 'bg-purple-500/5' :
                         r.jourActivites === 'Weekend' ? 'bg-yellow-500/5' : ''
                       }`}>
                       <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{(r.date instanceof Date ? r.date : new Date(r.date as string)).toLocaleDateString('fr-FR')}</td>
                       <td className="px-2 py-1.5 text-slate-400">{r.jourSemaine}</td>
+                      <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">
+                        {r.nomAppareil ?? '—'}
+                        {r.deviceId && nettoyage.idsHorsTotal.has(r.deviceId) && (
+                          <span className="ml-1 text-slate-500" title="Mesuré, mais hors de la série principale : déjà compté par un autre compteur, ou d'un autre rôle (PV, groupe)">(hors total)</span>
+                        )}
+                      </td>
                       <td className="px-2 py-1.5 text-blue-400 text-right">{fmtFr(r.kwhTotal, 2)}</td>
                       <td className="px-2 py-1.5 text-purple-400 text-right">{fmtFr(r.kwhRetourTotal, 2)}</td>
                       <td className="px-2 py-1.5 text-slate-400 text-right">{fmtFr(r.kwhCumTotal, 1)}</td>
@@ -838,7 +1654,7 @@ export function ProfilChargeTab() {
                       <td className="px-2 py-1.5 text-yellow-300 text-right">{fmtFr(r.puissKwB, 2)}</td>
                       <td className="px-2 py-1.5 text-pink-300 text-right">{fmtFr(r.puissKwC, 2)}</td>
                       <td className="px-2 py-1.5">
-                        <Badge className={`border-0 text-[10px] ${r.profil === 'CHARGE' ? 'bg-blue-500/20 text-blue-300' : 'bg-orange-500/20 text-orange-300'}`}>
+                        <Badge className={`border-0 text-[0.625rem] ${r.profil === 'CHARGE' ? 'bg-blue-500/20 text-blue-300' : 'bg-orange-500/20 text-orange-300'}`}>
                           {r.profil}
                         </Badge>
                       </td>
@@ -848,6 +1664,15 @@ export function ProfilChargeTab() {
               </tbody>
             </table>
           </div>
+          {nbPagesTableau > 1 && (
+            <div className="flex items-center justify-end gap-2 px-4 py-2 border-t border-white/10 text-xs text-slate-400">
+              <span>
+                {(pageCourante * LIGNES_PAR_PAGE + 1).toLocaleString('fr-FR')}–{Math.min((pageCourante + 1) * LIGNES_PAR_PAGE, nettoyage.rowsAffichage.length).toLocaleString('fr-FR')} / {nettoyage.rowsAffichage.length.toLocaleString('fr-FR')}
+              </span>
+              <button disabled={pageCourante === 0} onClick={() => setPageTableau(pageCourante - 1)} aria-label="Page précédente" className="px-2 py-0.5 rounded bg-white/5 disabled:opacity-30 hover:bg-white/10">‹</button>
+              <button disabled={pageCourante >= nbPagesTableau - 1} onClick={() => setPageTableau(pageCourante + 1)} aria-label="Page suivante" className="px-2 py-0.5 rounded bg-white/5 disabled:opacity-30 hover:bg-white/10">›</button>
+            </div>
+          )}
         </div>
 
       </>}
