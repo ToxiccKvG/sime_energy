@@ -23,40 +23,7 @@ import {
 } from '@/lib/calendar-service';
 import { getSenegalHolidays, type HolidayEntry } from '@/constants/senegal-holidays';
 import { refreshProjectContextsInBackground } from '@/hooks/useOrganizationSettings';
-
-// ─── Google Calendar (API Key — no OAuth) ─────────────────────────────────────
-
-const SENEGAL_CALENDAR_IDS = [
-  'fr.sn#holiday@group.v.calendar.google.com',
-  'en.sn#holiday@group.v.calendar.google.com',
-];
-
-async function fetchHolidaysWithApiKey(apiKey: string, year: number): Promise<HolidayEntry[] | null> {
-  const params = new URLSearchParams({
-    key: apiKey,
-    timeMin: `${year}-01-01T00:00:00Z`,
-    timeMax: `${year + 1}-01-01T00:00:00Z`,
-    maxResults: '50',
-    singleEvents: 'true',
-  });
-
-  for (const calId of SENEGAL_CALENDAR_IDS) {
-    try {
-      const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events?${params}`;
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const json = await res.json();
-      const items = (json.items || []) as { id: string; summary: string; start: { date?: string } }[];
-      if (items.length === 0) continue;
-      return items
-        .map(ev => ({ date: ev.start.date ?? '', title: ev.summary, type: 'fixed' as const }))
-        .filter(e => e.date);
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
+import { fetchJoursFeriesGoogle } from '@/services/jours-feries-service';
 
 // ─── Color options ────────────────────────────────────────────────────────────
 
@@ -93,22 +60,15 @@ export default function CalendrierTab() {
 
   // ── Load holidays ──
   useEffect(() => {
-    const apiKey = import.meta.env.VITE_GOOGLE_API_KEY as string | undefined;
-    // Only attempt if API key is set and looks like a real key (starts with AIza)
-    if (apiKey && apiKey.startsWith('AIza')) {
-      fetchHolidaysWithApiKey(apiKey, year).then(result => {
-        if (result && result.length > 0) {
-          setHolidays(result);
-          setHolidaySource('google');
-        } else {
-          setHolidays(getSenegalHolidays(year));
-          setHolidaySource('local');
-        }
-      });
-    } else {
-      setHolidays(getSenegalHolidays(year));
-      setHolidaySource('local');
-    }
+    let annule = false;
+    setHolidays(getSenegalHolidays(year));
+    setHolidaySource('local');
+    fetchJoursFeriesGoogle(year).then(result => {
+      if (annule || !result) return;
+      setHolidays(result);
+      setHolidaySource('google');
+    });
+    return () => { annule = true; };
   }, [year]);
 
   // ── Load custom events ──
