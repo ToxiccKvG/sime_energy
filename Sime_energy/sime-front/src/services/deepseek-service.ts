@@ -2,6 +2,7 @@ import { supabase } from '@/lib/db';
 import { backendHeaders } from './backend-client';
 import { getAudit, getAuditSites, getAuditBuildings } from '@/lib/audit-service';
 import { getInventorySnapshot } from '@/lib/inventory-service';
+import { mapOcrToInvoiceData } from '@/lib/invoice-mapper';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -16,6 +17,16 @@ interface SynthesisResult {
 
 // ─── Collecte du contexte audit ────────────────────────────────────────────
 
+// kWh et période de consommation lus dans l'OCR de la facture (même mapper que le reste de l'application).
+// Un OCR mal formé ne doit pas faire échouer toute la synthèse : on renvoie alors des valeurs vides.
+function extraireDonneesOcr(ocrData: unknown, montant: number | null) {
+  try {
+    return mapOcrToInvoiceData(ocrData, montant ?? undefined);
+  } catch {
+    return {};
+  }
+}
+
 async function buildAuditContext(auditId: string): Promise<string> {
   // Parallel fetch — tout ce dont l'IA a besoin
   const [audit, sites, snapshot, { data: invoices }, { data: measurements }] = await Promise.all([
@@ -24,7 +35,7 @@ async function buildAuditContext(auditId: string): Promise<string> {
     getInventorySnapshot(auditId),
     supabase
       .from('audit_invoices')
-      .select('supplier_name, invoice_date, total_amount, total_kwh, period_start, period_end')
+      .select('supplier, invoice_date, amount, ocr_data')
       .eq('audit_id', auditId)
       .order('invoice_date', { ascending: false })
       .limit(20),
@@ -89,17 +100,16 @@ async function buildAuditContext(auditId: string): Promise<string> {
       sites_couverts: [...new Set(snapshot.map((e) => e.siteName))],
       batiments_couverts: [...new Set(snapshot.map((e) => e.buildingName))],
     },
-    // TODO(bug) : la requête ci-dessus lit supplier_name, total_amount, total_kwh, period_start et period_end,
-    // colonnes absentes d'audit_invoices (les vraies : supplier, amount ; kWh et période sont dans ocr_data).
-    // Supabase refuse la requête : la synthèse IA est rédigée sans les factures. Signalé par le typage du
-    // 2026-10-21, correction à décider. FactureAttendue décrit la forme que ce code suppose.
-    factures: ((invoices ?? []) as unknown as FactureAttendue[]).map((inv) => ({
-      fournisseur: inv.supplier_name,
-      date: inv.invoice_date,
-      montant: inv.total_amount,
-      kwh: inv.total_kwh,
-      periode: `${inv.period_start ?? '?'} → ${inv.period_end ?? '?'}`,
-    })),
+    factures: (invoices ?? []).map((inv) => {
+      const extrait = extraireDonneesOcr(inv.ocr_data, inv.amount);
+      return {
+        fournisseur: inv.supplier,
+        date: inv.invoice_date,
+        montant: inv.amount,
+        kwh: extrait.conso_kwh_total ?? null,
+        periode: `${extrait.periode_debut_iso ?? '?'} → ${extrait.periode_fin_iso ?? '?'}`,
+      };
+    }),
     mesures: (measurements ?? []).map((m) => ({
       capteur: m.sensor_name,
       type: m.sensor_type,
@@ -116,15 +126,6 @@ async function buildAuditContext(auditId: string): Promise<string> {
 // La clé API DeepSeek est stockée côté serveur (DEEPSEEK_API_KEY dans .env backend).
 // Le frontend envoie uniquement le contexte JSON au backend, sans exposer la clé.
 
-// Forme supposée (à tort) des factures dans la synthèse : voir le TODO(bug) plus bas.
-type FactureAttendue = {
-  supplier_name?: string;
-  invoice_date?: string;
-  total_amount?: number;
-  total_kwh?: number;
-  period_start?: string;
-  period_end?: string;
-};
 
 export async function analyzeAuditWithAI(
   auditId: string,
