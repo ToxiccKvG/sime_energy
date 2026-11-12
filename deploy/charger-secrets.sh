@@ -5,7 +5,7 @@
 set -eu
 cd /opt/sime
 umask 077
-aws ssm get-parameters-by-path --region eu-west-3 --path /sime/api --with-decryption \
+aws ssm get-parameters-by-path --region eu-west-1 --path /sime/api --with-decryption \
   --query 'Parameters[].[Name,Value]' --output text \
   | awk -F'\t' '{ n = $1; sub(".*/", "", n); print n "=" $2 }' > api.env.tmp
 test -s api.env.tmp

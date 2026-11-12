@@ -2,11 +2,11 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "EC2ParisUniquement",
+      "Sid": "EC2IrlandeUniquement",
       "Effect": "Allow",
       "Action": "ec2:*",
       "Resource": "*",
-      "Condition": { "StringEquals": { "aws:RequestedRegion": "eu-west-3" } }
+      "Condition": { "StringEquals": { "aws:RequestedRegion": "eu-west-1" } }
     },
     {
       "Sid": "AttacherLeRoleSimeApiAuServeur",
@@ -21,7 +21,7 @@
       "Sid": "SecretsDuBackend",
       "Effect": "Allow",
       "Action": ["ssm:PutParameter", "ssm:GetParametersByPath", "ssm:DeleteParameter"],
-      "Resource": ["arn:aws:ssm:eu-west-3:*:parameter/sime/api", "arn:aws:ssm:eu-west-3:*:parameter/sime/api/*"]
+      "Resource": ["arn:aws:ssm:eu-west-1:*:parameter/sime/api", "arn:aws:ssm:eu-west-1:*:parameter/sime/api/*"]
     },
     {
       "Sid": "ListerLesParametres",

@@ -20,7 +20,7 @@
       "Sid": "SecretsDuBackend",
       "Effect": "Allow",
       "Action": "ssm:GetParametersByPath",
-      "Resource": "arn:aws:ssm:eu-west-3:*:parameter/sime/api"
+      "Resource": "arn:aws:ssm:eu-west-1:*:parameter/sime/api"
     }
   ]
 }
