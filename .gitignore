@@ -13,6 +13,7 @@ __MACOSX/
 .env
 .env.*
 !.env.example
+api.env
 *.pem
 *.key
 **/playwright/.auth/

@@ -76,14 +76,72 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Installer gitleaks (somme de contrôle vérifiée)
+      - name: Installer gitleaks (somme de contrôle figée)
         run: |
-          base=https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}
           archive=gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
-          curl -sSLO "$base/$archive"
-          curl -sSLO "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-          grep " $archive\$" gitleaks_${GITLEAKS_VERSION}_checksums.txt | sha256sum -c -
+          curl -sSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$archive"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $archive" | sha256sum -c -
           tar xzf "$archive" gitleaks
       # Tout l'historique de la branche testée (sans --log-opts, gitleaks scannerait toutes les branches)
       - name: Scanner l'historique
         run: ./gitleaks git --redact --no-banner --log-opts="HEAD" .
+
+  images:
+    name: Images Docker (build + démarrage + Trivy + GHCR)
+    runs-on: ubuntu-latest
+    # Environnement GitHub qui contient VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY (nom choisi à sa création)
+    environment: VITE_SUPABASE_URL
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TRIVY_VERSION: 0.76.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Construire les images
+        run: |
+          docker build -t sime-api:test Sime_energy/sime-backend-main
+          # Valeurs publiques du front : variables ou secrets du dépôt (Settings > Secrets and variables > Actions)
+          docker build -t sime-web:test \
+            --build-arg VITE_SUPABASE_URL="${{ vars.VITE_SUPABASE_URL || secrets.VITE_SUPABASE_URL }}" \
+            --build-arg VITE_SUPABASE_ANON_KEY="${{ vars.VITE_SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY }}" \
+            Sime_energy/sime-front
+      - name: Tester le démarrage (Caddy + API)
+        run: |
+          docker network create sime-test
+          docker run -d --name api --network sime-test \
+            -e SUPABASE_URL=https://ci.invalid -e SUPABASE_SERVICE_ROLE_KEY=ci sime-api:test
+          docker run -d --name web --network sime-test -e SITE_ADDRESS=:80 -p 8080:80 sime-web:test
+          for i in $(seq 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/V1/calendrier/jours-feries || true)
+            [ "$code" = 401 ] && break; sleep 2
+          done
+          echo "API derrière Caddy, sans jeton : $code (attendu 401)"; [ "$code" = 401 ]
+          curl -sf localhost:8080/ | grep -q 'id="root"'
+          curl -sf localhost:8080/audits | grep -q 'id="root"'
+          curl -sI localhost:8080/ | grep -qi '^content-security-policy:'
+          ! curl -s localhost:8080/docs | grep -qi swagger
+      - name: Journaux en cas d'échec
+        if: failure()
+        run: docker logs api; docker logs web
+      - name: Installer Trivy (somme de contrôle figée)
+        run: |
+          archive=trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz
+          curl -sSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$archive"
+          echo "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0  $archive" | sha256sum -c -
+          tar xzf "$archive" trivy
+      - name: Scanner les images (bloque sur high et critical corrigeables)
+        run: |
+          ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress sime-api:test
+          ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress sime-web:test
+      - name: Publier sur GHCR (feature/kevin et main)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/feature/kevin' || github.ref == 'refs/heads/main')
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for img in api web; do
+            for tag in latest "${GITHUB_SHA::8}"; do
+              docker tag "sime-$img:test" "ghcr.io/$owner/sime-$img:$tag"
+              docker push "ghcr.io/$owner/sime-$img:$tag"
+            done
+          done

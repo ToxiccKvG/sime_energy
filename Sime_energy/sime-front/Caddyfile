@@ -1,0 +1,27 @@
+# SITE_ADDRESS : domaine public (ex. 1-2-3-4.sslip.io puis sime.cer2e.com). Caddy obtient le certificat HTTPS.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Seul /api atteint le backend : /docs, /redoc et /openapi.json restent injoignables depuis Internet
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://geocoding-api.open-meteo.com https://archive-api.open-meteo.com https://nominatim.openstreetmap.org; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(self)"
+		-Server
+	}
+}
