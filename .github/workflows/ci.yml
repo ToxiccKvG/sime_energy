@@ -142,9 +142,11 @@ jobs:
           for img in api web; do
             for tag in latest "${GITHUB_SHA::8}"; do
               docker tag "sime-$img:test" "ghcr.io/$owner/sime-$img:$tag"
-              if ! out=$(docker push "ghcr.io/$owner/sime-$img:$tag" 2>&1); then
-                echo "::error title=Publication sime-$img:$tag::$(echo "$out" | tail -3 | tr '\n' ' ')"
-                exit 1
-              fi
+              # GHCR refuse parfois le premier envoi vers un paquet qu'il vient de créer : on réessaie
+              for essai in 1 2 3; do
+                out=$(docker push "ghcr.io/$owner/sime-$img:$tag" 2>&1) && break
+                [ "$essai" = 3 ] && { echo "::error title=Publication sime-$img:$tag::$(echo "$out" | tail -3 | tr '\n' ' ')"; exit 1; }
+                sleep 15
+              done
             done
           done
