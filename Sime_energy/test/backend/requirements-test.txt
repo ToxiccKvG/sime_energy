@@ -1,1 +1,4 @@
 pytest==9.0.3
+# Jetons de test (tests système) ; retiré des dépendances de l'application
+python-jose[cryptography]
+ecdsa>=0.19.2

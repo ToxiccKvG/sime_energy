@@ -33,8 +33,8 @@ jobs:
       - name: Tests unitaires
         working-directory: Sime_energy/test/backend
         run: python -m pytest unitaire
-      - name: Audit des dépendances (avertissement)
-        run: pip-audit -r Sime_energy/sime-backend-main/requirements.txt || echo "::warning title=pip-audit::Dépendances Python vulnérables, voir le journal de cette étape"
+      - name: Audit des dépendances
+        run: pip-audit -r Sime_energy/sime-backend-main/requirements.txt
 
   frontend:
     name: Front (vitest + tsc + build + bun audit)
@@ -62,9 +62,10 @@ jobs:
       - name: Build
         working-directory: Sime_energy/sime-front
         run: bun run build
-      - name: Audit des dépendances (avertissement)
+      # Bloque sur high et critical. Reste connu (moderate) : react-router 6, corrigé en v7, prévu avec la fusion Maurice.
+      - name: Audit des dépendances
         working-directory: Sime_energy/sime-front
-        run: bun audit --prod --audit-level=high || echo "::warning title=bun audit::Dépendances front vulnérables, voir le journal de cette étape"
+        run: bun audit --prod --audit-level=high
 
   secrets:
     name: Secrets (gitleaks, tout l'historique)
