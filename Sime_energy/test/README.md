@@ -8,7 +8,6 @@ test/
 ├── backend/
 │   ├── unitaire/   pytest — parseurs de capteurs, KPIs, extraction facture, tableaux, hiérarchie
 │   └── systeme/    pytest + TestClient — endpoints HTTP, services réels (Supabase, Textract, Bedrock, DeepSeek)
-├── outils/         compte_test.py (compte fictif, non utilisé actuellement)
 └── RAPPORT.md      résultats et anomalies de la dernière campagne
 ```
 

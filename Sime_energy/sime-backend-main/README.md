@@ -11,7 +11,7 @@ Responsable du traitement de fichiers (OCR factures, parsing CSV mesures, analys
 | Couche | Technologie |
 |---|---|
 | Framework | FastAPI 0.116 + Uvicorn |
-| Python | 3.10+ |
+| Python | 3.12 |
 | OCR | AWS Textract (factures PDF) + Mistral via AWS Bedrock (étiquettes) |
 | IA synthèse | DeepSeek Chat API |
 | Parsing CSV/XLS | Pandas 2.3 + chardet + openpyxl |
@@ -28,15 +28,17 @@ sime-backend-main/
 ├── main.py                          # Point d'entrée FastAPI, config CORS, port 5000
 ├── logging_config.py                # Configuration du logging
 ├── requirements.txt
-├── runtime.txt                      # python-3.10
+├── Dockerfile                       # Image de production (poppler inclus)
 ├── app/
 │   ├── api/
 │   │   └── V1/
-│   │       ├── __init__.py          # Montage des routers (/processing, /ai)
+│   │       ├── __init__.py          # Montage des routers (/processing, /ai, /calendrier)
 │   │       ├── processing/
 │   │       │   └── processing.py    # Tous les endpoints de traitement de fichiers
-│   │       └── ai/
-│   │           └── router.py        # Endpoint synthèse IA (DeepSeek)
+│   │       ├── ai/
+│   │       │   └── router.py        # Endpoint synthèse IA (DeepSeek)
+│   │       └── calendrier/
+│   │           └── router.py        # Jours fériés (Google Calendar, clé côté serveur)
 │   ├── core/
 │   │   ├── config.py                # Variables d'env + prompt OCR normalization
 │   │   ├── llm.py                   # Wrappers AWS Textract, Mistral Bedrock
@@ -45,10 +47,8 @@ sime-backend-main/
 │   │   ├── documents.py             # PDF, images et JSON des réponses LLM
 │   │   ├── unified_invoice_processor.py  # Processeur factures multi-pages
 │   │   ├── auth.py                  # Jeton Supabase et contrôle d'appartenance
+│   │   ├── limites.py               # Tailles de fichiers, pages et débit par utilisateur
 │   │   └── supabase_client.py       # Client Supabase partagé (service_role)
-└── scripts/
-    └── sql/
-        └── 01_schema.sql            # Schéma de référence legacy — NE PAS appliquer en prod
 ```
 
 > **Note:** Toutes les opérations DB passent par le client Supabase Python (`app/core/supabase_client.py`).
@@ -72,7 +72,7 @@ pip install -r requirements.txt
 
 ```bash
 # Ubuntu/Debian (WSL inclus)
-sudo apt install poppler-utils tesseract-ocr
+sudo apt install poppler-utils
 ```
 
 ---
