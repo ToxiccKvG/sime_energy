@@ -112,10 +112,7 @@ export function Login() {
       </form>
 
       <p className="mt-6 text-center text-sm text-slate-400">
-        Pas encore inscrit ?{" "}
-        <Link to="/signup" className="font-semibold text-primary hover:underline">
-          Créer un compte
-        </Link>
+        Accès sur invitation : demandez un lien à l'administrateur de votre organisation.
       </p>
     </AuthLayout>
   );
