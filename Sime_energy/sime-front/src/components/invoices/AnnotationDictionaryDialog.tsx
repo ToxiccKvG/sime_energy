@@ -58,7 +58,6 @@ import {
   Loader2,
   MoreVertical,
   FolderPlus,
-  Palette,
 } from 'lucide-react';
 import type { AnnotationDictionary, AnnotationField, TableTemplate } from '@/types/annotation-dictionary';
 import { DICTIONARY_COLORS } from '@/types/annotation-dictionary';

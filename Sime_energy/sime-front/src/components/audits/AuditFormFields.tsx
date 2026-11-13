@@ -6,8 +6,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 interface InputFieldProps {
   label: string;
   field: string;
-  value: any;
-  onChange: (field: string, value: any) => void;
+  value: string | number | null | undefined;
+  /** Nombre pour type="number", texte sinon */
+  onChange: (field: string, value: string | number) => void;
   type?: string;
 }
 
@@ -28,8 +29,8 @@ export function InputField({ label, field, value, onChange, type = "text" }: Inp
 interface TextareaFieldProps {
   label: string;
   field: string;
-  value: any;
-  onChange: (field: string, value: any) => void;
+  value: string | null | undefined;
+  onChange: (field: string, value: string) => void;
 }
 
 export function TextareaField({ label, field, value, onChange }: TextareaFieldProps) {

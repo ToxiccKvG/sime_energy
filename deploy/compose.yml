@@ -1,0 +1,41 @@
+# Serveur SIMEE, dans /opt/sime :
+#   sh charger-secrets.sh                      (api.env depuis AWS SSM Parameter Store)
+#   docker compose pull && docker compose up -d
+# Les images sont construites et scannées par GitHub Actions (ghcr.io).
+name: sime
+
+services:
+  web:
+    image: ghcr.io/toxicckvg/sime-web:${SIME_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?définir SITE_ADDRESS dans .env}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  api:
+    image: ghcr.io/toxicckvg/sime-api:${SIME_TAG:-latest}
+    restart: unless-stopped
+    # Secrets du backend (Supabase, DeepSeek, Google), générés depuis SSM. Pas de clés AWS : rôle IAM du serveur.
+    env_file: api.env
+    # Réglages non secrets
+    environment:
+      FRONTEND_URL: https://${SITE_ADDRESS}
+      CORS_EXTRA_ORIGINS: ""
+      AUTH_REQUIRED: "true"
+      AWS_DEFAULT_REGION: us-east-1
+      LLM_MODEL: mistral.mistral-small-2402-v1:0
+    # Pas de port publié : seul Caddy joint l'API, sur le réseau interne
+    expose:
+      - "8000"
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,6 @@
+pytest==9.0.3
+# Jetons de test (tests système) ; retiré des dépendances de l'application
+python-jose[cryptography]
+ecdsa>=0.19.2
+# Génération de PDF de test (test_factures_api.py)
+weasyprint>=70.0

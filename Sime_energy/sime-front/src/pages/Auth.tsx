@@ -45,18 +45,47 @@ export default function Auth() {
             return;
           }
 
-          // Si c'est une invitation (type=invite), rediriger vers signup pour compléter le profil
-          if (type === 'invite') {
-            // Récupérer l'email de l'utilisateur depuis la session
-            const user = data.session?.user;
-            const userEmail = user?.email || '';
-            
-            // Rediriger vers signup avec l'email en query param ET les tokens dans le hash
-            // Cela permet à Signup de récupérer l'email facilement
-            navigate(`/signup?email=${encodeURIComponent(userEmail)}&type=invite${window.location.hash}`);
+              if (type === 'invite') {
+            // Invitation : passer les tokens via React Router state (non accessible par XSS).
+            // La session sera créée dans Signup.tsx APRÈS que l'utilisateur ait défini son mot de passe.
+            const userEmail = data.session?.user?.email || '';
+
+            // Annuler la session créée par setSession — on veut juste l'email
+            await supabase.auth.signOut();
+
+            navigate(`/signup?type=invite&email=${encodeURIComponent(userEmail)}`, {
+              state: { accessToken, refreshToken },
+            });
+
+          } else if (type === 'recovery') {
+            // Reset mot de passe : passer les tokens via React Router state.
+            await supabase.auth.signOut();
+            navigate('/reset-password', {
+              state: { accessToken, refreshToken },
+            });
+
+          } else if (type === 'signup') {
+            // Email confirmed: add user to their selected organization
+            const userId = data.session?.user?.id;
+            const organizationId = data.session?.user?.user_metadata?.organization_id;
+            if (userId && organizationId) {
+              try {
+                await supabase.from('organization_users').insert([{
+                  organization_id: organizationId,
+                  user_id: userId,
+                  role: 'member',
+                }]);
+              } catch {
+                // Ignore duplicate errors — user may already be in org
+              }
+            }
+            // Sign out after confirmation so user logs in fresh
+            await supabase.auth.signOut();
+            navigate('/login?confirmed=true');
+
           } else {
-            // Sinon, rediriger vers l'accueil
-            navigate('/');
+            // Type inconnu — rediriger vers login par sécurité
+            navigate('/login');
           }
         } catch (err) {
           console.error('Erreur lors du traitement du callback:', err);
@@ -79,7 +108,7 @@ export default function Auth() {
         <div className="flex items-center justify-center py-10">
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-slate-300">Traitement de votre invitation...</p>
+            <p className="text-slate-300">Vérification du lien en cours…</p>
           </div>
         </div>
       </AuthLayout>

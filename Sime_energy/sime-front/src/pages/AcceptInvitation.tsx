@@ -253,12 +253,6 @@ export default function AcceptInvitation() {
               <p className="text-xs font-semibold uppercase text-slate-400">Organisation</p>
               <p className="text-lg font-semibold text-white">{organization.name}</p>
             </div>
-            {organization.description && (
-              <div>
-                <p className="text-xs font-semibold uppercase text-slate-400">Description</p>
-                <p className="text-sm text-slate-300">{organization.description}</p>
-              </div>
-            )}
             {invitation.invited_email && (
               <div>
                 <p className="text-xs font-semibold uppercase text-slate-400">Email invité</p>

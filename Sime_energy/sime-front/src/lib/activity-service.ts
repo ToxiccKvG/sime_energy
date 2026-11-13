@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, toJson } from '@/lib/db';
 
 export interface AuditActivityLog {
   id: string;
@@ -8,7 +8,7 @@ export interface AuditActivityLog {
   action_type: 'invoice_imported' | 'invoice_verified' | 'measurement_recorded' | 'task_created' | 'task_completed' | 'site_visited' | 'custom';
   title: string;
   description: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 
@@ -19,7 +19,7 @@ export async function logActivity(
   actionType: AuditActivityLog['action_type'],
   title: string,
   description: string,
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 ) {
   try {
     const { data, error } = await supabase
@@ -32,7 +32,7 @@ export async function logActivity(
           action_type: actionType,
           title,
           description,
-          metadata: metadata || {},
+          metadata: toJson(metadata || {}),
         },
       ])
       .select()
@@ -64,32 +64,14 @@ export async function getAuditActivity(auditId: string) {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data || [];
+  return (data || []) as AuditActivityLog[];
 }
 
-export async function getAuditActivityWithUserNames(auditId: string) {
-  // Get activities with user names from auth.users table
-  const { data, error } = await supabase
+export async function deleteActivity(activityId: string) {
+  const { error } = await supabase
     .from('audit_activity')
-    .select('*')
-    .eq('audit_id', auditId)
-    .order('created_at', { ascending: false });
-
+    .delete()
+    .eq('id', activityId);
   if (error) throw error;
-
-  // Get user names for all activities
-  const activities = data || [];
-  const uniqueUserIds = [...new Set(activities.map(a => a.user_id))];
-
-  if (uniqueUserIds.length === 0) {
-    return activities;
-  }
-
-  // Try to get user info from auth.users (this might fail due to RLS)
-  const enrichedActivities = activities.map(activity => ({
-    ...activity,
-    user_email: 'Utilisateur', // Fallback since we can't access auth.users from client
-  }));
-
-  return enrichedActivities;
 }
+

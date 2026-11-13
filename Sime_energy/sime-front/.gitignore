@@ -1,3 +1,7 @@
+# Environment variables — never commit
+.env
+.env.local
+
 # Logs
 logs
 *.log
@@ -30,3 +34,6 @@ dist-ssr
 
 # Cache du CLI Supabase (métadonnées de projet liées localement)
 supabase/.temp/
+CLAUDE.md
+.claude/
+*.timestamp-*.mjs

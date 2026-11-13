@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { exportMultiSheetXlsx } from '@/lib/excel-utils';
-import { MeasurementData, measurementLabel } from '@/services/measurementService';
+import { MeasurementData, measurementLabel } from '@/services/measurement-service';
 import {
   compareModels, detectClockOffset, extractUnit, kindForUnit, numericKeys, STEPS,
   type ModelComparison, type SeriesSpec, type StepKey,

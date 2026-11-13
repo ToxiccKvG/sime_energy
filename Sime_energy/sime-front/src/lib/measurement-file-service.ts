@@ -10,7 +10,7 @@
 // ============================================================
 
 import { supabase } from '@/lib/supabase';
-import type { MeasurementData } from '@/services/measurementService';
+import type { MeasurementData } from '@/services/measurement-service';
 import { computeMeasurementKpis } from '@/services/measurementStats';
 import { uploadJson, downloadJson, removeObject, type ContentEncoding } from '@/lib/storage-json';
 

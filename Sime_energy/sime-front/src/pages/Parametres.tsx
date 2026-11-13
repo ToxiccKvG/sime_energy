@@ -1,402 +1,728 @@
-import { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import React, { useEffect, useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { User, Bell, Monitor, Shield, Building2, Globe } from 'lucide-react';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import {
+  User, Shield, Zap, Building2,
+  Loader2, Mail, Calculator,
+  Plus, X, CalendarDays, CloudSun, Wind, RefreshCw,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { useTheme } from 'next-themes';
+import { useAuth } from '@/context/AuthContext';
+import { useOrganization } from '@/context/OrganizationContext';
+import { updateCurrentUserMetadata, updateCurrentUserPassword, verifyPassword } from '@/lib/auth-service';
+import { cn } from '@/lib/utils';
+import { SENELEC_TARIFFS, CATEGORY_LABELS, setCustomTariffGrids } from '@/constants/senelec-tariffs';
+import type { TariffYear } from '@/constants/senelec-tariffs';
+import CalendrierTab from '@/components/parametres/CalendrierTab';
+import MeteoTab from '@/components/parametres/MeteoTab';
+import type { MeteoSettings } from '@/services/meteo-service';
+import { DEFAULT_METEO_SETTINGS } from '@/services/meteo-service';
+import {
+  useOrganizationSettings, useUpdateOrganizationSettings, refreshProjectContextsInBackground,
+} from '@/hooks/useOrganizationSettings';
 
-const Parametres = () => {
-  const [emailNotifications, setEmailNotifications] = useState(true);
-  const [pushNotifications, setPushNotifications] = useState(false);
-  const { theme, setTheme } = useTheme();
+type Tab = 'compte' | 'securite' | 'energie' | 'meteo' | 'calendrier';
 
-  const handleSaveProfile = () => {
-    toast.success('Profil mis à jour avec succès');
+const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType; desc: string }[] = [
+  { id: 'compte',     label: 'Mon Compte',       icon: User,          desc: 'Profil & organisation' },
+  { id: 'securite',   label: 'Sécurité',          icon: Shield,        desc: 'Mot de passe' },
+  { id: 'energie',    label: 'Calculs & Énergie', icon: Zap,           desc: 'Grilles tarifaires SENELEC' },
+  { id: 'meteo',      label: 'Météo & Climat',    icon: CloudSun,      desc: 'Températures & coeff. BTU' },
+  { id: 'calendrier', label: 'Calendrier',         icon: CalendarDays,  desc: 'Jours fériés & événements' },
+];
+
+// ─── Tariff table config ─────────────────────────────────────────────────────
+
+const TARIFF_SECTIONS: { label: string; domain: 'BT' | 'MT' | 'HT'; cats: string[]; hasTranches: boolean }[] = [
+  { label: 'BT — Petite / Moyenne Puissance', domain: 'BT', cats: ['DPP', 'DMP', 'PPP', 'PMP'], hasTranches: true },
+  { label: 'BT — Grande Puissance',            domain: 'BT', cats: ['DGP', 'PGP'],               hasTranches: false },
+  { label: 'Moyenne Tension',                   domain: 'MT', cats: ['TCU', 'TG', 'TLU'],         hasTranches: false },
+  { label: 'Haute Tension',                     domain: 'HT', cats: ['HTS', 'HTG'],               hasTranches: false },
+];
+
+const STANDARD_YEARS: TariffYear[] = [2017, 2019, 2023, 2026];
+
+// Grille éditable : domaine (BT, MT, HT) → catégorie → champ (t1, k1, pf...) → prix.
+type GrilleTarifaire = Record<string, Record<string, Record<string, number | null>>>;
+
+function deepClone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v));
+}
+
+export default function Parametres() {
+  const { user } = useAuth();
+  const { organization } = useOrganization();
+  const [activeTab, setActiveTab] = useState<Tab>('compte');
+
+  const meta          = user?.user_metadata || {};
+  const energyMetaRaw = (meta.energy_settings || {}) as Record<string, unknown>;
+
+  // ── Tariff grids ──
+  const [activeYear, setActiveYear] = useState<number>(2023);
+  const [addingYear, setAddingYear] = useState(false);
+  const [newYearInput, setNewYearInput] = useState('');
+
+  const [grids, setGrids] = useState<Record<number, GrilleTarifaire>>(() => {
+    const saved = (energyMetaRaw.custom_tariff_grids || {}) as Record<number, GrilleTarifaire>;
+    const result: Record<number, GrilleTarifaire> = {};
+    // Standard years always start from canonical constants — saved data only
+    // applies to custom (non-standard) years so that updated defaults are always visible.
+    for (const y of STANDARD_YEARS) {
+      result[y] = deepClone(SENELEC_TARIFFS[y]) as unknown as GrilleTarifaire;
+    }
+    // restore any extra custom years from saved data
+    for (const y of Object.keys(saved).map(Number)) {
+      if (!(STANDARD_YEARS as number[]).includes(y)) result[y] = saved[y];
+    }
+    return result;
+  });
+
+  const updateCell = (domain: string, cat: string, field: string, raw: string) => {
+    const val = raw === '' ? null : parseFloat(raw);
+    setGrids(prev => ({
+      ...prev,
+      [activeYear]: {
+        ...prev[activeYear],
+        [domain]: {
+          ...prev[activeYear][domain],
+          [cat]: { ...prev[activeYear][domain]?.[cat], [field]: isNaN(val as number) ? null : val },
+        },
+      },
+    }));
   };
 
-  const handleSaveNotifications = () => {
-    toast.success('Préférences de notification sauvegardées');
+  const handleAddYear = () => {
+    const year = parseInt(newYearInput);
+    if (!year || year < 2000 || year > 2100) { toast.error('Année invalide'); return; }
+    if (grids[year]) { toast.error('Cette année existe déjà'); return; }
+    const existing = Object.keys(grids).map(Number).sort((a, b) => b - a);
+    const source = existing.find(y => y <= year) ?? existing[0];
+    setGrids(prev => ({ ...prev, [year]: deepClone(prev[source]) }));
+    setActiveYear(year);
+    setAddingYear(false);
+    setNewYearInput('');
   };
 
-  const handleSaveDisplay = () => {
-    toast.success('Préférences d\'affichage sauvegardées');
+  const handleRemoveYear = (year: number) => {
+    if (STANDARD_YEARS.includes(year as TariffYear)) {
+      toast.error('Impossible de supprimer une grille standard');
+      return;
+    }
+    setGrids(prev => {
+      const next = { ...prev };
+      delete next[year];
+      return next;
+    });
+    setActiveYear(2023);
   };
+
+  // ── Mon Compte ──
+  const [firstName, setFirstName] = useState<string>(meta.first_name || '');
+  const [lastName,  setLastName]  = useState<string>(meta.last_name  || '');
+  const [phone,     setPhone]     = useState<string>(meta.phone      || '');
+  const [poste,     setPoste]     = useState<string>(meta.poste      || '');
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  // ── Sécurité ──
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword,     setNewPassword]     = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [savingPassword, setSavingPassword]   = useState(false);
+
+  // ── Calculs & Énergie ──
+  const [savingEnergie, setSavingEnergie] = useState(false);
+
+  // ── Coefs BTU partagés (Énergie ↔ Météo) — stockés dans organizations.settings.meteo ──
+  const { data: orgSettings } = useOrganizationSettings(organization?.id);
+  const updateOrgSettings = useUpdateOrganizationSettings(organization?.id, user?.id);
+  const [coefC, setCoefC] = useState<number>(DEFAULT_METEO_SETTINGS.coef_c);
+  const [coefG, setCoefG] = useState<number>(DEFAULT_METEO_SETTINGS.coef_g);
+  const [tRefClim, setTRefClim] = useState<number>(DEFAULT_METEO_SETTINGS.t_ref_climatisation);
+  const [tRefChauf, setTRefChauf] = useState<number>(DEFAULT_METEO_SETTINGS.t_ref_chauffage);
+
+  useEffect(() => {
+    const m = orgSettings?.meteo;
+    if (!m) return;
+    setCoefC(m.coef_c ?? DEFAULT_METEO_SETTINGS.coef_c);
+    setCoefG(m.coef_g ?? DEFAULT_METEO_SETTINGS.coef_g);
+    setTRefClim(m.t_ref_climatisation ?? DEFAULT_METEO_SETTINGS.t_ref_climatisation);
+    setTRefChauf(m.t_ref_chauffage ?? DEFAULT_METEO_SETTINGS.t_ref_chauffage);
+  }, [orgSettings?.meteo]);
+
+  const getInitials = () => {
+    if (firstName && lastName) return `${firstName[0]}${lastName[0]}`.toUpperCase();
+    return (user?.email?.[0] || 'U').toUpperCase();
+  };
+
+  const handleSaveProfile = async () => {
+    setSavingProfile(true);
+    try {
+      const { error } = await updateCurrentUserMetadata({ first_name: firstName, last_name: lastName, phone, poste });
+      if (error) throw error;
+      toast.success('Profil mis à jour');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleSavePassword = async () => {
+    if (!currentPassword) { toast.error('Entrez votre mot de passe actuel'); return; }
+    if (!newPassword || newPassword.length < 6) { toast.error('Minimum 6 caractères'); return; }
+    if (newPassword !== confirmPassword) { toast.error('Les mots de passe ne correspondent pas'); return; }
+    setSavingPassword(true);
+    try {
+      const { error: authError } = await verifyPassword(user?.email || '', currentPassword);
+      if (authError) { toast.error('Mot de passe actuel incorrect'); return; }
+      const { error } = await updateCurrentUserPassword(newPassword);
+      if (error) throw error;
+      toast.success('Mot de passe mis à jour');
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur');
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+
+  const handleSaveEnergie = async () => {
+    setSavingEnergie(true);
+    try {
+      // Grilles tarifaires : restent par utilisateur (lues par AuthContext)
+      const { error } = await updateCurrentUserMetadata({
+        energy_settings: {
+          ...energyMetaRaw,
+          custom_tariff_grids: grids,
+        },
+      });
+      if (error) throw error;
+      // Vue éditable → structure des grilles SENELEC attendue par le simulateur
+      setCustomTariffGrids(grids as unknown as Parameters<typeof setCustomTariffGrids>[0]);
+      // Coefs BTU : réglages d'organisation, sans écraser le reste de la météo
+      if (organization?.id && user?.id) {
+        const meteo: MeteoSettings = {
+          ...DEFAULT_METEO_SETTINGS,
+          ...(orgSettings?.meteo ?? {}),
+          coef_c: coefC,
+          coef_g: coefG,
+          t_ref_climatisation: tRefClim,
+          t_ref_chauffage: tRefChauf,
+        };
+        await updateOrgSettings.mutateAsync({ meteo });
+      }
+      toast.success('Paramètres de calcul sauvegardés');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur');
+    } finally {
+      setSavingEnergie(false);
+    }
+  };
+
+  const sortedYears = Object.keys(grids).map(Number).sort((a, b) => a - b);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold text-foreground">Paramètres</h1>
-        <p className="mt-1 text-muted-foreground">
-          Gérez les paramètres de votre compte et de l'application
-        </p>
-      </div>
+    <div className="flex flex-col md:flex-row gap-6 md:gap-8">
+      {/* Sidebar */}
+      <aside className="w-full md:w-56 md:shrink-0">
+        <div className="md:sticky md:top-6 space-y-1">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 px-3 mb-3">
+            Paramètres
+          </p>
+          {NAV_ITEMS.map(({ id, label, icon: Icon, desc }) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={cn(
+                'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-150 group',
+                activeTab === id
+                  ? 'bg-violet-600/15 border border-violet-500/30 text-violet-300'
+                  : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200 border border-transparent'
+              )}
+            >
+              <div className={cn(
+                'p-1.5 rounded-lg transition-colors shrink-0',
+                activeTab === id
+                  ? 'bg-violet-500/20 text-violet-400'
+                  : 'bg-slate-800 text-slate-500 group-hover:text-slate-300'
+              )}>
+                <Icon className="h-3.5 w-3.5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium leading-none mb-0.5">{label}</p>
+                <p className="text-[10px] text-slate-500 leading-none truncate">{desc}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </aside>
 
-      <Tabs defaultValue="profile" className="space-y-6">
-        <TabsList className="grid w-full max-w-2xl grid-cols-6">
-          <TabsTrigger value="profile">
-            <User className="h-4 w-4 mr-2" />
-            Profil
-          </TabsTrigger>
-          <TabsTrigger value="notifications">
-            <Bell className="h-4 w-4 mr-2" />
-            Notifications
-          </TabsTrigger>
-          <TabsTrigger value="display">
-            <Monitor className="h-4 w-4 mr-2" />
-            Affichage
-          </TabsTrigger>
-          <TabsTrigger value="security">
-            <Shield className="h-4 w-4 mr-2" />
-            Sécurité
-          </TabsTrigger>
-          <TabsTrigger value="organization">
-            <Building2 className="h-4 w-4 mr-2" />
-            Organisation
-          </TabsTrigger>
-          <TabsTrigger value="regional">
-            <Globe className="h-4 w-4 mr-2" />
-            Régional
-          </TabsTrigger>
-        </TabsList>
+      {/* Content */}
+      <div className="flex-1 max-w-3xl space-y-5">
 
-        {/* Profil */}
-        <TabsContent value="profile">
-          <Card>
-            <CardHeader>
-              <CardTitle>Informations du profil</CardTitle>
-              <CardDescription>
-                Mettez à jour vos informations personnelles
+        {/* ─── Mon Compte ─── */}
+        {activeTab === 'compte' && (
+          <>
+            <div className="flex items-center gap-4 px-5 py-4 bg-[#1a1d2e] border border-slate-800 rounded-2xl">
+              <Avatar className="h-14 w-14 shrink-0">
+                <AvatarFallback className="bg-violet-600/25 text-violet-300 text-lg font-bold border border-violet-500/30">
+                  {getInitials()}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+                <p className="text-base font-semibold text-slate-100">
+                  {firstName && lastName ? `${firstName} ${lastName}` : user?.email?.split('@')[0]}
+                </p>
+                <p className="text-xs text-slate-400">{user?.email}</p>
+                {organization && (
+                  <p className="text-[11px] text-violet-400 mt-0.5 font-medium">{organization.name}</p>
+                )}
+              </div>
+            </div>
+
+            <Card className="bg-[#1a1d2e] border-slate-800">
+              <CardHeader className="pb-4">
+                <SectionHeader icon={<User className="h-3.5 w-3.5 text-blue-400" />} iconBg="bg-blue-500/15" title="Informations personnelles" />
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Field label="Prénom">
+                    <Input value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Jean" className={inputCls} />
+                  </Field>
+                  <Field label="Nom">
+                    <Input value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Diop" className={inputCls} />
+                  </Field>
+                </div>
+                <Field label="Email">
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+                    <Input value={user?.email || ''} disabled className="bg-slate-800/30 border-slate-700/50 text-slate-500 h-9 text-sm pl-9 rounded-lg" />
+                  </div>
+                </Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Téléphone">
+                    <Input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+221 77 000 00 00" className={inputCls} />
+                  </Field>
+                  <Field label="Poste / Fonction">
+                    <Input value={poste} onChange={e => setPoste(e.target.value)} placeholder="Auditeur énergétique" className={inputCls} />
+                  </Field>
+                </div>
+                <Button onClick={handleSaveProfile} disabled={savingProfile} size="sm" className="bg-violet-600 hover:bg-violet-700 text-white">
+                  {savingProfile && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                  Enregistrer
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-[#1a1d2e] border-slate-800">
+              <CardHeader className="pb-4">
+                <SectionHeader icon={<Building2 className="h-3.5 w-3.5 text-emerald-400" />} iconBg="bg-emerald-500/15" title="Organisation" />
+              </CardHeader>
+              <CardContent>
+                {organization ? (
+                  <div className="rounded-xl border border-slate-700/50 bg-slate-800/30 p-4 space-y-3">
+                    <InfoRow label="Nom" value={organization.name} />
+                    {organization.slug && <InfoRow label="Identifiant" value={organization.slug} mono />}
+                    {organization.description && <InfoRow label="Description" value={organization.description} />}
+                    <Separator className="bg-slate-700/50" />
+                    <div className="flex items-center justify-between gap-4">
+                      <p className="text-[11px] text-slate-500">
+                        Contexte JSON des projets (<span className="font-mono">audits.project_context</span>) partagé avec les autres modules.
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0 h-8 text-xs border-slate-700 bg-slate-800/50 text-slate-300 hover:bg-slate-800"
+                        onClick={() => {
+                          refreshProjectContextsInBackground(organization.id, user?.id ?? null, true);
+                        }}
+                      >
+                        <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                        Régénérer tous les projets
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-amber-700/30 bg-amber-500/10 p-4">
+                    <p className="text-xs text-amber-300">
+                      Vous n'êtes pas encore membre d'une organisation. Contactez votre administrateur ou créez-en une depuis la page de connexion.
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        {/* ─── Sécurité ─── */}
+        {activeTab === 'securite' && (
+          <Card className="bg-[#1a1d2e] border-slate-800">
+            <CardHeader className="pb-4">
+              <SectionHeader icon={<Shield className="h-3.5 w-3.5 text-red-400" />} iconBg="bg-red-500/15" title="Changer le mot de passe" />
+              <CardDescription className="text-xs text-slate-500 mt-1 ml-8">
+                Entrez votre mot de passe actuel pour confirmer votre identité.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="firstName">Prénom</Label>
-                  <Input id="firstName" placeholder="Marie" defaultValue="Marie" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lastName">Nom</Label>
-                  <Input id="lastName" placeholder="Diop" defaultValue="Diop" />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" placeholder="marie.diop@example.com" defaultValue="marie.diop@example.com" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">Téléphone</Label>
-                <Input id="phone" type="tel" placeholder="+221 XX XXX XX XX" defaultValue="+221 77 123 45 67" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="role">Rôle</Label>
-                <Input id="role" placeholder="Ingénieur énergétique" defaultValue="Ingénieur énergétique" disabled />
-              </div>
-              <Separator />
-              <Button onClick={handleSaveProfile}>Sauvegarder les modifications</Button>
+              <Field label="Mot de passe actuel">
+                <Input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} placeholder="••••••••" className={inputCls} />
+              </Field>
+              <Separator className="border-slate-800" />
+              <Field label="Nouveau mot de passe">
+                <Input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="••••••••" className={inputCls} />
+                <p className="text-[10px] text-slate-500 mt-1">Minimum 6 caractères</p>
+              </Field>
+              <Field label="Confirmer le nouveau mot de passe">
+                <Input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="••••••••" className={inputCls} />
+              </Field>
+              <Button
+                onClick={handleSavePassword}
+                disabled={savingPassword || !currentPassword || !newPassword}
+                size="sm"
+                className="bg-violet-600 hover:bg-violet-700 text-white"
+              >
+                {savingPassword && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                Mettre à jour le mot de passe
+              </Button>
             </CardContent>
           </Card>
-        </TabsContent>
+        )}
 
-        {/* Notifications */}
-        <TabsContent value="notifications">
-          <Card>
-            <CardHeader>
-              <CardTitle>Préférences de notification</CardTitle>
-              <CardDescription>
-                Gérez comment vous souhaitez recevoir les notifications
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Notifications par email</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Recevez des alertes pour les activités importantes
-                  </p>
-                </div>
-                <Switch checked={emailNotifications} onCheckedChange={setEmailNotifications} />
-              </div>
-              <Separator />
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Notifications push</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Recevez des notifications dans votre navigateur
-                  </p>
-                </div>
-                <Switch checked={pushNotifications} onCheckedChange={setPushNotifications} />
-              </div>
-              <Separator />
-              <div className="space-y-3">
-                <Label>Types de notifications</Label>
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <Switch id="notif-invoices" defaultChecked />
-                    <Label htmlFor="notif-invoices" className="text-sm font-normal">
-                      Nouvelles factures importées
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Switch id="notif-actions" defaultChecked />
-                    <Label htmlFor="notif-actions" className="text-sm font-normal">
-                      Actions et tâches assignées
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Switch id="notif-measures" defaultChecked />
-                    <Label htmlFor="notif-measures" className="text-sm font-normal">
-                      Nouvelles mesures disponibles
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Switch id="notif-reports" />
-                    <Label htmlFor="notif-reports" className="text-sm font-normal">
-                      Rapports générés
-                    </Label>
-                  </div>
-                </div>
-              </div>
-              <Separator />
-              <Button onClick={handleSaveNotifications}>Sauvegarder les préférences</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
+        {/* ─── Calculs & Énergie ─── */}
+        {activeTab === 'energie' && (
+          <>
+            {/* ── Grilles tarifaires ── */}
+            <Card className="bg-[#1a1d2e] border-slate-800">
+              <CardHeader className="pb-3">
+                <SectionHeader icon={<Calculator className="h-3.5 w-3.5 text-amber-400" />} iconBg="bg-amber-500/15" title="Grilles tarifaires SENELEC" />
+              </CardHeader>
+              <CardContent>
+                {/* Year tabs */}
+                <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+                  {sortedYears.map(y => {
+                    const isStandard = (STANDARD_YEARS as number[]).includes(y);
+                    return (
+                      <div key={y} className="relative group">
+                        <button
+                          onClick={() => setActiveYear(y)}
+                          className={cn(
+                            'px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+                            activeYear === y
+                              ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300'
+                              : 'bg-slate-800/60 border border-slate-700/60 text-slate-400 hover:text-slate-200'
+                          )}
+                        >
+                          Grille {y}
+                          {!isStandard && (
+                            <span className="ml-1.5 text-[9px] bg-violet-500/20 text-violet-400 px-1 rounded">custom</span>
+                          )}
+                        </button>
+                        {!isStandard && (
+                          <button
+                            onClick={() => handleRemoveYear(y)}
+                            className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-red-500/80 text-white"
+                          >
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
 
-        {/* Affichage */}
-        <TabsContent value="display">
-          <Card>
-            <CardHeader>
-              <CardTitle>Préférences d'affichage</CardTitle>
-              <CardDescription>
-                Personnalisez l'apparence de l'application
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Mode sombre</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Activer le thème sombre pour l'interface
-                  </p>
+                  {/* Add year */}
+                  {addingYear ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        type="number"
+                        value={newYearInput}
+                        onChange={e => setNewYearInput(e.target.value)}
+                        placeholder="2027"
+                        className="h-7 w-20 text-xs bg-slate-800/50 border-slate-700 text-slate-100 px-2"
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleAddYear();
+                          if (e.key === 'Escape') { setAddingYear(false); setNewYearInput(''); }
+                        }}
+                        autoFocus
+                      />
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-emerald-400 hover:text-emerald-300" onClick={handleAddYear}>OK</Button>
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-slate-500" onClick={() => { setAddingYear(false); setNewYearInput(''); }}>
+                        Annuler
+                      </Button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setAddingYear(true)}
+                      className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800/60 border border-dashed border-slate-700/60 text-slate-500 hover:text-slate-300 hover:border-slate-600 text-xs transition-all"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Ajouter une grille
+                    </button>
+                  )}
                 </div>
-                <Switch 
-                  checked={theme === 'dark'} 
-                  onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')} 
+
+                {/* Tariff table */}
+                {grids[activeYear] && (
+                  <TariffTable grid={grids[activeYear]} onUpdate={updateCell} />
+                )}
+              </CardContent>
+            </Card>
+
+            {/* ── Coefs BTU ── */}
+            <Card className="bg-[#1a1d2e] border-slate-800">
+              <CardHeader className="pb-4">
+                <SectionHeader
+                  icon={<Wind className="h-3.5 w-3.5 text-violet-400" />}
+                  iconBg="bg-violet-500/15"
+                  title="Coefficients BTU & Confort"
                 />
-              </div>
-              <Separator />
-              <div className="space-y-2">
-                <Label htmlFor="language">Langue</Label>
-                <Select defaultValue="fr">
-                  <SelectTrigger id="language">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="fr">Français</SelectItem>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="wo">Wolof</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="density">Densité de l'interface</Label>
-                <Select defaultValue="comfortable">
-                  <SelectTrigger id="density">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="compact">Compacte</SelectItem>
-                    <SelectItem value="comfortable">Confortable</SelectItem>
-                    <SelectItem value="spacious">Spacieuse</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="defaultView">Vue par défaut au démarrage</Label>
-                <Select defaultValue="dashboard">
-                  <SelectTrigger id="defaultView">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="dashboard">Dashboard</SelectItem>
-                    <SelectItem value="audits">Audits</SelectItem>
-                    <SelectItem value="invoices">Factures</SelectItem>
-                    <SelectItem value="measures">Mesures</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Separator />
-              <Button onClick={handleSaveDisplay}>Sauvegarder les préférences</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Sécurité */}
-        <TabsContent value="security">
-          <Card>
-            <CardHeader>
-              <CardTitle>Sécurité</CardTitle>
-              <CardDescription>
-                Gérez la sécurité de votre compte
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-4">
-                <div>
-                  <h4 className="text-sm font-medium mb-3">Modifier le mot de passe</h4>
-                  <div className="space-y-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="currentPassword">Mot de passe actuel</Label>
-                      <Input id="currentPassword" type="password" />
+                <CardDescription className="text-xs text-slate-500 mt-1 ml-8">
+                  Partagés avec l'onglet <span className="text-violet-400">Météo & Climat</span>.
+                  Modification ici mise à jour dans les deux onglets.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-slate-400 font-medium">T° réf. Climatisation</Label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={tRefClim}
+                        step={1}
+                        onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) setTRefClim(n); }}
+                        className="w-full h-9 px-3 pr-8 rounded-lg border text-sm font-mono font-semibold text-right bg-slate-800/50 border-slate-700 outline-none focus:ring-2 focus:ring-violet-500/40 text-orange-400"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 pointer-events-none">°C</span>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="newPassword">Nouveau mot de passe</Label>
-                      <Input id="newPassword" type="password" />
+                    <p className="text-[10px] text-slate-600">Seuil déclenchement clim — base DJU clim</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-slate-400 font-medium">T° réf. Chauffage</Label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={tRefChauf}
+                        step={1}
+                        onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) setTRefChauf(n); }}
+                        className="w-full h-9 px-3 pr-8 rounded-lg border text-sm font-mono font-semibold text-right bg-slate-800/50 border-slate-700 outline-none focus:ring-2 focus:ring-violet-500/40 text-blue-400"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 pointer-events-none">°C</span>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="confirmPassword">Confirmer le mot de passe</Label>
-                      <Input id="confirmPassword" type="password" />
-                    </div>
+                    <p className="text-[10px] text-slate-600">Seuil déclenchement chauffage — base DJU chauf.</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-slate-400 font-medium">CoefC — Isolation</Label>
+                    <input
+                      type="number"
+                      value={coefC}
+                      step={0.1}
+                      onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) setCoefC(n); }}
+                      className="w-full h-9 px-3 rounded-lg border text-sm font-mono font-semibold text-right bg-slate-800/50 border-slate-700 outline-none focus:ring-2 focus:ring-violet-500/40 text-emerald-400"
+                    />
+                    <p className="text-[10px] text-slate-600">Coefficient enveloppe bâtiment</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-slate-400 font-medium">CoefG — Vitrage/Murs</Label>
+                    <input
+                      type="number"
+                      value={coefG}
+                      step={0.1}
+                      onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) setCoefG(n); }}
+                      className="w-full h-9 px-3 rounded-lg border text-sm font-mono font-semibold text-right bg-slate-800/50 border-slate-700 outline-none focus:ring-2 focus:ring-violet-500/40 text-amber-400"
+                    />
+                    <p className="text-[10px] text-slate-600">Coefficient vitrage et murs ext.</p>
                   </div>
                 </div>
-              </div>
-              <Separator />
-              <div className="space-y-3">
-                <h4 className="text-sm font-medium">Authentification à deux facteurs</h4>
-                <p className="text-sm text-muted-foreground">
-                  Ajoutez une couche de sécurité supplémentaire à votre compte
-                </p>
-                <Button variant="outline">Activer 2FA</Button>
-              </div>
-              <Separator />
-              <div className="space-y-3">
-                <h4 className="text-sm font-medium">Sessions actives</h4>
-                <p className="text-sm text-muted-foreground">
-                  Gérez les appareils connectés à votre compte
-                </p>
-                <Button variant="outline">Voir les sessions</Button>
-              </div>
-              <Separator />
-              <Button>Mettre à jour le mot de passe</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
+              </CardContent>
+            </Card>
 
-        {/* Organisation */}
-        <TabsContent value="organization">
-          <Card>
-            <CardHeader>
-              <CardTitle>Paramètres de l'organisation</CardTitle>
-              <CardDescription>
-                Gérez les informations de votre organisation
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="orgName">Nom de l'organisation</Label>
-                <Input id="orgName" placeholder="SIME Energy" defaultValue="SIME Energy" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="orgAddress">Adresse</Label>
-                <Input id="orgAddress" placeholder="Dakar, Sénégal" defaultValue="Dakar, Sénégal" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="orgPhone">Téléphone</Label>
-                <Input id="orgPhone" type="tel" placeholder="+221 XX XXX XX XX" defaultValue="+221 33 123 45 67" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="orgEmail">Email de contact</Label>
-                <Input id="orgEmail" type="email" placeholder="contact@sime.sn" defaultValue="contact@sime.sn" />
-              </div>
-              <Separator />
-                <div className="space-y-3">
-                  <h4 className="text-sm font-medium">Membres de l'équipe</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Gérez les utilisateurs et leurs rôles
-                  </p>
-                  <Button variant="outline">Gérer les membres</Button>
-                </div>
-              <Separator />
-              <Button>Sauvegarder les modifications</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
+            <Button onClick={handleSaveEnergie} disabled={savingEnergie} size="sm" className="bg-violet-600 hover:bg-violet-700 text-white">
+              {savingEnergie && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+              Sauvegarder les paramètres
+            </Button>
+          </>
+        )}
 
-        {/* Régional */}
-        <TabsContent value="regional">
-          <Card>
-            <CardHeader>
-              <CardTitle>Paramètres régionaux</CardTitle>
-              <CardDescription>
-                Configurez les préférences spécifiques à votre région
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="timezone">Fuseau horaire</Label>
-                <Select defaultValue="africa/dakar">
-                  <SelectTrigger id="timezone">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="africa/dakar">Africa/Dakar (GMT+0)</SelectItem>
-                    <SelectItem value="africa/abidjan">Africa/Abidjan (GMT+0)</SelectItem>
-                    <SelectItem value="africa/lagos">Africa/Lagos (GMT+1)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="dateFormat">Format de date</Label>
-                <Select defaultValue="dd/mm/yyyy">
-                  <SelectTrigger id="dateFormat">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="dd/mm/yyyy">JJ/MM/AAAA</SelectItem>
-                    <SelectItem value="mm/dd/yyyy">MM/JJ/AAAA</SelectItem>
-                    <SelectItem value="yyyy-mm-dd">AAAA-MM-JJ</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="currency">Devise</Label>
-                <Select defaultValue="xof">
-                  <SelectTrigger id="currency">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="xof">XOF (Franc CFA)</SelectItem>
-                    <SelectItem value="eur">EUR (Euro)</SelectItem>
-                    <SelectItem value="usd">USD (Dollar)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="units">Système d'unités</Label>
-                <Select defaultValue="metric">
-                  <SelectTrigger id="units">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="metric">Métrique (kWh, °C)</SelectItem>
-                    <SelectItem value="imperial">Impérial (BTU, °F)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Separator />
-              <Button>Sauvegarder les préférences</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+        {/* ─── Météo & Climat ─── */}
+        {activeTab === 'meteo' && <MeteoTab />}
+
+        {/* ─── Calendrier ─── */}
+        {activeTab === 'calendrier' && <CalendrierTab />}
+
+      </div>
     </div>
   );
-};
+}
 
-export default Parametres;
+// ─── Shared styles ───────────────────────────────────────────────────────────
+
+const inputCls = 'bg-slate-800/50 border-slate-700 text-slate-100 h-9 text-sm rounded-lg focus-visible:ring-violet-500/40';
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+function SectionHeader({ icon, iconBg, title }: { icon: React.ReactNode; iconBg: string; title: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className={cn('p-1.5 rounded-lg shrink-0', iconBg)}>{icon}</div>
+      <CardTitle className="text-sm text-slate-100">{title}</CardTitle>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs text-slate-400 font-medium">{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-wider text-slate-500 font-medium mb-0.5">{label}</p>
+      <p className={cn('text-sm text-slate-100', mono && 'font-mono text-slate-400 text-xs')}>{value}</p>
+    </div>
+  );
+}
+
+// ─── Tariff Table ─────────────────────────────────────────────────────────────
+
+const COL_HEADERS = [
+  { key: 't1', label: 'T1',  sub: 'FCFA/kWh' },
+  { key: 't2', label: 'T2',  sub: 'FCFA/kWh' },
+  { key: 't3', label: 'T3',  sub: 'FCFA/kWh' },
+  { key: 'pf', label: 'Pf',  sub: 'FCFA/kW/mois' },
+  { key: 'k1', label: 'K1',  sub: 'HHP · FCFA/kWh' },
+  { key: 'k2', label: 'K2',  sub: 'HP · FCFA/kWh' },
+];
+
+const HAS_TRANCHES = new Set(['DPP', 'DMP', 'PPP', 'PMP']);
+
+function TariffTable({ grid, onUpdate }: {
+  grid: GrilleTarifaire;
+  onUpdate: (domain: string, cat: string, field: string, val: string) => void;
+}) {
+  return (
+    <div className="overflow-x-auto -mx-1">
+      <table className="w-full text-xs border-collapse min-w-[580px]">
+        <thead>
+          <tr>
+            <th className="text-left pb-2 pr-4 text-[9px] uppercase tracking-widest text-slate-500 font-semibold w-48">Catégorie</th>
+            {COL_HEADERS.map(c => (
+              <th key={c.key} className="text-right pb-2 px-2 text-[9px] uppercase tracking-widest text-slate-500 font-semibold whitespace-nowrap">
+                {c.label}
+                <br />
+                <span className="text-[8px] text-slate-700 font-normal normal-case">{c.sub}</span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {TARIFF_SECTIONS.map(section => (
+            <React.Fragment key={section.label}>
+              {/* Section header row */}
+              <tr>
+                <td colSpan={7} className="pt-3 pb-1">
+                  <span className="text-[9px] uppercase tracking-widest font-bold text-slate-500 bg-slate-800/40 px-2 py-0.5 rounded">
+                    {section.label}
+                  </span>
+                </td>
+              </tr>
+              {/* Category rows */}
+              {section.cats.map(cat => {
+                const values = grid?.[section.domain]?.[cat] ?? {};
+                const hasTr = HAS_TRANCHES.has(cat);
+                const shortLabel = CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS]
+                  ?.split(' — ')[1]?.split(' (')[0] ?? '';
+                return (
+                  <tr key={cat} className="border-b border-slate-800/40 hover:bg-slate-800/20 transition-colors">
+                    <td className="py-1.5 pr-4">
+                      <span className="font-mono font-semibold text-slate-300">{cat}</span>
+                      {shortLabel && (
+                        <span className="ml-2 text-[10px] text-slate-500 hidden sm:inline">{shortLabel}</span>
+                      )}
+                    </td>
+                    {/* t1, t2, t3 */}
+                    {['t1', 't2', 't3'].map(f => (
+                      <td key={f} className="py-1 px-2 text-right">
+                        {hasTr
+                          ? <TariffCell value={values[f] ?? null} onSave={v => onUpdate(section.domain, cat, f, v)} />
+                          : <span className="text-slate-700 text-xs">—</span>
+                        }
+                      </td>
+                    ))}
+                    {/* pf */}
+                    <td className="py-1 px-2 text-right">
+                      {!hasTr
+                        ? <TariffCell value={values.pf ?? null} onSave={v => onUpdate(section.domain, cat, 'pf', v)} />
+                        : <span className="text-slate-700 text-xs">—</span>
+                      }
+                    </td>
+                    {/* k1, k2 */}
+                    {['k1', 'k2'].map(f => (
+                      <td key={f} className="py-1 px-2 text-right">
+                        {!hasTr
+                          ? <TariffCell value={values[f] ?? null} onSave={v => onUpdate(section.domain, cat, f, v)} />
+                          : <span className="text-slate-700 text-xs">—</span>
+                        }
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-[10px] text-slate-600 mt-3">
+        Cliquez sur une valeur pour la modifier. Appuyez sur Entrée ou cliquez ailleurs pour valider.
+      </p>
+    </div>
+  );
+}
+
+function TariffCell({ value, onSave }: { value: number | null; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+
+  if (editing) {
+    return (
+      <input
+        type="number"
+        defaultValue={value ?? ''}
+        onBlur={e => { onSave(e.target.value); setEditing(false); }}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { onSave((e.target as HTMLInputElement).value); setEditing(false); }
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        autoFocus
+        className="w-24 h-6 text-right text-[11px] bg-amber-500/10 border border-amber-500/40 text-amber-200 rounded px-1.5 outline-none font-mono"
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={() => setEditing(true)}
+      title="Cliquer pour modifier"
+      className={cn(
+        'w-24 text-right rounded px-1.5 py-0.5 text-[11px] font-mono hover:bg-slate-700/50 transition-colors group',
+        value != null ? 'text-slate-200' : 'text-slate-600 italic'
+      )}
+    >
+      {value != null ? (
+        <>
+          <span className="group-hover:hidden">{value.toFixed(2)}</span>
+          <span className="hidden group-hover:inline text-amber-400/70">{value.toFixed(2)}</span>
+        </>
+      ) : (
+        <span className="text-slate-700 not-italic text-xs">n/d</span>
+      )}
+    </button>
+  );
+}

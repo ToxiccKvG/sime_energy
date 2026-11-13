@@ -18,7 +18,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import type { MeasurementData } from '@/services/measurementService';
+import type { MeasurementData } from '@/services/measurement-service';
 import {
   ANALYSIS_MODELS, DAY_CLASS_LABEL, ANOMALY_LABEL, computeAnomalies, computeAvantApres, computeProfilType, computeTalon,
   detectStepMs, fmtDay, toPoints, type AnomalyKind, type DayClass, type ModelId, type SeriesContext, type Severity,

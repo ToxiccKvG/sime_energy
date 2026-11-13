@@ -3,82 +3,117 @@
  * Supporte plusieurs dictionnaires par organisation
  */
 
-import { supabase } from '@/lib/supabase';
+import { supabase, toJson, fromJson } from '@/lib/db';
+import type { TablesUpdate } from '@/types/database';
 import type {
   AnnotationDictionary,
   AnnotationDictionaryCollection,
   AnnotationDisplaySettings,
 } from '@/types/annotation-dictionary';
 import {
-  DEFAULT_ANNOTATION_DICTIONARY,
   DEFAULT_DISPLAY_SETTINGS,
+  DEFAULT_DICTIONARY_COLLECTION,
 } from '@/types/annotation-dictionary';
+import type { AnnotationField } from '@/types/annotation-dictionary';
 
-export interface AnnotationDictionaryDB {
-  id: string;
-  organization_id: string;
-  name: string;
-  description?: string;
-  color?: string;
-  fields: AnnotationDictionary['fields'];
-  table_templates: AnnotationDictionary['tableTemplates'];
-  created_at: string;
-  updated_at: string;
-}
+/**
+ * All hardcoded dictionary fields indexed by field ID for fast alias lookup.
+ * Used to retroactively augment Supabase-stored fields that were saved
+ * before the `aliases` field was introduced.
+ */
+const HARDCODED_FIELD_ALIASES: Map<string, string[]> = new Map(
+  DEFAULT_DICTIONARY_COLLECTION.dictionaries.flatMap((dict) =>
+    dict.fields
+      .filter((f) => f.aliases && f.aliases.length > 0)
+      .map((f) => [f.id, f.aliases!] as [string, string[]])
+  )
+);
 
-export interface AnnotationSettingsDB {
-  id: string;
-  organization_id: string;
-  show_labels: boolean;
-  selected_dictionary_id: string | null;
-  created_at: string;
-  updated_at: string;
+/**
+ * Merges hardcoded aliases into a field that was loaded from Supabase.
+ * Hardcoded aliases always win (most up-to-date), but existing custom
+ * aliases are preserved if the field has no hardcoded counterpart.
+ */
+function augmentFieldAliases(field: AnnotationField): AnnotationField {
+  const hardcoded = HARDCODED_FIELD_ALIASES.get(field.id);
+  if (!hardcoded) return field;
+  // Merge: hardcoded + any extra aliases the user may have added manually
+  const existing = field.aliases ?? [];
+  const merged = [...new Set([...hardcoded, ...existing])];
+  return { ...field, aliases: merged };
 }
 
 /**
  * Récupère tous les dictionnaires d'annotation pour une organisation
  */
-export async function getAnnotationDictionaries(
+async function getAnnotationDictionaries(
   organizationId: string
 ): Promise<AnnotationDictionary[]> {
-  const { data, error } = await supabase
-    .from('annotation_dictionaries')
-    .select('*')
-    .eq('organization_id', organizationId)
-    .order('created_at', { ascending: true });
+  // Fetch org-specific dicts + platform dicts (organization_id IS NULL) in parallel
+  const [orgResult, platformResult] = await Promise.all([
+    supabase
+      .from('annotation_dictionaries')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('annotation_dictionaries')
+      .select('*')
+      .is('organization_id', null)
+      .order('created_at', { ascending: true }),
+  ]);
 
-  if (error) {
-    console.error('Error fetching dictionaries:', error);
-    throw error;
+  if (orgResult.error) {
+    console.error('Error fetching org dictionaries:', orgResult.error);
+    throw orgResult.error;
+  }
+  if (platformResult.error) {
+    console.error('Error fetching platform dictionaries:', platformResult.error);
+    throw platformResult.error;
   }
 
-  if (!data || data.length === 0) {
-    // Retourner le dictionnaire par défaut
-    return [
-      {
-        ...DEFAULT_ANNOTATION_DICTIONARY,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ];
+  // Platform dicts first, then org-specific on top
+  const combined = [...(platformResult.data ?? []), ...(orgResult.data ?? [])];
+
+  if (combined.length === 0) {
+    // Seed all hardcoded dictionaries (Général + SENELEC + …) as in-memory defaults.
+    // They are NOT written to Supabase here — the user can save them explicitly.
+    return DEFAULT_DICTIONARY_COLLECTION.dictionaries.map((d) => ({
+      ...d,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
   }
 
-  return data.map((d) => ({
+  const dbDicts = combined.map((d) => ({
     id: d.id,
     name: d.name,
     description: d.description,
     color: d.color,
-    fields: d.fields || [],
-    tableTemplates: d.table_templates || [],
+    // Augment each field with hardcoded aliases in case the row was stored
+    // before the `aliases` property was introduced.
+    fields: (fromJson<AnnotationDictionary['fields']>(d.fields) || []).map(augmentFieldAliases),
+    tableTemplates: fromJson<AnnotationDictionary['tableTemplates']>(d.table_templates) || [],
     createdAt: d.created_at,
     updatedAt: d.updated_at,
   }));
+
+  // Always include hardcoded dicts (e.g. SENELEC) that aren't already in DB
+  const inMemoryFallbacks = DEFAULT_DICTIONARY_COLLECTION.dictionaries
+    .filter((hardcoded) => !dbDicts.some((db) => db.name === hardcoded.name))
+    .map((d) => ({
+      ...d,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+
+  return [...inMemoryFallbacks, ...dbDicts];
 }
 
 /**
  * Récupère les paramètres d'affichage pour une organisation
  */
-export async function getAnnotationSettings(
+async function getAnnotationSettings(
   organizationId: string
 ): Promise<AnnotationDisplaySettings> {
   const { data, error } = await supabase
@@ -129,8 +164,8 @@ export async function createDictionary(
       name: dictionary.name,
       description: dictionary.description,
       color: dictionary.color,
-      fields: dictionary.fields,
-      table_templates: dictionary.tableTemplates,
+      fields: toJson(dictionary.fields),
+      table_templates: toJson(dictionary.tableTemplates),
     })
     .select()
     .single();
@@ -142,8 +177,8 @@ export async function createDictionary(
     name: data.name,
     description: data.description,
     color: data.color,
-    fields: data.fields || [],
-    tableTemplates: data.table_templates || [],
+    fields: fromJson<AnnotationDictionary['fields']>(data.fields) || [],
+    tableTemplates: fromJson<AnnotationDictionary['tableTemplates']>(data.table_templates) || [],
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   };
@@ -156,15 +191,15 @@ export async function updateDictionary(
   dictionaryId: string,
   updates: Partial<Omit<AnnotationDictionary, 'id' | 'createdAt' | 'updatedAt'>>
 ): Promise<AnnotationDictionary> {
-  const updateData: Record<string, unknown> = {
+  const updateData: TablesUpdate<'annotation_dictionaries'> = {
     updated_at: new Date().toISOString(),
   };
 
   if (updates.name !== undefined) updateData.name = updates.name;
   if (updates.description !== undefined) updateData.description = updates.description;
   if (updates.color !== undefined) updateData.color = updates.color;
-  if (updates.fields !== undefined) updateData.fields = updates.fields;
-  if (updates.tableTemplates !== undefined) updateData.table_templates = updates.tableTemplates;
+  if (updates.fields !== undefined) updateData.fields = toJson(updates.fields);
+  if (updates.tableTemplates !== undefined) updateData.table_templates = toJson(updates.tableTemplates);
 
   const { data, error } = await supabase
     .from('annotation_dictionaries')
@@ -180,8 +215,8 @@ export async function updateDictionary(
     name: data.name,
     description: data.description,
     color: data.color,
-    fields: data.fields || [],
-    tableTemplates: data.table_templates || [],
+    fields: fromJson<AnnotationDictionary['fields']>(data.fields) || [],
+    tableTemplates: fromJson<AnnotationDictionary['tableTemplates']>(data.table_templates) || [],
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   };

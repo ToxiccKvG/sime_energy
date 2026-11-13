@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OcrFactures",
+      "Effect": "Allow",
+      "Action": "textract:AnalyzeDocument",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ModelesMistralBedrock",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/mistral.*",
+        "arn:aws:bedrock:*:*:inference-profile/us.mistral.*"
+      ]
+    },
+    {
+      "Sid": "SecretsDuBackend",
+      "Effect": "Allow",
+      "Action": "ssm:GetParametersByPath",
+      "Resource": "arn:aws:ssm:eu-west-1:*:parameter/sime/api"
+    }
+  ]
+}

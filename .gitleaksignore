@@ -1,0 +1,16 @@
+# Alertes gitleaks vérifiées le 2026-11-12. Ne pas ajouter ici une vraie fuite non régénérée.
+
+# Fausses alertes : noms de champs météo et clé de stockage navigateur
+9b34e9482420b9f8d00656fddd8b70d324e3fee7:Sime_energy/sime-front/src/services/meteo-service.ts:generic-api-key:106
+9b34e9482420b9f8d00656fddd8b70d324e3fee7:Sime_energy/sime-front/src/services/meteo-service.ts:generic-api-key:141
+9b34e9482420b9f8d00656fddd8b70d324e3fee7:Sime_energy/sime-front/src/services/meteo-service.ts:generic-api-key:158
+9b34e9482420b9f8d00656fddd8b70d324e3fee7:Sime_energy/sime-front/src/services/meteo-service.ts:generic-api-key:178
+61a23343f397ffaeb091bc09749dc376ef4e4b90:Sime_energy/sime-front/src/services/measurementQuarantine.ts:generic-api-key:59
+
+# Clé anon Supabase de SIMEE (publique par conception, protégée par la RLS)
+975f11ed0985ab803786f6420c3ba2e72594348d:Sime_energy/sime-front/.env:jwt:1
+306a971bce91d3ab0d961a6ee3c82d1c6cd21b53:run_migration.mjs:jwt:15
+
+# Vraies fuites, volontairement NON ignorées tant qu'elles ne sont pas régénérées (étape 7) :
+# - clé Google, commit f2222366 (sime-front/.env)
+# - JWT service_role du projet qsnzfavkxkvdtywxrspk, commit fcf34e22 (SHELLY_GCP_00/supabase/schema.sql)

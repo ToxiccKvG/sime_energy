@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Upload, Loader2, CheckCircle2, AlertCircle, FileSpreadsheet, X, Settings2, Pencil, Trash2, Check, Sparkles, Database, FolderOpen } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { uploadMeasurementFile, MeasurementData, measurementLabel } from '@/services/measurementService';
+import { uploadMeasurementFile, MeasurementData, measurementLabel } from '@/services/measurement-service';
 import { toDate } from '@/services/measurementStats';
 import { getCustomSensors, deleteCustomSensor, findSensorBySignature, previewTableViaBackend, type CustomSensor, type CustomSensorInput } from '@/lib/custom-sensor-service';
 import { parseExcelBuffer, sniffFormat } from '@/lib/excel-utils';

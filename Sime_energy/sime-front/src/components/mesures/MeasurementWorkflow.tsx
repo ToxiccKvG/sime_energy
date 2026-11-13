@@ -1,4 +1,4 @@
-import { MeasurementData, measurementLabel } from '@/services/measurementService';
+import { MeasurementData, measurementLabel } from '@/services/measurement-service';
 import { useEffect, useMemo } from 'react';
 import {
   useMeasurementSession, updateMeasurementSession, ensureMeasurementLibrary,

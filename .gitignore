@@ -1,5 +1,6 @@
 .claude/
-/docs/
+docs/
+journal/
 
 __MACOSX/
 .DS_Store
@@ -11,3 +12,15 @@ __MACOSX/
 
 # Le front utilise bun (bun.lockb) : pas de lockfile npm
 Sime_energy/sime-front/package-lock.json
+
+# Secrets : aucun .env réel, nulle part (seuls les .env.example sont suivis)
+.env
+.env.*
+!.env.example
+api.env
+*.pem
+*.key
+**/playwright/.auth/
+
+# Artefacts de build
+*.tsbuildinfo

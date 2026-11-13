@@ -1,4 +1,5 @@
 import { Toaster } from "@/components/ui/toaster";
+import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
@@ -14,15 +15,18 @@ import AcceptInvitation from "./pages/AcceptInvitation";
 import Index from "./pages/Index";
 import Facturation from "./pages/Facturation";
 import { AnnotationPage } from "./pages/AnnotationPage";
-import Mesures from "./pages/Mesures";
 import Inventaire from "./pages/Inventaire";
 import Audits from "./pages/Audits";
 import AuditDetail from "./pages/AuditDetail";
+import Rapport from "./pages/Rapport";
+import Mesures from "./pages/Mesures";
 import Parametres from "./pages/Parametres";
 import Compte from "./pages/Compte";
 import Auth from "./pages/Auth";
 import IOT from "./pages/IOT";
+import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
+import { BenjaminBubble } from "@/components/chatbot/BenjaminBubble";
 
 const queryClient = new QueryClient();
 
@@ -52,8 +56,10 @@ const App = () => (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
       <TooltipProvider>
         <Toaster />
+        {/* La majorité des pages notifient via `toast` de sonner */}
+        <Sonner />
 
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <Routes>
             {/* Routes publiques */}
             <Route path="/login" element={<Login />} />
@@ -61,30 +67,31 @@ const App = () => (
             <Route path="/signup" element={<Navigate to="/login" replace />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/invite" element={<AcceptInvitation />} />
 
-            {/* Routes protégées */}
+            {/* Routes protégées avec sidebar */}
             <Route
               path="/*"
               element={
                 <ProtectedRoute>
                   <OrganizationProvider>
                     <RequireOrganization>
-                    <div className="flex min-h-screen w-full bg-[#0f111a] text-slate-100">
+                    <div className="flex min-h-screen w-full bg-background text-foreground">
                       <AppSidebar />
                       <div className="flex flex-1 flex-col min-w-0">
                         <AppHeader />
-                        <main className="flex-1 min-w-0 overflow-x-hidden bg-transparent p-6 pl-24">
+                        <main className="flex-1 min-w-0 overflow-x-hidden bg-transparent p-4 md:p-6 md:pl-28">
                           <Routes>
                             <Route path="/" element={<Index />} />
                             <Route path="/facturation" element={<Facturation />} />
-                            <Route path="/annotation" element={<AnnotationPage />} />
                             <Route path="/mesures" element={<Mesures />} />
+                            <Route path="/annotation" element={<AnnotationPage />} />
                             <Route path="/inventaire" element={<Inventaire />} />
                             <Route path="/audits" element={<Audits />} />
                             <Route path="/audits/:auditId" element={<AuditDetail />} />
                             <Route path="/iot" element={<IOT />} />
-
+                            <Route path="/rapport" element={<Rapport />} />
                             <Route path="/parametres" element={<Parametres />} />
                             <Route path="/compte" element={<Compte />} />
                             <Route path="*" element={<NotFound />} />
@@ -93,6 +100,7 @@ const App = () => (
                       </div>
                     </div>
                     </RequireOrganization>
+                    <BenjaminBubble />
                   </OrganizationProvider>
                 </ProtectedRoute>
               }

@@ -15,7 +15,7 @@ import { ResponsiveContainer } from '@/components/shared/ZoomableChart';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Building2, GitBranch, AlertTriangle, CheckCircle2, AlertCircle, ChevronRight, HelpCircle } from 'lucide-react';
-import { MeasurementData, measurementLabel } from '@/services/measurementService';
+import { MeasurementData, measurementLabel } from '@/services/measurement-service';
 import { computeComparison, areUnitsCompatible, energyUnitFor, isPowerUnit, type BucketGranularity, type ComparisonResult } from '@/lib/sensor-comparison';
 import { KpiInfoIcon, KpiTooltip } from '@/components/shared/InfoTip';
 import type { GlossaryKey } from '@/components/shared/glossary';

@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, toJson } from '@/lib/db';
 import { logActivity } from '@/lib/activity-service';
 
 export interface AuditInvoice {
@@ -13,11 +13,15 @@ export interface AuditInvoice {
   supplier?: string;
   status: 'pending' | 'processing' | 'verified' | 'rejected';
   confidence_score: number;
-  ocr_data?: Record<string, any>;
-  ocr_data_verified?: Record<string, any>;
+  ocr_data?: Record<string, unknown>;
+  ocr_data_verified?: Record<string, unknown>;
   notes?: string;
   created_at: string;
   updated_at: string;
+  // Simulateur quarantine
+  is_quarantined?: boolean;
+  quarantine_reason?: string | null;
+  quarantine_delta_pct?: number | null;
 }
 
 export async function getAuditInvoices(auditId: string) {
@@ -28,7 +32,7 @@ export async function getAuditInvoices(auditId: string) {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data || [];
+  return (data || []) as AuditInvoice[];
 }
 
 export async function createInvoice(auditId: string, organizationId: string, invoice: Partial<AuditInvoice>, userId: string) {
@@ -46,7 +50,7 @@ export async function createInvoice(auditId: string, organizationId: string, inv
         supplier: invoice.supplier,
         status: invoice.status || 'pending',
         confidence_score: invoice.confidence_score || 0,
-        ocr_data: invoice.ocr_data || {},
+        ocr_data: toJson(invoice.ocr_data || {}),
         notes: invoice.notes,
         building_id: invoice.building_id,
       },
@@ -70,7 +74,7 @@ export async function createInvoice(auditId: string, organizationId: string, inv
     console.warn('Activity logging failed (non-blocking):', e);
   });
 
-  return data;
+  return data as AuditInvoice;
 }
 
 export async function updateInvoice(invoiceId: string, updates: Partial<AuditInvoice>, auditId?: string, organizationId?: string, userId?: string) {
@@ -83,8 +87,10 @@ export async function updateInvoice(invoiceId: string, updates: Partial<AuditInv
       supplier: updates.supplier,
       invoice_date: updates.invoice_date,
       notes: updates.notes,
-      // ocr_data: updates.ocr_data,
-      ocr_data_verified: updates.ocr_data_verified,
+      // Corrections de l'écran d'annotation. Un champ absent (undefined) n'est pas envoyé par
+      // supabase-js : les mises à jour de statut seules ne touchent donc pas à l'OCR.
+      ocr_data: toJson(updates.ocr_data),
+      ocr_data_verified: toJson(updates.ocr_data_verified),
       updated_at: new Date().toISOString(),
     })
     .eq('id', invoiceId)
@@ -110,7 +116,7 @@ export async function updateInvoice(invoiceId: string, updates: Partial<AuditInv
     }
   }
 
-  return data;
+  return data as AuditInvoice;
 }
 
 export async function deleteInvoice(invoiceId: string) {
@@ -119,6 +125,36 @@ export async function deleteInvoice(invoiceId: string) {
     .delete()
     .eq('id', invoiceId);
 
+  if (error) throw error;
+}
+
+export async function quarantineInvoice(
+  id: string,
+  reason: string,
+  delta_pct: number,
+): Promise<void> {
+  const { error } = await supabase
+    .from('audit_invoices')
+    .update({
+      is_quarantined: true,
+      quarantine_reason: reason,
+      quarantine_delta_pct: delta_pct,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+export async function unquarantineInvoice(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('audit_invoices')
+    .update({
+      is_quarantined: false,
+      quarantine_reason: null,
+      quarantine_delta_pct: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
   if (error) throw error;
 }
 
@@ -141,4 +177,37 @@ export async function getInvoiceStats(auditId: string) {
     totalAmount,
     averageConfidence,
   };
+}
+
+// Rattachement des factures OCR aux sites du classeur.
+export function getInvoiceSiteAssignments(auditId: string) {
+  return supabase
+    .from('audit_invoices')
+    .select('id, classeur_site_id')
+    .eq('audit_id', auditId);
+}
+
+export function getVerifiedAuditInvoices(auditId: string) {
+  return supabase
+    .from('audit_invoices')
+    .select('*')
+    .eq('audit_id', auditId)
+    .eq('status', 'verified')
+    .order('invoice_date', { ascending: true });
+}
+
+export function getAllInvoices() {
+  return supabase
+    .from('audit_invoices')
+    .select('*')
+    .order('created_at', { ascending: false });
+}
+
+// Temps réel : rappelle onChange à chaque changement des factures de l'organisation.
+export function subscribeToOrganizationInvoices(organizationId: string, onChange: () => void) {
+  const sub = supabase
+    .channel(`audit_invoices:${organizationId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'audit_invoices', filter: `organization_id=eq.${organizationId}` }, onChange)
+    .subscribe();
+  return () => { sub.unsubscribe(); };
 }

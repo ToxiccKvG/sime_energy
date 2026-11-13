@@ -1,0 +1,163 @@
+# CI SIMEE : tests unitaires, vérification des types, build et contrôles de sécurité.
+# Les tests système (Supabase, Textract, Bedrock réels, payants) restent lancés à la main.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest unitaire + pip-audit)
+    runs-on: ubuntu-latest
+    env:
+      # Valeurs factices : le client Supabase exige ces variables à l'import, les tests unitaires ne l'appellent pas.
+      SUPABASE_URL: https://ci.invalid
+      SUPABASE_SERVICE_ROLE_KEY: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: Sime_energy/sime-backend-main/requirements.txt
+      - name: Installer les dépendances
+        run: pip install -r Sime_energy/sime-backend-main/requirements.txt -r Sime_energy/test/backend/requirements-test.txt pip-audit
+      - name: Tests unitaires
+        working-directory: Sime_energy/test/backend
+        run: python -m pytest unitaire
+      - name: Audit des dépendances
+        run: pip-audit -r Sime_energy/sime-backend-main/requirements.txt
+
+  frontend:
+    name: Front (vitest + tsc + build + bun audit)
+    runs-on: ubuntu-latest
+    env:
+      # Valeurs factices : le build les intègre, aucun appel réseau pendant la CI.
+      VITE_SUPABASE_URL: https://ci.invalid
+      VITE_SUPABASE_ANON_KEY: ci
+      VITE_API_URL: http://localhost:8000/api/V1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.9
+      - name: Installer les dépendances
+        run: |
+          bun install --frozen-lockfile --cwd Sime_energy/sime-front
+          bun install --frozen-lockfile --cwd Sime_energy/test/frontend
+      - name: Tests unitaires
+        working-directory: Sime_energy/test/frontend
+        run: bun run test:unitaire
+      - name: Vérification des types
+        working-directory: Sime_energy/sime-front
+        run: bun run --bun tsc --noEmit -p tsconfig.app.json
+      - name: Build
+        working-directory: Sime_energy/sime-front
+        run: bun run build
+      # Bloque sur high et critical. Reste connu (moderate) : react-router 6, corrigé en v7.
+      # Exceptions (vérifiées le 2026-11-13) : glob 7, minimatch 3 et brace-expansion 1 n'arrivent que par
+      # exceljs -> archiver / unzipper / rimraf, du code Node.js. Dans le navigateur, Vite utilise la version
+      # précompilée d'exceljs : ce code n'est jamais exécuté. Toute NOUVELLE alerte high reste bloquante.
+      # À retirer quand exceljs ne dépendra plus de ces versions (ou s'il est remplacé).
+      - name: Audit des dépendances
+        working-directory: Sime_energy/sime-front
+        run: >-
+          bun audit --prod --audit-level=high
+          --ignore=GHSA-3jxr-9vmj-r5cp --ignore=GHSA-6j4f-fj2g-mc7p --ignore=GHSA-mh99-v99m-4gvg
+          --ignore=GHSA-qhr7-859c-m2p7 --ignore=GHSA-rgw5-rvv9-x895
+          --ignore=GHSA-5j98-mcp5-4vw2
+          --ignore=GHSA-23c5-xmqv-rm74 --ignore=GHSA-3ppc-4f35-3m26 --ignore=GHSA-7r86-cg39-jmmj
+
+  secrets:
+    name: Secrets (gitleaks, tout l'historique)
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Installer gitleaks (somme de contrôle figée)
+        run: |
+          archive=gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
+          curl -sSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$archive"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $archive" | sha256sum -c -
+          tar xzf "$archive" gitleaks
+      # Tout l'historique de la branche testée (sans --log-opts, gitleaks scannerait toutes les branches)
+      - name: Scanner l'historique
+        run: ./gitleaks git --redact --no-banner --log-opts="HEAD" .
+
+  images:
+    name: Images Docker (build + démarrage + Trivy + GHCR)
+    runs-on: ubuntu-latest
+    # Environnement GitHub qui contient VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY (nom choisi à sa création)
+    environment: VITE_SUPABASE_URL
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TRIVY_VERSION: 0.76.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Construire les images
+        run: |
+          docker build -t sime-api:test Sime_energy/sime-backend-main
+          # Valeurs publiques du front : variables ou secrets du dépôt (Settings > Secrets and variables > Actions)
+          docker build -t sime-web:test \
+            --build-arg VITE_SUPABASE_URL="${{ vars.VITE_SUPABASE_URL || secrets.VITE_SUPABASE_URL }}" \
+            --build-arg VITE_SUPABASE_ANON_KEY="${{ vars.VITE_SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY }}" \
+            Sime_energy/sime-front
+      - name: Tester le démarrage (Caddy + API)
+        run: |
+          docker network create sime-test
+          docker run -d --name api --network sime-test \
+            -e SUPABASE_URL=https://ci.invalid -e SUPABASE_SERVICE_ROLE_KEY=ci sime-api:test
+          docker run -d --name web --network sime-test -e SITE_ADDRESS=:80 -p 8080:80 sime-web:test
+          for i in $(seq 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/V1/calendrier/jours-feries || true)
+            [ "$code" = 401 ] && break; sleep 2
+          done
+          echo "API derrière Caddy, sans jeton : $code (attendu 401)"; [ "$code" = 401 ]
+          curl -sf localhost:8080/ | grep -q 'id="root"'
+          curl -sf localhost:8080/audits | grep -q 'id="root"'
+          curl -sI localhost:8080/ | grep -qi '^content-security-policy:'
+          ! curl -s localhost:8080/docs | grep -qi swagger
+      - name: Journaux en cas d'échec
+        if: failure()
+        run: docker logs api; docker logs web
+      - name: Installer Trivy (somme de contrôle figée)
+        run: |
+          archive=trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz
+          curl -sSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$archive"
+          echo "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0  $archive" | sha256sum -c -
+          tar xzf "$archive" trivy
+      - name: Scanner les images (bloque sur high et critical corrigeables)
+        run: |
+          ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress sime-api:test
+          ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress sime-web:test
+      - name: Publier sur GHCR (main, dev et feature/kevin)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/feature/kevin' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          # dev publie l'étiquette « dev » (serveur de test : SIME_TAG=dev), les autres « latest »
+          principal=latest; [ "${GITHUB_REF_NAME}" = dev ] && principal=dev
+          for img in api web; do
+            for tag in "$principal" "${GITHUB_SHA::8}"; do
+              docker tag "sime-$img:test" "ghcr.io/$owner/sime-$img:$tag"
+              # GHCR refuse parfois le premier envoi vers un paquet qu'il vient de créer : on réessaie
+              for essai in 1 2 3; do
+                out=$(docker push "ghcr.io/$owner/sime-$img:$tag" 2>&1) && break
+                [ "$essai" = 3 ] && { echo "::error title=Publication sime-$img:$tag::$(echo "$out" | tail -3 | tr '\n' ' ')"; exit 1; }
+                sleep 15
+              done
+            done
+          done

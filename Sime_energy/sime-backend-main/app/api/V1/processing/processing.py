@@ -1,0 +1,768 @@
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
+from typing import Dict, List, Any, Optional
+from fastapi.responses import JSONResponse, FileResponse
+from pdf2image import convert_from_bytes
+from pdf2image.exceptions import PDFPageCountError
+import io
+import json
+import logging
+import base64
+from app.core.llm import _textract_analyze_bytes, _parse_trp, _normalize_with_llm, _analyze_energy_label_with_mistral
+from app.core.documents import _pil_image_to_bytes, _strip_coordinates_for_mistral
+from app.core.invoices import extract_invoice_fields, normaliser_date
+from app.core.sensors import process_measurement_file, preview_table
+from app.core.auth import Utilisateur, auth_requise, controler_facture, utilisateur_courant, verifier_membre
+from app.core.limites import (
+    DEBIT_OCR_PAR_MINUTE, LIMITE_EXCEL, LIMITE_IMAGE, LIMITE_MESURES, LIMITE_PDF,
+    erreur_interne, lire_fichier, limite_debit, verifier_image, verifier_pdf,
+)
+from app.core.supabase_client import supabase
+from app.core.unified_invoice_processor import UnifiedInvoiceProcessor
+from pydantic import BaseModel
+import pandas as pd
+import tempfile
+import os
+from datetime import datetime
+
+# Configuration du logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["processing"])
+
+
+class TableCell(BaseModel):
+    text: str
+    box: Optional[List[float]] = None
+
+class InvoiceTable(BaseModel):
+    table_name: Optional[str] = None
+    template_name: Optional[str] = None
+    template_id: Optional[str] = None
+    rows: List[List[TableCell]]
+    box: Optional[List[float]] = None
+
+class InvoicePage(BaseModel):
+    fileName: str
+    page_number: int
+    forms: List[Dict[str, Any]] = []
+    tables: List[InvoiceTable] = []
+
+class InvoiceData(BaseModel):
+    fileName: Optional[str] = None
+    dictionary_name: Optional[str] = None
+    dictionary_id: Optional[str] = None
+    pages: List[InvoicePage]
+
+## Suppression du modèle strict pour la hiérarchie afin de garder de la flexibilité côté JSON
+
+@router.post("/pdf-invoices")
+def process_file_structured(
+    file: UploadFile = File(...),
+    file_name: str = Form(...),
+    invoice_id: str = Form(...),
+    utilisateur: Optional[Utilisateur] = Depends(utilisateur_courant),
+    _debit: None = Depends(limite_debit("ocr", DEBIT_OCR_PAR_MINUTE)),
+):
+    """
+    Process PDF invoices with multi-invoice support.
+    Creates separate entries for each invoice detected in the PDF.
+    """
+    logger.info(f"Début du traitement du fichier: {file.filename}")
+    controler_facture(utilisateur, invoice_id)
+    try:
+        pdf_bytes = lire_fichier(file, LIMITE_PDF, "un PDF")
+        verifier_pdf(pdf_bytes)
+
+        # Les pages suivantes deviennent des factures du même projet / de la même organisation
+        principale_rows = (
+            supabase.table('audit_invoices')
+            .select('audit_id, organization_id, uploaded_by, file_url')
+            .eq('id', invoice_id).limit(1).execute().data
+        )
+        principale = principale_rows[0] if principale_rows else {}
+        size_bytes = len(pdf_bytes)
+        logger.info(f"PDF reçu: {size_bytes} bytes")
+
+        parsed_pages: List[Dict[str, Any]] = []
+        page_images: List[Dict[str, Any]] = []
+
+        # Convert PDF to images and analyze each page
+        images = convert_from_bytes(pdf_bytes)
+        for idx, img in enumerate(images):
+            img_bytes = _pil_image_to_bytes(img)
+            width, height = img.size
+            
+            # Store image data for response
+            img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+            page_images.append({
+                "image": f"data:image/png;base64,{img_base64}",
+                "width": width,
+                "height": height
+            })
+            
+            # Analyze with Textract
+            response = _textract_analyze_bytes(img_bytes)
+            parsed = _parse_trp(response, width, height)
+            parsed_pages.append(parsed)
+
+        # Process each page separately
+        pages_data = []
+        created_invoices = []  # Track all created invoice records
+        
+        for page_idx, page_data in enumerate(parsed_pages):
+            page_forms = page_data.get("forms", [])
+            page_tables = page_data.get("tables", [])
+            
+            # Clean for Mistral (preserving order)
+            clean_payload = _strip_coordinates_for_mistral({"forms": page_forms, "tables": page_tables})
+            
+            # Send to Bedrock Mistral for normalization
+            normalized = _normalize_with_llm(clean_payload)
+            # Capture LLM-extracted invoice fields before bbox re-attachment
+            llm_invoice_fields = normalized.get("invoice_fields")
+
+            # Re-attach coordinates by index mapping for forms
+            corrected_forms_with_boxes: List[Dict[str, Any]] = []
+            for i, kv in enumerate(normalized.get("forms", [])):
+                orig_kv = page_forms[i] if i < len(page_forms) else {}
+                corrected = {"Key": kv.get("Key"), "Value": kv.get("Value")}
+                if "box" in orig_kv:
+                    corrected["box"] = orig_kv["box"]
+                corrected_forms_with_boxes.append(corrected)
+            
+            # Re-attach coordinates by index mapping for tables
+            corrected_tables_with_boxes: List[Dict[str, Any]] = []
+            t_norm = normalized.get("tables", [])
+            t_orig = page_tables
+            for t_idx, norm_table in enumerate(t_norm):
+                orig_table = t_orig[t_idx] if t_idx < len(t_orig) else {}
+                
+                # Create table object with box and rows
+                table_out = {"rows": [], "box": None}
+                
+                # Add table bounding box if available
+                if "box" in orig_table:
+                    table_out["box"] = orig_table["box"]
+                
+                # Process table rows
+                orig_rows = orig_table.get("rows", []) if isinstance(orig_table, dict) else orig_table
+                rows_out: List[List[Dict[str, Any]]] = []
+                for r_idx, norm_row in enumerate(norm_table):
+                    orig_row = orig_rows[r_idx] if r_idx < len(orig_rows) else []
+                    row_out: List[Dict[str, Any]] = []
+                    for c_idx, norm_cell_text in enumerate(norm_row):
+                        orig_cell = orig_row[c_idx] if c_idx < len(orig_row) else {}
+                        cell_out = {"text": norm_cell_text}
+                        if "box" in orig_cell:
+                            cell_out["box"] = orig_cell["box"]
+                        row_out.append(cell_out)
+                    rows_out.append(row_out)
+                
+                table_out["rows"] = rows_out
+                corrected_tables_with_boxes.append(table_out)
+            
+            # Add page data with image information
+            page_info = {
+                "page_number": page_idx + 1,
+                "forms": corrected_forms_with_boxes,
+                "tables": corrected_tables_with_boxes
+            }
+            
+            # Add image data if available
+            if page_idx < len(page_images):
+                page_info.update(page_images[page_idx])
+            
+            pages_data.append(page_info)
+
+            extracted_fields = extract_invoice_fields(
+                corrected_forms_with_boxes,
+                corrected_tables_with_boxes,
+                llm_fields=llm_invoice_fields
+            )
+            
+            # Déterminer si c'est la première page (mise à jour) ou une nouvelle facture (création)
+            if page_idx == 0:
+                # Première page: mettre à jour la facture existante
+                logger.info(f"[SUPABASE] Début mise à jour facture - ID: {invoice_id}, Page: {page_idx + 1}/{len(parsed_pages)}")
+                logger.info(f"[SUPABASE] Mise à jour de la facture {invoice_id}")
+                
+                try:
+                    update_data = {
+                        'status': 'processing',
+                        'ocr_data': {
+                            "fileName": file.filename,
+                            "page": [page_info],
+                            "page_number": page_idx + 1,
+                            "total_pages": len(parsed_pages)
+                        },
+                        'amount': extracted_fields['amount'],
+                        'supplier': extracted_fields['supplier'],
+                        'invoice_date': extracted_fields['invoice_date'],
+                        'confidence_score': extracted_fields['confidence_score'],
+                        'updated_at': datetime.utcnow().isoformat()
+                    }
+
+                    logger.info(f"[SUPABASE] Tentative de mise à jour - Table: audit_invoices, ID: {invoice_id}")
+
+                    update_result = supabase.table('audit_invoices').update(update_data).eq('id', invoice_id).execute()
+
+                    logger.info(f"[SUPABASE] Réponse brute de Supabase: {update_result}")
+
+                    if update_result.data:
+                        logger.info(f"[SUPABASE]  Mise à jour réussie - Facture ID: {invoice_id}, Lignes affectées: {len(update_result.data)}")
+                    else:
+                        logger.warning(f"[SUPABASE]   Aucune ligne affectée pour la facture ID: {invoice_id} - La facture existe-t-elle?")
+                        logger.warning(f"[SUPABASE] Vérifiez que l'ID {invoice_id} existe dans la table audit_invoices")
+
+                except Exception as supabase_error:
+                    logger.error(f"[SUPABASE]  Erreur lors de la mise à jour de la facture {invoice_id}: {str(supabase_error)}")
+                    logger.error(f"[SUPABASE] Type d'erreur: {type(supabase_error).__name__}")
+                    import traceback
+                    logger.error(f"[SUPABASE] Stack trace complet: {traceback.format_exc()}")
+                    raise
+                
+                logger.info(f"Page 1/{len(parsed_pages)} - Mise à jour facture existante: {invoice_id}")
+                created_invoices.append({
+                    'id': invoice_id,
+                    'page_number': page_idx + 1,
+                    'is_primary': True
+                })
+                
+            else:
+                # Pages suivantes: créer de nouvelles factures
+                new_file_name = f"{file_name}_page_{page_idx + 1}"
+                logger.info(f"[SUPABASE] Début création nouvelle facture - Page: {page_idx + 1}/{len(parsed_pages)}, Parent ID: {invoice_id}")
+                
+                try:
+                    insert_result = supabase.table('audit_invoices').insert({
+                        'audit_id': principale.get('audit_id'),
+                        'organization_id': principale.get('organization_id'),
+                        'uploaded_by': principale.get('uploaded_by'),
+                        'file_url': principale.get('file_url') or '',
+                        'file_name': new_file_name,
+                        'status': 'processing',
+                        'ocr_data': {
+                            "fileName": file.filename,
+                            "page": [page_info],
+                            "page_number": page_idx + 1,
+                            "total_pages": len(parsed_pages),
+                            "parent_invoice_id": invoice_id  # Référence à la facture principale
+                        },
+                        'amount': extracted_fields['amount'],
+                        'supplier': extracted_fields['supplier'],
+                        'invoice_date': extracted_fields['invoice_date'],
+                        'confidence_score': extracted_fields['confidence_score'],
+                        'created_at': datetime.utcnow().isoformat(),
+                        'updated_at': datetime.utcnow().isoformat()
+                    }).execute()
+                    
+                    if insert_result.data and len(insert_result.data) > 0:
+                        new_invoice_id = insert_result.data[0]['id']
+                        logger.info(f"[SUPABASE] Création réussie - Nouvelle facture ID: {new_invoice_id}, Parent ID: {invoice_id}")
+                    else:
+                        new_invoice_id = None
+                        logger.error(f"[SUPABASE] Création échouée - Aucune donnée retournée pour la page {page_idx + 1}")
+                        logger.error(f"[SUPABASE] Réponse Supabase: {insert_result}")
+                    
+                except Exception as supabase_error:
+                    logger.error(f"[SUPABASE] Erreur lors de la création de la facture pour la page {page_idx + 1}: {str(supabase_error)}")
+                    logger.error(f"[SUPABASE] Type d'erreur: {type(supabase_error).__name__}")
+                    import traceback
+                    logger.error(f"[SUPABASE] Stack trace: {traceback.format_exc()}")
+                    raise
+                
+                logger.info(f"Page {page_idx + 1}/{len(parsed_pages)} - Nouvelle facture créée: {new_invoice_id}")
+                created_invoices.append({
+                    'id': new_invoice_id,
+                    'page_number': page_idx + 1,
+                    'is_primary': False
+                })
+
+        # Response structure with multi-invoice info
+        structured_response = {
+            "fileName": file.filename,
+            "pages": pages_data,
+            "processing_info": {
+                "total_pages": len(parsed_pages),
+                "total_invoices": len(created_invoices),
+                "pdf_size_bytes": size_bytes,
+                "created_invoices": created_invoices  # Liste des IDs créés
+            }
+        }
+
+        logger.info(f"Traitement terminé: {len(created_invoices)} factures créées/mises à jour")
+        
+        return JSONResponse(content=structured_response)
+
+    except HTTPException:
+        raise
+    except PDFPageCountError:
+        raise HTTPException(status_code=400, detail="PDF illisible ou corrompu")
+    except Exception:
+        raise erreur_interne("le traitement du PDF")
+
+@router.post('/excel-invoices')
+def process_file_excel(
+    file: UploadFile = File(...),
+    file_name: str = Form(...),
+    invoice_id: str = Form(...),
+    audit_id: str = Form(...),
+    organization_id: str = Form(...),
+    utilisateur: Optional[Utilisateur] = Depends(utilisateur_courant),
+    _debit: None = Depends(limite_debit("ocr", DEBIT_OCR_PAR_MINUTE)),
+):
+    """
+    Traite les factures Excel et met à jour la base de données.
+    """
+    if auth_requise():
+        verifier_membre(utilisateur, organization_id)
+        if controler_facture(utilisateur, invoice_id) != organization_id:
+            raise HTTPException(status_code=403, detail="La facture n'appartient pas à cette organisation")
+    try:
+        contents = lire_fichier(file, LIMITE_EXCEL, "un fichier Excel")
+        excel_file = io.BytesIO(contents)
+        df = pd.read_excel(excel_file, engine="openpyxl")
+        df = df.dropna(how="all")
+        
+        # Filter out totals
+        if "Numero Compte Contrat" in df.columns:
+            df = df[df["Numero Compte Contrat"].astype(str).str.lower() != "total"]
+
+        # Convert datetime columns to strings
+        for col in df.select_dtypes(include=["datetime", "datetimetz"]).columns:
+            df[col] = df[col].dt.strftime("%Y-%m-%d")
+
+        # Convert to JSON
+        json_response = df.fillna("").to_dict(orient="records")
+
+        # Extract aggregate data and update database
+        extracted_fields = {
+            "supplier": None,
+            "invoice_date": None,
+            "amount": None,
+            "confidence_score": 0,
+        }
+
+        # Montant total : somme des TTC (template SENELEC), sinon colonne générique
+        amount_col = next((c for c in ["Montant Facture TTC", "Montant", "Amount"] if c in df.columns), None)
+        if amount_col:
+            total = pd.to_numeric(df[amount_col], errors="coerce").sum()
+            extracted_fields["amount"] = float(total) if pd.notna(total) else None
+
+        # Try to extract supplier
+        if "Fournisseur" in df.columns or "Supplier" in df.columns:
+            supplier_col = "Fournisseur" if "Fournisseur" in df.columns else "Supplier"
+            extracted_fields["supplier"] = str(df[supplier_col].iloc[0]) if len(df) > 0 else None
+
+        # Date de la première facture, normalisée en AAAA-MM-JJ (colonne date en base)
+        date_col = next((c for c in ["Date comptable Facture", "Date Facture", "Date"] if c in df.columns), None)
+        if date_col and len(df) > 0:
+            extracted_fields["invoice_date"] = normaliser_date(df[date_col].iloc[0])
+
+        # Score de confiance : entier (colonne integer)
+        fields_found = sum(1 for k in ("supplier", "invoice_date", "amount") if extracted_fields[k] not in (None, 0))
+        extracted_fields["confidence_score"] = round(min(100, fields_found / 3 * 100))
+
+        # Update audit_invoices table
+        logger.info(f"[SUPABASE] Début mise à jour facture Excel - ID: {invoice_id}, FileName: {file_name}")
+        logger.info(f"[SUPABASE] Mise à jour de la facture {invoice_id}")
+        logger.info(f"[SUPABASE] Nombre de lignes Excel: {len(json_response)}")
+        
+        try:
+            update_result = supabase.table('audit_invoices').update({
+                'status': 'processing',
+                'ocr_data': {"rows": json_response},
+                'amount': extracted_fields['amount'],
+                'supplier': extracted_fields['supplier'],
+                'invoice_date': extracted_fields['invoice_date'],
+                'confidence_score': extracted_fields['confidence_score'],
+                'updated_at': datetime.utcnow().isoformat()
+            }).eq('id', invoice_id).execute()
+            
+            if update_result.data:
+                logger.info(f"[SUPABASE] Mise à jour Excel réussie - Facture ID: {invoice_id}, Lignes affectées: {len(update_result.data)}")
+            else:
+                logger.warning(f"[SUPABASE] Mise à jour Excel effectuée mais aucune donnée retournée pour la facture ID: {invoice_id}")
+                
+        except Exception as supabase_error:
+            logger.error(f"[SUPABASE] Erreur lors de la mise à jour de la facture Excel {invoice_id}: {str(supabase_error)}")
+            logger.error(f"[SUPABASE] Type d'erreur: {type(supabase_error).__name__}")
+            import traceback
+            logger.error(f"[SUPABASE] Stack trace: {traceback.format_exc()}")
+            raise
+
+        logger.info(f"Database updated for {file_name}")
+
+        return JSONResponse(content=json_response)
+
+    except HTTPException:
+        raise
+    except Exception:
+        raise erreur_interne("l'import du fichier Excel")
+    
+
+
+@router.post('/measures')
+def process_measures(
+    file: UploadFile = File(...),
+    sensor_type: str = Form(...),
+    sensor_config: Optional[str] = Form(None),
+):
+    """
+    Traite un fichier de mesures selon le type de capteur (lecture : app/core/sensors.py).
+
+    Pour un capteur personnalisé, passer sensor_type='CUSTOM' et sensor_config
+    comme JSON stringifié (champs : timestamp_col, value_col, unit, metric_label,
+    extra_cols, keep_negative, timestamp_format optionnel, series_col et
+    series_label_col optionnels — réponse alors groupée sous `series`).
+    """
+    try:
+        contents = lire_fichier(file, LIMITE_MESURES, "un fichier de mesures")
+        if not contents.strip():
+            raise HTTPException(status_code=400, detail="Le fichier est vide")
+        try:
+            custom = json.loads(sensor_config) if sensor_config else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Configuration du capteur personnalisé illisible (JSON attendu)")
+        try:
+            response_data = process_measurement_file(contents, sensor_type, custom_config=custom)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        response_data["processing_info"]["file_name"] = file.filename
+        return response_data
+    except HTTPException:
+        raise
+    except Exception:
+        raise erreur_interne("le traitement des mesures")
+
+
+@router.post('/measures/preview')
+def preview_measures_file(file: UploadFile = File(...)):
+    """Colonnes, préambule et échantillon de lignes d'un fichier tabulaire
+    (xlsx, xls binaire, csv/tsv) — pour le formulaire de capteur personnalisé."""
+    try:
+        contents = lire_fichier(file, LIMITE_MESURES, "un fichier de mesures")
+        return preview_table(contents)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        # Fichier corrompu ou format inconnu : erreur de l'utilisateur, sans détail interne
+        logger.exception("Aperçu du fichier de mesures impossible")
+        raise HTTPException(status_code=400, detail="Fichier illisible : format non reconnu")
+
+
+@router.post("/invoice-tables-to-excel")
+def process_invoice_tables_to_excel(invoice_data: InvoiceData):
+    """
+    Traite les tableaux de factures et génère un fichier Excel unifié.
+    Le frontend envoie les données JSON des tableaux extraits et reçoit un fichier Excel.
+    """
+    try:
+        logger.info(f"Traitement des tableaux de facture: {invoice_data.fileName}")
+        
+        # Initialiser le processeur unifié
+        processor = UnifiedInvoiceProcessor()
+        
+        # Extraire tous les tableaux de toutes les pages
+        all_tables = []
+        for page in invoice_data.pages:
+            for table in page.tables:
+                # Convertir le format Pydantic en format attendu par le processeur
+                table_dict = {
+                    "rows": [
+                        [
+                            {"text": cell.text, "box": cell.box} 
+                            for cell in row
+                        ] 
+                        for row in table.rows
+                    ],
+                    "box": table.box
+                }
+                all_tables.append(table_dict)
+        
+        logger.info(f"Nombre total de tableaux à traiter: {len(all_tables)}")
+        
+        if not all_tables:
+            raise HTTPException(
+                status_code=400, 
+                detail="Aucun tableau trouvé dans les données fournies"
+            )
+        
+        # Traiter les tableaux avec le processeur unifié
+        unified_data = processor.process_invoice_tables(all_tables)
+        
+        if not unified_data:
+            raise HTTPException(
+                status_code=400, 
+                detail="Aucune donnée valide extraite des tableaux"
+            )
+        
+        # Créer un DataFrame avec les données unifiées
+        df = pd.DataFrame([unified_data])
+        
+        # Créer un fichier temporaire Excel
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+            df.to_excel(tmp_file.name, index=False, engine='openpyxl')
+            
+            # Préparer le nom du fichier de sortie
+            base_name = os.path.splitext(invoice_data.fileName)[0]
+            output_filename = f"{base_name}_unified_tables.xlsx"
+            
+            logger.info(f"Fichier Excel généré: {output_filename}")
+            logger.info(f"Nombre de colonnes: {len(df.columns)}")
+            logger.info(f"Colonnes: {list(df.columns)}")
+            
+            # Retourner le fichier Excel
+            return FileResponse(
+                path=tmp_file.name,
+                filename=output_filename,
+                media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                headers={"Content-Disposition": f"attachment; filename={output_filename}"}
+            )
+
+    except HTTPException:
+        raise
+    except Exception:
+        raise erreur_interne("la transformation des tableaux en Excel")
+
+
+@router.post("/invoice-tables-to-json")
+def process_invoice_tables_to_json(
+    invoice_data: InvoiceData,
+    utilisateur: Optional[Utilisateur] = Depends(utilisateur_courant),
+):
+    """
+    Traite une facture unique et retourne les données unifiées en JSON en s'appuyant
+    sur les templates de dictionnaire (table_name fourni par le front).
+    """
+    try:
+        if not invoice_data.pages:
+            raise HTTPException(status_code=400, detail="Aucune page fournie")
+
+        # Une seule page/facture est supportée désormais
+        page = invoice_data.pages[0]
+        if len(invoice_data.pages) > 1:
+            logger.warning("Payload contient plusieurs pages, seule la première sera traitée.")
+
+        logger.info(f"Traitement d'une facture avec {len(page.tables)} tableau(x)")
+
+        processor = UnifiedInvoiceProcessor()
+
+        dictionary_info = {
+            "id": invoice_data.dictionary_id,
+            "name": invoice_data.dictionary_name
+        }
+        templates_by_name: Dict[str, Dict[str, Any]] = {}
+
+        # Récupérer les templates du dictionnaire s'ils sont fournis
+        if invoice_data.dictionary_id:
+            try:
+                dictionary_resp = (
+                    supabase.table('annotation_dictionaries')
+                    .select('id,name,table_templates,organization_id')
+                    .eq('id', invoice_data.dictionary_id)
+                    .limit(1)
+                    .execute()
+                )
+                if dictionary_resp.data:
+                    record = dictionary_resp.data[0]
+                    verifier_membre(utilisateur, record.get("organization_id"))
+                    dictionary_info["name"] = dictionary_info["name"] or record.get("name")
+                    templates = record.get("table_templates") or []
+                    templates_by_name = {
+                        str(tpl.get("name")).lower(): tpl
+                        for tpl in templates
+                        if tpl and tpl.get("name")
+                    }
+                    logger.info(f"{len(templates_by_name)} template(s) de dictionnaire chargés")
+            except HTTPException:
+                raise
+            except Exception as fetch_error:
+                logger.warning(f"Impossible de récupérer le dictionnaire {invoice_data.dictionary_id}: {fetch_error}")
+
+        # Construire les tables avec leurs noms/template
+        page_tables = []
+        for table in page.tables:
+            table_dict = {
+                "rows": [
+                    [{"text": cell.text, "box": cell.box} for cell in row]
+                    for row in table.rows
+                ],
+                "box": table.box,
+                "table_name": table.table_name or table.template_name,
+                "template_name": table.template_name,
+                "template_id": table.template_id,
+            }
+            page_tables.append(table_dict)
+
+        if not page_tables:
+            raise HTTPException(status_code=400, detail="Aucun tableau trouvé dans la page fournie")
+
+        result = processor.process_invoice_tables_with_templates(page_tables, templates_by_name)
+        unified_data = result.get("unified_data", {})
+        structured_tables = result.get("tables", [])
+        totals = processor.compute_totals(unified_data)
+
+        response_data = {
+            "dictionary": dictionary_info,
+            "fileName": invoice_data.fileName or page.fileName,
+            "pageNumber": page.page_number,
+            "tables": structured_tables,
+            "unifiedData": unified_data,
+            "processingInfo": {
+                "tableCount": len(page_tables),
+                "totalConsumption": totals.get("total_consumption"),
+                "totalAmount": totals.get("total_amount"),
+                "hasTemplates": bool(templates_by_name),
+            },
+        }
+
+        logger.info(
+            f"Traitement terminé pour la page {page.page_number}: "
+            f"{len(structured_tables)} tableau(x), total conso={totals.get('total_consumption')} "
+            f"total montant={totals.get('total_amount')}"
+        )
+        return JSONResponse(content=response_data)
+
+    except HTTPException:
+        raise
+    except Exception:
+        raise erreur_interne("la transformation des tableaux")
+
+
+@router.post("/analyze-energy-label")
+def analyze_energy_label(
+    image: UploadFile = File(...),
+    _debit: None = Depends(limite_debit("ocr", DEBIT_OCR_PAR_MINUTE)),
+):
+    """
+    Analyse une image d'étiquette énergétique ou de plaque constructeur.
+    Extrait les caractéristiques techniques et retourne un JSON structuré.
+    """
+    try:
+        logger.info(f"Début de l'analyse de l'étiquette énergétique: {image.filename}")
+        
+        # Vérifier le type de fichier
+        if not image.content_type or not image.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=400, 
+                detail="Le fichier doit être une image (JPEG, PNG, etc.)"
+            )
+        logger.info(f"Type de fichier: {image.content_type}")
+        # Lire l'image
+        image_bytes = lire_fichier(image, LIMITE_IMAGE, "une image")
+        verifier_image(image_bytes)
+        logger.info(f"Taille de l'image: {len(image_bytes)} bytes")
+        # Convertir en base64
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+                
+        # Analyser avec Mistral Small via Bedrock (texte uniquement)
+        characteristics = _analyze_energy_label_with_mistral(image_base64)
+        logger.info(f"Étiquette analysée : {len(characteristics or {})} caractéristiques")
+        if not characteristics:
+            raise HTTPException(
+                status_code=500, 
+                detail="Impossible d'extraire les caractéristiques de l'image"
+            )
+            
+        # Préparer la réponse directement avec le JSON flexible
+        response_data = {
+            "fileName": image.filename,
+            "characteristics": characteristics,
+            "processing_info": {
+                "file_size_bytes": len(image_bytes),
+                "content_type": image.content_type,
+                "extraction_successful": True
+            }
+        }
+        
+        logger.info(f"Analyse terminée avec succès pour: {image.filename}")
+        return JSONResponse(content=response_data)
+        
+    except HTTPException:
+        raise
+    except Exception:
+        raise erreur_interne("l'analyse de l'étiquette énergétique")
+@router.post("/process-hierarchy")
+def process_hierarchy(hierarchy_data: Dict[str, Any]):
+    """
+    Traite la hiérarchie et complète les valeurs manquantes de averageConsumption.
+    
+    Règles:
+    1. Si tous les enfants ont une valeur et le parent n'en a pas : parent = somme(enfants)
+    2. Si le parent a une valeur et qu'il manque 1 seul enfant : enfant_manquant = parent - somme(autres_enfants)
+    3. Ajoute totalChildrenConsumption à chaque nœud
+    """
+    try:
+        payload = hierarchy_data or {}
+        root = payload.get("hierarchy", {})
+        nodes = root.get("hierarchy", [])
+        
+
+        def to_number(value: Any) -> Optional[float]:
+            """Convertit une valeur en float, en gérant les unités"""
+            if value is None:
+                return None
+            try:
+                if isinstance(value, (int, float)):
+                    return float(value)
+                
+                # Convertir en string et nettoyer
+                s = str(value).strip()
+                
+                # Supprimer les unités courantes (°C, kWh, W, etc.)
+                for unit in ['°C', '°F', 'kWh', 'kW', 'W', 'A', 'V', '%']:
+                    s = s.replace(unit, '')
+                
+                # Remplacer virgule par point et nettoyer les espaces
+                s = s.strip().replace(',', '.')
+                
+                return float(s)
+            except (ValueError, TypeError):
+                return None
+
+        def process_node(node: Dict[str, Any]) -> None:
+            """Traite un nœud et ses enfants récursivement"""
+            children = node.get("children", [])
+            
+            # D'abord, traiter tous les enfants
+            for child in children:
+                process_node(child)
+            
+            # Récupérer les valeurs des enfants
+            child_values = [to_number(c.get("averageConsumption")) for c in children]
+            parent_value = to_number(node.get("averageConsumption"))
+            
+            # Règle 1: Parent manquant mais tous les enfants présents
+            if parent_value is None and children and all(v is not None for v in child_values):
+                node["averageConsumption"] = sum(child_values)
+                parent_value = node["averageConsumption"]
+            
+            # Règle 2: Parent présent, exactement 1 enfant manquant
+            if parent_value is not None and children:
+                missing_count = sum(1 for v in child_values if v is None)
+                if missing_count == 1:
+                    known_sum = sum(v for v in child_values if v is not None)
+                    missing_idx = next(i for i, v in enumerate(child_values) if v is None)
+                    children[missing_idx]["averageConsumption"] = parent_value - known_sum
+            
+            # Calculer la somme des enfants pour information
+            total_children = sum(
+                to_number(c.get("averageConsumption")) or 0.0 
+                for c in children
+            )
+            node["totalChildrenConsumption"] = total_children
+
+        # Traiter tous les nœuds racines
+        for node in nodes:
+            process_node(node)
+
+        logger.info("Hiérarchie traitée avec succès")
+        return JSONResponse(content=payload)
+        
+    except Exception:
+        raise erreur_interne("le traitement de la hiérarchie")
+

@@ -1,9 +1,10 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 
-export interface Organization {
+interface Organization {
   id: string;
   name: string;
   slug?: string;
@@ -15,10 +16,24 @@ export interface Organization {
 
 interface OrganizationContextType {
   organization: Organization | null;
+  /** Toutes les organisations de l'utilisateur, par date d'adhésion */
+  organizations: Organization[];
   loading: boolean;
   error: string | null;
   setOrganization: (org: Organization | null) => void;
+  switchOrganization: (organizationId: string) => void;
   createOrganization: (name: string, description?: string) => Promise<Organization>;
+}
+
+// Dernière organisation choisie par l'utilisateur sur ce navigateur
+const ACTIVE_ORG_KEY = 'simee.activeOrganizationId';
+
+function readActiveOrgId(): string | null {
+  try { return localStorage.getItem(ACTIVE_ORG_KEY); } catch { return null; }
+}
+
+function writeActiveOrgId(id: string) {
+  try { localStorage.setItem(ACTIVE_ORG_KEY, id); } catch { /* navigation privée */ }
 }
 
 const OrganizationContext = createContext<OrganizationContextType | undefined>(undefined);
@@ -26,11 +41,12 @@ const OrganizationContext = createContext<OrganizationContextType | undefined>(u
 export function OrganizationProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [organization, setOrganization] = useState<Organization | null>(null);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load user's organization on mount or when user changes
   useEffect(() => {
     const loadOrganization = async () => {
       if (!user?.id) {
@@ -42,43 +58,33 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
       setError(null);
 
       try {
-        // First try to get organization user belongs to
-        const { data: orgUsers, error: orgUsersError } = await supabase
+        // Toutes les adhésions, dans un ordre stable (la plus ancienne d'abord)
+        const { data: memberships, error: membershipsError } = await supabase
           .from('organization_users')
-          .select('organization_id')
+          .select('created_at, organizations(*)')
           .eq('user_id', user.id)
-          .limit(1);
+          .order('created_at', { ascending: true });
 
-        if (orgUsersError) throw orgUsersError;
+        if (membershipsError) throw membershipsError;
 
-        if (orgUsers && orgUsers.length > 0) {
-          // User is member of an organization
-          const organizationId = orgUsers[0].organization_id;
-          const { data: org, error: orgError } = await supabase
-            .from('organizations')
-            .select('*')
-            .eq('id', organizationId)
-            .single();
+        let orgs = (memberships ?? [])
+          .map(m => m.organizations as unknown as Organization | null)
+          .filter((o): o is Organization => !!o);
 
-          if (orgError) throw orgError;
-          setOrganization(org);
-        } else {
-          // Try to get organization created by this user
+        if (orgs.length === 0) {
           const { data: createdOrgs, error: createdOrgsError } = await supabase
             .from('organizations')
             .select('*')
             .eq('created_by', user.id)
-            .limit(1);
+            .order('created_at', { ascending: true });
 
           if (createdOrgsError) throw createdOrgsError;
-
-          if (createdOrgs && createdOrgs.length > 0) {
-            setOrganization(createdOrgs[0]);
-          } else {
-            // No organization found
-            setOrganization(null);
-          }
+          orgs = createdOrgs ?? [];
         }
+
+        const storedId = readActiveOrgId();
+        setOrganizations(orgs);
+        setOrganization(orgs.find(o => o.id === storedId) ?? orgs[0] ?? null);
       } catch (err) {
         console.error('Error loading organization:', err);
         setError(err instanceof Error ? err.message : 'Failed to load organization');
@@ -91,78 +97,56 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
     loadOrganization();
   }, [user?.id]);
 
+  const switchOrganization = (organizationId: string) => {
+    const next = organizations.find(o => o.id === organizationId);
+    if (!next || next.id === organization?.id) return;
+    writeActiveOrgId(next.id);
+    setOrganization(next);
+    // Les données en cache appartiennent à l'organisation précédente
+    queryClient.invalidateQueries();
+  };
+
   const createOrganization = async (name: string, description?: string): Promise<Organization> => {
-    if (!user?.id) {
-      throw new Error('User not authenticated');
-    }
+    if (!user?.id) throw new Error('User not authenticated');
 
     try {
       const slug = name.toLowerCase().replace(/\s+/g, '-');
-
       const { data, error } = await supabase
         .from('organizations')
-        .insert([
-          {
-            name,
-            slug,
-            description,
-            created_by: user.id,
-          },
-        ])
+        .insert([{ name, slug, description, created_by: user.id }])
         .select()
         .single();
 
       if (error) throw error;
 
-      // Add user to organization_users as admin (trigger should do this, but we do it explicitly to be sure)
       const { error: userError } = await supabase
         .from('organization_users')
-        .insert([
-          {
-            organization_id: data.id,
-            user_id: user.id,
-            role: 'admin',
-          },
-        ])
+        .insert([{ organization_id: data.id, user_id: user.id, role: 'admin' }])
         .select()
         .single();
 
-      // If insertion fails due to conflict (trigger already added), that's ok
       if (userError && userError.code !== '23505') {
         console.warn('Error adding user to organization_users:', userError);
-        // Continue anyway as trigger should have handled it
       }
 
-      // Reload organization to get fresh data
+      setOrganizations(prev => [...prev, data]);
       setOrganization(data);
-      toast({
-        title: 'Organisation créée',
-        description: `${name} a été créée avec succès`,
-      });
-
+      writeActiveOrgId(data.id);
+      toast({ title: 'Organisation créée', description: `${name} a été créée avec succès` });
       return data;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erreur lors de la création de l\'organisation';
       setError(message);
-      toast({
-        title: 'Erreur',
-        description: message,
-        variant: 'destructive',
-      });
+      toast({ title: 'Erreur', description: message, variant: 'destructive' });
       throw err;
     }
   };
 
   return (
-    <OrganizationContext.Provider
-      value={{
-        organization,
-        loading,
-        error,
-        setOrganization,
-        createOrganization,
-      }}
-    >
+    <OrganizationContext.Provider value={{
+      organization, organizations, loading, error,
+      setOrganization, switchOrganization, createOrganization,
+    }}>
       {children}
     </OrganizationContext.Provider>
   );
@@ -171,16 +155,15 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
 export function useOrganization() {
   const context = useContext(OrganizationContext);
   if (!context) {
-    // Fallback doux pour éviter les crashs lorsque le composant est rendu hors Provider
     console.warn('useOrganization appelé hors OrganizationProvider. Retour d\'un contexte par défaut.');
     return {
       organization: null,
+      organizations: [],
       loading: false,
       error: 'OrganizationProvider manquant',
       setOrganization: () => {},
-      createOrganization: async () => {
-        throw new Error('OrganizationProvider manquant');
-      },
+      switchOrganization: () => {},
+      createOrganization: async () => { throw new Error('OrganizationProvider manquant'); },
     } as OrganizationContextType;
   }
   return context;

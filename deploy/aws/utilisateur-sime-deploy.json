@@ -1,0 +1,33 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EC2IrlandeUniquement",
+      "Effect": "Allow",
+      "Action": "ec2:*",
+      "Resource": "*",
+      "Condition": { "StringEquals": { "aws:RequestedRegion": "eu-west-1" } }
+    },
+    {
+      "Sid": "AttacherLeRoleSimeApiAuServeur",
+      "Effect": "Allow",
+      "Action": ["iam:PassRole", "iam:GetRole", "iam:GetInstanceProfile"],
+      "Resource": [
+        "arn:aws:iam::*:role/sime-api",
+        "arn:aws:iam::*:instance-profile/sime-api"
+      ]
+    },
+    {
+      "Sid": "SecretsDuBackend",
+      "Effect": "Allow",
+      "Action": ["ssm:PutParameter", "ssm:GetParametersByPath", "ssm:DeleteParameter"],
+      "Resource": ["arn:aws:ssm:eu-west-1:*:parameter/sime/api", "arn:aws:ssm:eu-west-1:*:parameter/sime/api/*"]
+    },
+    {
+      "Sid": "ListerLesParametres",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeParameters",
+      "Resource": "*"
+    }
+  ]
+}

@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 from trp import Document as TrpDocument
 from app.core.config import PROMPT
 import json
-from app.core.utils import extract_and_parse_json
+from app.core.documents import extract_and_parse_json
 import os
 
 from dotenv import load_dotenv
@@ -24,7 +24,6 @@ def _textract_analyze_bytes(image_bytes: bytes) -> dict:
         Document={'Bytes': image_bytes},
         FeatureTypes=["FORMS", "TABLES"]
     )
-    print(response)
     return response
 
 def _parse_trp(response: dict, image_width: int, image_height: int) -> Dict[str, Any]:
@@ -109,10 +108,11 @@ def _normalize_with_llm(clean_payload: Dict[str, Any]) -> Dict[str, Any]:
     bedrock_model_id = os.getenv("LLM_MODEL", "mistral.mistral-small-2402-v1:0")
     prompt = (PROMPT + f"JSON:\n{json.dumps(clean_payload, ensure_ascii=False)}")
     try:
-        brt = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1"))
+        # Session propre à l'appel : la session boto3 par défaut n'est pas sûre entre threads.
+        brt = boto3.session.Session().client("bedrock-runtime", region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
         body = {
             "prompt": prompt,
-            "max_tokens": 2048,
+            "max_tokens": 4096,
             "temperature": 0.0,
         }
         resp = brt.invoke_model(
@@ -126,7 +126,6 @@ def _normalize_with_llm(clean_payload: Dict[str, Any]) -> Dict[str, Any]:
 
         try:
             parsed_payload = json.loads(payload)
-            print("payload is", parsed_payload)
             text = parsed_payload.get("output_text") or parsed_payload.get("generation") or payload
         except Exception:
             text = payload
@@ -134,8 +133,8 @@ def _normalize_with_llm(clean_payload: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(data, dict) and "forms" in data and "tables" in data:
             return data
         return clean_payload
-    except Exception as e:
-        print("error mistral: ",e)
+    except Exception:
+        logger.exception("Normalisation Bedrock en échec : données Textract conservées")
         return clean_payload
 
 def _analyze_energy_label_with_mistral(image_base64: str) -> Dict[str, Any]:
@@ -161,7 +160,8 @@ def _analyze_energy_label_with_mistral(image_base64: str) -> Dict[str, Any]:
     )
 
     try:
-        brt = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1"))
+        # Session propre à l'appel : la session boto3 par défaut n'est pas sûre entre threads.
+        brt = boto3.session.Session().client("bedrock-runtime", region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
         body = {
             "messages" : [
                 {
