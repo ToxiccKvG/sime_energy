@@ -16,7 +16,7 @@ import { dailyUnit, groupDays, hourlyUnit, mean, std, type DayInfo, type SeriesC
 /** Jours par an de chaque classe (approximation : 6 fériés fixes, 104 jours de week-end). */
 const YEAR_DAYS: Record<DayClass, number> = { ouvre: 255, weekend: 104, ferie: 6 };
 
-export interface SideStats {
+interface SideStats {
   days: number;
   /** Valeur journalière moyenne et écart-type (dailyUnit). */
   dailyMean: number;

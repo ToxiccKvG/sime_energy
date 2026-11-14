@@ -20,6 +20,7 @@
 
 import { toDate, type QuantityKind } from '@/services/measurementStats';
 import { energyUnitFor, powerUnitFor, unitInfo } from '@/lib/sensor-comparison';
+import { detectStepMs } from '@/services/analysisModels/types';
 
 export interface SeriesSpec {
   /** Libellé affiché (nom du fichier / capteur). */
@@ -142,19 +143,6 @@ function toPoints(series: SeriesSpec): { t: number; v: number }[] {
     pts.push({ t, v });
   }
   return pts.sort((x, y) => x.t - y.t);
-}
-
-/** Pas d'échantillonnage natif (médiane des intervalles), en ms. */
-export function detectStepMs(points: { t: number }[]): number {
-  if (points.length < 2) return 86_400_000;
-  const diffs: number[] = [];
-  for (let i = 1; i < points.length; i++) {
-    const d = points[i].t - points[i - 1].t;
-    if (d > 0) diffs.push(d);
-  }
-  if (diffs.length === 0) return 86_400_000;
-  diffs.sort((a, b) => a - b);
-  return diffs[Math.floor(diffs.length / 2)];
 }
 
 /** Plus petit pas standard ≥ au pas natif le plus grossier des deux séries. */

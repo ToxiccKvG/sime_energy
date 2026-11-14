@@ -17,7 +17,7 @@ import type { EtatAppareil, LigneCapteur } from '@/lib/iot-rapport-service';
 import type { Tableau } from './iotRapport';
 import type { TranchesHoraires } from './iotRapportAnalyses';
 
-export type NatureGrandeur = 'moyenne' | 'cumul';
+type NatureGrandeur = 'moyenne' | 'cumul';
 
 export interface DefGrandeur { cle: string; libelle: string; unite: string; nature: NatureGrandeur }
 

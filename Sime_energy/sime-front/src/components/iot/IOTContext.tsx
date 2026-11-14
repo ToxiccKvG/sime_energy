@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useOrganization } from '@/context/OrganizationContext';
 import { toast } from '@/hooks/use-toast';
 import * as fileService from '@/lib/iot-file-service';
+import { dateReviver } from '@/lib/storage-json';
 import type { SupabaseExportOptions } from '@/lib/iot-supabase-service';
 import type { PerimetreAnalyse } from './PerimetreBar';
 
@@ -30,14 +31,6 @@ const STORAGE_KEY = 'sime-iot-v4';
 type PersistedState = Pick<IOTState,
   'selectedFileId' | 'donneesTechniques' | 'joursFerier' | 'calendriers' | 'activeTab'
 >;
-
-function dateReviver(_key: string, value: unknown): unknown {
-  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
-    const d = new Date(value);
-    if (!isNaN(d.getTime())) return d;
-  }
-  return value;
-}
 
 function saveToStorage(state: IOTState) {
   const persisted: PersistedState = {
