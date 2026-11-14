@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -12,21 +13,26 @@ import { AppHeader } from "@/components/AppHeader";
 import { Login } from "./pages/Login";
 import { ForgotPassword } from "./pages/ForgotPassword";
 import AcceptInvitation from "./pages/AcceptInvitation";
-import Index from "./pages/Index";
-import Facturation from "./pages/Facturation";
-import { AnnotationPage } from "./pages/AnnotationPage";
-import Inventaire from "./pages/Inventaire";
-import Audits from "./pages/Audits";
-import AuditDetail from "./pages/AuditDetail";
-import Rapport from "./pages/Rapport";
-import Mesures from "./pages/Mesures";
-import Parametres from "./pages/Parametres";
-import Compte from "./pages/Compte";
 import Auth from "./pages/Auth";
-import IOT from "./pages/IOT";
 import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 import { BenjaminBubble } from "@/components/chatbot/BenjaminBubble";
+
+// Pages de l'application chargées à la demande : chacune devient un fichier JS
+// téléchargé à sa première ouverture, au lieu d'un seul bundle pour tout le site.
+// Les pages publiques (connexion, invitation, session lue dans l'URL) restent
+// chargées immédiatement.
+const Index = lazy(() => import("./pages/Index"));
+const Facturation = lazy(() => import("./pages/Facturation"));
+const AnnotationPage = lazy(() => import("./pages/AnnotationPage").then((m) => ({ default: m.AnnotationPage })));
+const Inventaire = lazy(() => import("./pages/Inventaire"));
+const Audits = lazy(() => import("./pages/Audits"));
+const AuditDetail = lazy(() => import("./pages/AuditDetail"));
+const Rapport = lazy(() => import("./pages/Rapport"));
+const Mesures = lazy(() => import("./pages/Mesures"));
+const Parametres = lazy(() => import("./pages/Parametres"));
+const Compte = lazy(() => import("./pages/Compte"));
+const IOT = lazy(() => import("./pages/IOT"));
 
 const queryClient = new QueryClient();
 
@@ -49,6 +55,15 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   return children;
+}
+
+/** Affiché dans la zone de contenu pendant le téléchargement d'une page. */
+function PageLoading() {
+  return (
+    <div className="flex items-center justify-center py-24" role="status" aria-label="Chargement de la page">
+      <div className="w-10 h-10 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin"></div>
+    </div>
+  );
 }
 
 const App = () => (
@@ -82,6 +97,7 @@ const App = () => (
                       <div className="flex flex-1 flex-col min-w-0">
                         <AppHeader />
                         <main className="flex-1 min-w-0 overflow-x-hidden bg-transparent p-4 md:p-6 md:pl-28">
+                          <Suspense fallback={<PageLoading />}>
                           <Routes>
                             <Route path="/" element={<Index />} />
                             <Route path="/facturation" element={<Facturation />} />
@@ -96,6 +112,7 @@ const App = () => (
                             <Route path="/compte" element={<Compte />} />
                             <Route path="*" element={<NotFound />} />
                           </Routes>
+                          </Suspense>
                         </main>
                       </div>
                     </div>
