@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { Fragment, lazy, Suspense, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ThemeProvider } from "next-themes";
 import { useAuth } from "@/context/AuthContext";
-import { OrganizationProvider } from "@/context/OrganizationContext";
+import { OrganizationProvider, useOrganization } from "@/context/OrganizationContext";
 import { RequireOrganization } from "@/components/auth/RequireOrganization";
 import { AppSidebar } from "@/components/AppSidebar";
 import { AppHeader } from "@/components/AppHeader";
@@ -57,6 +57,16 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return children;
 }
 
+/**
+ * Pages remontées à chaque changement d'organisation : elles relisent leurs
+ * données (l'IOT, par exemple, ne les lit qu'à l'ouverture) au lieu de garder
+ * à l'écran celles de l'organisation précédente.
+ */
+function PagesDeLOrganisation({ children }: { children: ReactNode }) {
+  const { organization } = useOrganization();
+  return <Fragment key={organization?.id}>{children}</Fragment>;
+}
+
 /** Affiché dans la zone de contenu pendant le téléchargement d'une page. */
 function PageLoading() {
   return (
@@ -97,6 +107,7 @@ const App = () => (
                       <div className="flex flex-1 flex-col min-w-0">
                         <AppHeader />
                         <main className="flex-1 min-w-0 overflow-x-hidden bg-transparent p-4 md:p-6 md:pl-28">
+                          <PagesDeLOrganisation>
                           <Suspense fallback={<PageLoading />}>
                           <Routes>
                             <Route path="/" element={<Index />} />
@@ -113,6 +124,7 @@ const App = () => (
                             <Route path="*" element={<NotFound />} />
                           </Routes>
                           </Suspense>
+                          </PagesDeLOrganisation>
                         </main>
                       </div>
                     </div>

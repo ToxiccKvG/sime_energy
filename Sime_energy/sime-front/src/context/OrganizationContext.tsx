@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, definirOrganisationSelectionnee } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 
 interface Organization {
@@ -46,6 +46,11 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Fixé pendant le rendu, avant celui des pages : leurs premières requêtes
+  // partent déjà avec la bonne organisation (un useEffect d'ici passerait après
+  // ceux des enfants). Simple affectation, sans effet sur le rendu.
+  definirOrganisationSelectionnee(organization?.id ?? null);
 
   useEffect(() => {
     const loadOrganization = async () => {
