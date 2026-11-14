@@ -100,7 +100,7 @@ export function SchemaDesignerStep({
       // Supprimer tous les enfants aussi
       if (component.children.length > 0) {
         const childrenToDelete = new Set(component.children);
-        let queue = [...component.children];
+        const queue = [...component.children];
 
         while (queue.length > 0) {
           const childId = queue.shift()!;

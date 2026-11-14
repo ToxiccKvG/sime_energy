@@ -383,7 +383,6 @@ export interface HeatmapCell {
 }
 
 // Helpers heatmap (privés)
-type RawRow     = { device_id: string; name: string; ts: string; power_w: number | null };
 type HoraireRow = { device_id: string; name: string; ts_heure: string; wh_conso: number | null };
 type HeatAcc    = Map<string, { name: string; sums: number[]; counts: number[] }>;
 
@@ -394,16 +393,6 @@ function _heatFlat(acc: HeatAcc): HeatmapCell[] {
     for (let h = 0; h < 24; h++)
       cells.push({ device_id, name, hour: h, kwh: counts[h] > 0 ? sums[h] / counts[h] : 0 });
   return cells;
-}
-function _heatAddRaw(acc: HeatAcc, rows: RawRow[]) {
-  for (const r of rows) {
-    if (r.power_w == null) continue;
-    const hour = new Date(r.ts).getHours();
-    const cur = acc.get(r.device_id) ?? { name: r.name ?? r.device_id, sums: Array(24).fill(0), counts: Array(24).fill(0) };
-    cur.sums[hour]   += r.power_w / 1000; // W → kW ≈ kWh/h
-    cur.counts[hour] += 1;
-    acc.set(r.device_id, cur);
-  }
 }
 function _heatAddHoraire(acc: HeatAcc, rows: HoraireRow[]) {
   for (const r of rows) {

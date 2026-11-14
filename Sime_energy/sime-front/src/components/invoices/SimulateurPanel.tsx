@@ -138,7 +138,7 @@ function computeJoursFromOcr(ocrData: unknown): number | undefined {
   const finStr   = get(['PERIODE AU', 'PERIODE_AU', 'DATE FIN', 'AU'])
   if (!debutStr || !finStr) return undefined
   const parseD = (raw: string): Date | null => {
-    const m = raw.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+    const m = raw.trim().match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
     if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
     const d = new Date(raw.trim())
     return isNaN(d.getTime()) ? null : d

@@ -13,7 +13,7 @@
  * moins 3 jours de la même classe pour être calculés.
  */
 
-import { classifyDay, DAY_CLASSES, type DayClass } from './profilType';
+import { classifyDay, DAY_CLASSES } from './profilType';
 import { groupDays, hourlyUnit, mad, quantile, toPoints, type SeriesContext } from './types';
 
 export type AnomalyKind = 'gap' | 'flat' | 'high' | 'low';

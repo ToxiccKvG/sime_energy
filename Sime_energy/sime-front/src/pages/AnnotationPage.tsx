@@ -719,7 +719,7 @@ export function AnnotationPage() {
         if (currentForms && currentForms.length > 0) {
           currentForms.forEach(form => {
             // Ne pas écraser si la clé existe déjà dans unifiedData (priorité aux tableaux)
-            if (form.Key && form.Value && !mergedUnifiedData.hasOwnProperty(form.Key)) {
+            if (form.Key && form.Value && !Object.prototype.hasOwnProperty.call(mergedUnifiedData, form.Key)) {
               mergedUnifiedData[form.Key] = form.Value;
             }
           });

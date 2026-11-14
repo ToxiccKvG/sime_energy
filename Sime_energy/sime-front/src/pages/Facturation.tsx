@@ -495,7 +495,7 @@ const Facturation = () => {
   };
 
   const toggleSelect = (id: string) => setSelectedInvoices(prev => {
-    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+    const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n;
   });
   const toggleAll = () => setSelectedInvoices(
     selectedInvoices.size === sortedInvoices.length && sortedInvoices.length > 0

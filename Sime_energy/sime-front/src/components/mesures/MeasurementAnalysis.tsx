@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { computeMeasurementKpis, groupMeasurementsByDay, toDate, type ColumnStat, type QuantityKind } from '@/services/measurementStats';
+import { computeMeasurementKpis, groupMeasurementsByDay, type ColumnStat, type QuantityKind } from '@/services/measurementStats';
 import { exportReportToDocx, exportReportToPdf, type MeasurementReport } from '@/services/measurementReportExport';
 import { PeriodFilter, dayRangeOf, filterByRange, useTimestampBounds, type DateRange } from './MeasurementPeriodFilter';
 import { formatQuantity } from '@/lib/unit-format';

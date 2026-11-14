@@ -336,7 +336,6 @@ export function AuditBillingParams({ auditId }: AuditBillingParamsProps) {
       setInvoiceFoundSource(null)
     }, 600)
     return () => { if (invoiceDebounceRef.current) clearTimeout(invoiceDebounceRef.current) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceNumSearch, senelecFactures, invoices])
 
   // ── Filtrage factures par N° contrat ──
@@ -460,7 +459,6 @@ export function AuditBillingParams({ auditId }: AuditBillingParamsProps) {
   }, [invoiceData, resolvedMttc])
 
   // ── Calcul KPIs en temps réel ──
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const kpis = useMemo(() => {
     if (!billingParams || !resolvedInvoice) return null
     return calculateBillingKPIs(billingParams, resolvedInvoice)

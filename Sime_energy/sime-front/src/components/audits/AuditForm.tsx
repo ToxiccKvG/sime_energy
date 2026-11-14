@@ -156,7 +156,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
   // Navigate between tabs (skip specifique if no clientType yet)
   const TAB_ORDER = ['basic', 'general', 'specifique', 'personnel', 'sites'];
   const goToNextTab = () => {
-    let idx = TAB_ORDER.indexOf(activeTab) + 1;
+    const idx = TAB_ORDER.indexOf(activeTab) + 1;
     if (idx < TAB_ORDER.length) setActiveTab(TAB_ORDER[idx]);
   };
 
@@ -242,7 +242,7 @@ export function AuditForm({ audit, onSave, onCancel }: AuditFormProps) {
       })
       .catch(console.error)
       .finally(() => setLoadingSites(false));
-  }, [audit?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [audit?.id]);
 
   // ---- HANDLERS ----
 

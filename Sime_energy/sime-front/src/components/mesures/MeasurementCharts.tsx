@@ -12,7 +12,7 @@
  * s'adapte donc à n'importe quel capteur sans configuration.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import { isHoverArtifact } from '@/lib/chart-export';
 import {
@@ -25,8 +25,6 @@ import {
   ComposedChart,
   Legend,
   Line,
-  Pie,
-  PieChart,
   ReferenceLine,
   Tooltip,
   XAxis,

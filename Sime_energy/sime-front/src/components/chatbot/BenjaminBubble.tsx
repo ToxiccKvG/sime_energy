@@ -67,12 +67,12 @@ function renderMarkdown(text: string): React.ReactNode[] {
     const line = lines[i];
 
     // Bullet list item: lines starting with "* " or "- "
-    if (/^[\*\-]\s+/.test(line)) {
+    if (/^[*-]\s+/.test(line)) {
       const listItems: React.ReactNode[] = [];
-      while (i < lines.length && /^[\*\-]\s+/.test(lines[i])) {
+      while (i < lines.length && /^[*-]\s+/.test(lines[i])) {
         listItems.push(
           <li key={i} className="ml-1">
-            {renderInline(lines[i].replace(/^[\*\-]\s+/, ''))}
+            {renderInline(lines[i].replace(/^[*-]\s+/, ''))}
           </li>
         );
         i++;

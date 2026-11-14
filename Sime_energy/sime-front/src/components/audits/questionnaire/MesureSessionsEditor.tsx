@@ -30,7 +30,7 @@ export function MesureSessionsEditor({ sessions, onChange }: {
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
 
   const toggle = (id: string) =>
-    setOpenIds((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+    setOpenIds((prev) => { const s = new Set(prev); if (s.has(id)) s.delete(id); else s.add(id); return s; });
 
   const addSession = (partial: Omit<MesureSession, 'id' | 'readings'>) => {
     const readings: MesureReading[] = partial.type === 'INDEX'

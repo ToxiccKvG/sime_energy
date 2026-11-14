@@ -48,8 +48,6 @@ function roleSuggere(family: string): DeviceRole | '' {
   return ''; // 3PH / 2PH / INCONNU : une vraie décision, pas de suggestion
 }
 
-const ROLE_LABEL = new Map(DEVICE_ROLES.map(r => [r.value, r.label]));
-
 function RoleBadge({ role }: { role: DeviceRole }) {
   const bilan = ['M1_RESEAU', 'M2_SELECTEUR', 'M3_CHARGE', 'M4_GROUPE', 'M5_PV', 'BESS'].includes(role);
   return (

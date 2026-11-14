@@ -3,7 +3,7 @@ import { parseExcelBuffer } from '@/lib/excel-utils';
 import {
   Upload, FileSpreadsheet, Trash2, CheckCircle, AlertCircle,
   ChevronLeft, ChevronRight, Hash, Calendar, Type, Database,
-  FileText, Zap, FolderOpen,
+  FolderOpen,
 } from 'lucide-react';
 import { filesFromDataTransfer, filesFromInput, directoryInputProps } from '@/lib/folder-import';
 

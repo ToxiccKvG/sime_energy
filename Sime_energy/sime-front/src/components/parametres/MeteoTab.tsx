@@ -758,7 +758,7 @@ function ExploreResults({
   const toggleChartVar = (dataKey: string) => {
     setHiddenVars(prev => {
       const next = new Set(prev);
-      next.has(dataKey) ? next.delete(dataKey) : next.add(dataKey);
+      if (next.has(dataKey)) next.delete(dataKey); else next.add(dataKey);
       return next;
     });
   };

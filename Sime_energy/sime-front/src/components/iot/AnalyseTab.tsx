@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import { PieOfPie, groupSmallParts, MAX_PARTS_CHOICES, type SliceLabelMode } from '@/components/shared/PieOfPie';
 import { exportJsonToXlsx } from '@/lib/excel-utils';
 import { appliquerLecture, proposerLecture, lireFichierImporte } from '@/lib/iot-lecture-fichier';
@@ -44,8 +44,6 @@ type AnalyseMode = 'courbe' | 'tcd' | 'profil_semaine' | 'distribution' | 'corre
 
 const ENV_MODES: AnalyseMode[] = ['env_courbe', 'env_bande', 'env_heatmap', 'env_profil24'];
 type ChartType = 'bar' | 'line' | 'area' | 'pie';
-
-const COULEURS = ['#a78bfa', '#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#f97316', '#06b6d4'];
 
 /** Libellé lisible de chaque vue — sert au titre du graphique et à l'export. */
 const MODE_LABELS: Record<string, string> = {
@@ -246,7 +244,6 @@ function TcdPie({ data, primaryMetric, crossFilter, onPieClick, height }: {
   const total = rows.reduce((a, r) => a + r.value, 0);
   const { shown, others } = useMemo(() => groupSmallParts(rows, maxParts), [rows, maxParts]);
   const fmtV = (v: number) => `${fmtFr(v, v < 10 ? 2 : 1)}${unit ? ` ${unit}` : ''}`;
-  const pct = (v: number) => `${fmtFr((v / total) * 100, 1)} %`;
 
   if (rows.length === 0) return <p className="text-sm text-slate-400 py-10 text-center">Aucune valeur positive à répartir pour cette grandeur.</p>;
 
