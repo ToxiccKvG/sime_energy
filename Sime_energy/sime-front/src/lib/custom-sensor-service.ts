@@ -4,7 +4,7 @@ import { backendHeaders } from '@/services/backend-client';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
-export interface TablePreview {
+interface TablePreview {
   columns: string[];
   meta: SpreadsheetMeta;
   rowCount: number;
@@ -157,7 +157,7 @@ export function unitFromHeader(header: string): string {
 }
 
 /** Libellé lisible à partir d'un en-tête : « RELATIVE-HUMIDITY » → « Relative humidity ». */
-export function labelFromHeader(header: string): string {
+function labelFromHeader(header: string): string {
   const base = header.replace(/[([][^)\]]*[)\]]\s*$/, '').replace(/[_-]+/g, ' ').trim();
   if (!base) return header;
   const lower = base.toLowerCase();
@@ -247,7 +247,7 @@ export function isConstantColumn(sample: Record<string, unknown>[], col: string)
   return n >= 2;
 }
 
-export interface ExtraColsTriage {
+interface ExtraColsTriage {
   proposed: ExtraCol[];
   /** Colonnes sans aucune valeur dans ce fichier. */
   empty: string[];
@@ -280,7 +280,7 @@ export function allExtraCols(columns: string[], sample: Record<string, unknown>[
   return triageExtraCols(columns, sample, exclude).proposed;
 }
 
-export interface MappingSuggestion {
+interface MappingSuggestion {
   name: string;
   timestampCol: string;
   timeCol: string;
@@ -351,7 +351,7 @@ const DECIMAL_RE = /^-?\d*[.,]\d+$/;
 // Parties de la date : heure seule (fractions de seconde comprises), année, date
 const DATE_PART_RES = [/^\d{1,2}:\d{2}(:\d{2}([.,]\d+)?)?$/, /^(19|20)\d{2}$/, DATE_RE];
 
-export interface SeriesSuggestion {
+interface SeriesSuggestion {
   /** Colonne d'appartenance proposée. */
   col: string;
   /** Colonne du nom affiché, si le fichier en a une. */
@@ -420,7 +420,7 @@ export function suggestSeries(
  * tranche ; sinon celle qui change le plus souvent est le jour ; sinon null.
  */
 /** true = jour-mois, false = mois-jour, 'iso' = année en tête (rien à deviner), null = ambigu. */
-export type DayFirst = boolean | 'iso' | null;
+type DayFirst = boolean | 'iso' | null;
 
 export function inferDayFirst(samples: string[]): DayFirst {
   const pairs: [number, number][] = [];
@@ -439,7 +439,7 @@ export function inferDayFirst(samples: string[]): DayFirst {
 }
 
 /** Interprète un horodatage texte comme le fera le backend (sans format explicite). */
-export function parseTimestampLike(text: string, dayFirst: boolean): Date | null {
+function parseTimestampLike(text: string, dayFirst: boolean): Date | null {
   const t = text.trim();
   const m = t.match(/^(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
   if (!m) { const d = new Date(t); return isNaN(d.getTime()) ? null : d; }
@@ -452,7 +452,7 @@ export function parseTimestampLike(text: string, dayFirst: boolean): Date | null
   return isNaN(date.getTime()) || mo < 1 || mo > 12 || d < 1 || d > 31 ? null : date;
 }
 
-export interface TimestampPreview {
+interface TimestampPreview {
   dayFirst: DayFirst;
   first: Date | null;
   last: Date | null;

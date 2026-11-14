@@ -42,7 +42,7 @@ export interface AnomalyEvent {
   description: string;
 }
 
-export interface AnomaliesResult {
+interface AnomaliesResult {
   unit: string;
   hourlyUnit: string;
   stepMs: number;

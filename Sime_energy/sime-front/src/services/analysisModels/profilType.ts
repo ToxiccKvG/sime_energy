@@ -42,7 +42,7 @@ export interface ProfileSlot {
   days: number;
 }
 
-export interface ClassProfile {
+interface ClassProfile {
   dayClass: DayClass;
   days: number;
   slots: ProfileSlot[];
@@ -51,7 +51,7 @@ export interface ClassProfile {
   dailyMedian: number;
 }
 
-export interface AtypicalDay {
+interface AtypicalDay {
   day: string;
   dayClass: DayClass;
   daily: number;
@@ -61,7 +61,7 @@ export interface AtypicalDay {
   distance: number;
 }
 
-export interface ProfilTypeResult {
+interface ProfilTypeResult {
   stepMs: number;
   /** Profil horaire disponible (données infra-journalières). */
   subDaily: boolean;

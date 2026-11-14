@@ -41,7 +41,7 @@ async function decode<T>(blob: Blob, encoding: ContentEncoding, reviveDates: boo
   return JSON.parse(text, reviveDates ? dateReviver : undefined) as T;
 }
 
-export function objectPath(userId: string, id: string, encoding: ContentEncoding): string {
+function objectPath(userId: string, id: string, encoding: ContentEncoding): string {
   return `${userId}/${id}.json${encoding === 'gzip' ? '.gz' : ''}`;
 }
 

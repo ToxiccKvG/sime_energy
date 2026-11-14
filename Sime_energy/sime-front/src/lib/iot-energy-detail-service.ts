@@ -16,7 +16,7 @@ import { getHistoricRange } from '@/lib/iot-dashboard-service';
 export type Bucket = 'hour' | 'day';
 
 /** Où se trouve physiquement un appareil. */
-export interface LieuAppareil {
+interface LieuAppareil {
   site: string;
   room: string | null;
 }

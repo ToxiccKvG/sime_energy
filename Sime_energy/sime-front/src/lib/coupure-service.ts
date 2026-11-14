@@ -63,7 +63,7 @@ export async function fetchCoupures(sinceIso?: string): Promise<Coupure[]> {
   return (data ?? []).map((r) => ({ ...r, duree_min: Number(r.duree_min), end_kwh: r.end_kwh === null ? null : Number(r.end_kwh) })) as Coupure[];
 }
 
-export interface CoupurePatch {
+interface CoupurePatch {
   cause_declencheur: string;
   cause_aggravante: string | null;
   commentaire: string | null;

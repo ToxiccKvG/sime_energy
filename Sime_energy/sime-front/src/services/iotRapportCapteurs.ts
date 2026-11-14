@@ -22,7 +22,7 @@ export type NatureGrandeur = 'moyenne' | 'cumul';
 export interface DefGrandeur { cle: string; libelle: string; unite: string; nature: NatureGrandeur }
 
 /** Ordre d'affichage du rapport. La pile et le signal sont dans la feuille Santé. */
-export const GRANDEURS: DefGrandeur[] = [
+const GRANDEURS: DefGrandeur[] = [
   { cle: 'temperature', libelle: 'Température', unite: '°C', nature: 'moyenne' },
   { cle: 'humidite', libelle: 'Humidité', unite: '%', nature: 'moyenne' },
   { cle: 'ressenti', libelle: 'Ressenti', unite: '°C', nature: 'moyenne' },
@@ -54,8 +54,6 @@ const ETATS_ACTIFS: { etat: string; action: string; duree: string }[] = [
   { etat: 'on', action: 'Allumages', duree: 'Durée allumée' },
 ];
 
-export interface CourbeCapteur { libelle: string; valeurs: (number | null)[] }
-
 export interface VueGrandeur {
   def: DefGrandeur;
   capteurs: string[];
@@ -82,7 +80,7 @@ export interface RapportCapteurs {
   aVerifierAuto: string[];
 }
 
-export interface EntreeCapteurs {
+interface EntreeCapteurs {
   lignes: LigneCapteur[];
   etats: EtatAppareil[] | null;
   tranches: TranchesHoraires;

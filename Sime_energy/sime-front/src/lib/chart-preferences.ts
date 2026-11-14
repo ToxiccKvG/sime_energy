@@ -77,7 +77,7 @@ export const PALETTES: Palette[] = [
   },
 ];
 
-export interface ChartPreferences {
+interface ChartPreferences {
   palette: PaletteId;
   /** Légendes visibles sous les graphiques. */
   showLegend: boolean;
@@ -102,7 +102,7 @@ export interface ChartPreferences {
  *  · viridis / inferno : fort contraste, lisibles en noir et blanc et par les daltoniens ;
  *  · divergent : bleu → clair → rouge, pour lire l'écart autour du milieu.
  */
-export type EchelleChaleurId = 'donnee' | 'palette' | 'viridis' | 'inferno' | 'divergent';
+type EchelleChaleurId = 'donnee' | 'palette' | 'viridis' | 'inferno' | 'divergent';
 
 export const ECHELLES_CHALEUR: { id: EchelleChaleurId; label: string; hint: string; stops?: string[] }[] = [
   { id: 'donnee', label: 'Couleur de la donnée', hint: 'Dégradé de la couleur choisie pour la grandeur affichée.' },
@@ -178,8 +178,6 @@ export function setSeriesColor(key: string, color: string) {
 
 export function setEchelleChaleur(echelleChaleur: EchelleChaleurId) { state = { ...state, echelleChaleur }; persist(); }
 
-export function resetChartPreferences() { state = DEFAULTS; persist(); }
-
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
@@ -217,19 +215,6 @@ function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '');
   const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
   return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)];
-}
-
-/**
- * Couleur d'une carte de chaleur pour une intensité `t` entre 0 et 1,
- * interpolée sur les trois teintes de la palette (faible → moyen → fort).
- */
-export function heatColor(palette: Palette, t: number): string {
-  const x = Math.min(1, Math.max(0, isFinite(t) ? t : 0));
-  const [lo, mid, hi] = palette.heat;
-  const [from, to, local] = x < 0.5 ? [lo, mid, x * 2] : [mid, hi, (x - 0.5) * 2];
-  const a = hexToRgb(from), b = hexToRgb(to);
-  const mix = a.map((v, i) => Math.round(v + (b[i] - v) * local));
-  return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
 }
 
 function mixHex(a: string, b: string, t: number): string {

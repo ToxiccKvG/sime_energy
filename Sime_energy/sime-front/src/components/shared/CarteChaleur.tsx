@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { couleurSurEchelle } from '@/lib/chart-preferences';
 
-export interface ColonneChaleur {
+interface ColonneChaleur {
   /** Étiquette de l'axe (« 12 oct. », « Lun »). */
   libelle: string;
   /** Libellé du survol (« dim. 12 oct. 2026 »). */

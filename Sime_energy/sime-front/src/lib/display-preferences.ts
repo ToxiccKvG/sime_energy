@@ -44,7 +44,7 @@ let state: TextSize = load();
 apply(state); // dès l'import (main.tsx), avant le premier rendu : pas de saut visuel
 const listeners = new Set<() => void>();
 
-export function getTextSize(): TextSize { return state; }
+function getTextSize(): TextSize { return state; }
 
 export function setTextSize(size: TextSize) {
   state = size;

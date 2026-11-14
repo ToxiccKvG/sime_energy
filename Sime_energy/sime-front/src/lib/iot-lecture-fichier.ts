@@ -37,7 +37,7 @@ const vide = (v: unknown) => v === null || v === undefined || String(v).trim() =
 const estDate = (v: unknown) => v instanceof Date || (typeof v === 'string' && DATE_RE.test(v));
 const estNombre = (v: unknown) => typeof v === 'number' || (typeof v === 'string' && NUM_RE.test(v.trim()));
 
-export function versNombre(v: unknown): number | null {
+function versNombre(v: unknown): number | null {
   if (typeof v === 'number') return isFinite(v) ? v : null;
   if (typeof v !== 'string') return null;
   const t = v.trim();
@@ -62,7 +62,7 @@ function estLigneUnites(r: unknown[]): boolean {
 
 // ── 1. Tableau : en-tête, unités, lignes ─────────────────────
 
-export interface TableauLu {
+interface TableauLu {
   columns: string[];
   rows: Record<string, unknown>[];
   /** Unités lues sur une ligne d'unités (CA 8335 : « Hz », « V » sous l'en-tête). */
@@ -279,7 +279,7 @@ function heureDe(v: unknown): [number, number, number] | null {
  * Date « heure murale » : un xlsx donne des Date dont les composantes UTC
  * sont l'heure affichée dans Excel ; un texte est lu tel qu'écrit.
  */
-export function lireDate(v: unknown, heure: unknown, ordre: LectureFichier['ordreDates']): Date | null {
+function lireDate(v: unknown, heure: unknown, ordre: LectureFichier['ordreDates']): Date | null {
   let y: number, mo: number, d: number, h = 0, mi = 0, s = 0;
   if (v instanceof Date) {
     if (isNaN(v.getTime())) return null;
@@ -305,11 +305,11 @@ export function lireDate(v: unknown, heure: unknown, ordre: LectureFichier['ordr
 }
 
 /** Clé d'une grandeur : « PM2.5 (ug/m³) » — libellé et unité, comme dans les menus. */
-export function cleGrandeur(c: Pick<LectureColonne, 'libelle' | 'unite'>): string {
+function cleGrandeur(c: Pick<LectureColonne, 'libelle' | 'unite'>): string {
   return c.unite ? `${c.libelle} (${c.unite})` : c.libelle;
 }
 
-export interface ResultatLecture {
+interface ResultatLecture {
   rows: ShellyRow[];
   dateIllisibles: number;
   /** Pas médian entre deux relevés, en secondes. */

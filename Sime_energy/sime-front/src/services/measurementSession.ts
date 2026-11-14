@@ -26,7 +26,7 @@ import {
 export type WorkflowStep = 'upload' | 'analysis' | 'visualization' | 'models' | 'comparison';
 export type ComparisonMode = 'models' | 'master';
 
-export interface MeasurementSession {
+interface MeasurementSession {
   currentStep: WorkflowStep;
   measurementData: MeasurementData[];
   currentDataIndex: number;
@@ -54,7 +54,7 @@ const listeners = new Set<() => void>();
 
 function emit() { listeners.forEach(l => l()); }
 
-export function getMeasurementSession(): MeasurementSession { return state; }
+function getMeasurementSession(): MeasurementSession { return state; }
 
 export function updateMeasurementSession(patch: Partial<MeasurementSession> | ((prev: MeasurementSession) => Partial<MeasurementSession>)) {
   const next = typeof patch === 'function' ? patch(state) : patch;
@@ -62,7 +62,7 @@ export function updateMeasurementSession(patch: Partial<MeasurementSession> | ((
   emit();
 }
 
-export function resetMeasurementSession() { state = initial; emit(); }
+function resetMeasurementSession() { state = initial; emit(); }
 
 function subscribe(listener: () => void) {
   listeners.add(listener);

@@ -37,7 +37,7 @@ export const METRIQUES: { key: MetricKey; label: string; unit: string; color: st
 // ── Grandeurs environnementales (CAPTEUR_ENV / ETAT) ──────────
 // Contrairement aux kWh, ces grandeurs ne se somment pas : elles s'observent
 // en min / max / moyenne. Les vues env_* utilisent donc leurs propres agrégats.
-export type EnvMetricKey =
+type EnvMetricKey =
   | 'temperature' | 'humidite' | 'ressenti' | 'pointRosee'
   | 'uvIndex' | 'luminosite' | 'pression' | 'precipitation'
   | 'ventVitesse' | 'ventRafale' | 'batterie' | 'signal';

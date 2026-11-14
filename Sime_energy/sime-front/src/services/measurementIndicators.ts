@@ -42,7 +42,7 @@ export interface FicheGrandeur {
   indicateurs: Indicateur[];
 }
 
-export interface SyntheseReleve {
+interface SyntheseReleve {
   debut: Date | null;
   fin: Date | null;
   dureeHeures: number;
@@ -54,7 +54,7 @@ export interface SyntheseReleve {
 
 // ── Nature ───────────────────────────────────────────────────
 
-export function natureDe(libelle: string, unite: string, kind?: QuantityKind): NatureGrandeur {
+function natureDe(libelle: string, unite: string, kind?: QuantityKind): NatureGrandeur {
   const u = unite.trim().toLowerCase();
   const l = libelle.toLowerCase();
   if (/^(m|k)?wh$|^(k)?varh$|^(k)?vah$/.test(u) || kind === 'energy') return 'energie';
@@ -71,7 +71,7 @@ export function natureDe(libelle: string, unite: string, kind?: QuantityKind): N
 }
 
 /** Seuil par défaut de « temps au-dessus » ; modifiable à l'écran. */
-export function seuilParDefaut(nature: NatureGrandeur): number | null {
+function seuilParDefaut(nature: NatureGrandeur): number | null {
   switch (nature) {
     case 'temperature': return 26;   // confort d'été (bureaux climatisés)
     case 'humidite': return 70;      // au-delà : condensation, moisissures

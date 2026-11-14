@@ -72,14 +72,14 @@ function loadFromStorage(): Partial<PersistedState> | null {
  * rien de plus — l'utilisateur reste libre de modifier la sélection, et le
  * chargement libre (site / famille / appareil / période) reste le défaut.
  */
-export interface AnalysePreset {
+interface AnalysePreset {
   label: string;
   site: string;
   deviceIds: string[];
 }
 
 /** Ce qui accompagne des lignes Shelly partagées entre Analyse et Nettoyage. */
-export interface ContexteShelly {
+interface ContexteShelly {
   perimetre?: PerimetreAnalyse | null;
   reglesExclues?: string[] | null;
 }

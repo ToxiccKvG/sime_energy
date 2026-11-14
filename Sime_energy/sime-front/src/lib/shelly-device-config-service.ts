@@ -32,7 +32,7 @@ export interface ShellyDeviceType {
   updated_at: string;
 }
 
-export type ShellyDeviceTypeInput = Omit<ShellyDeviceType, 'id' | 'created_at' | 'updated_at'>;
+type ShellyDeviceTypeInput = Omit<ShellyDeviceType, 'id' | 'created_at' | 'updated_at'>;
 
 export async function fetchDeviceTypes(): Promise<ShellyDeviceType[]> {
   const { data, error } = await supabase
@@ -115,7 +115,7 @@ export interface ShellyDeviceChannel {
   updated_at: string;
 }
 
-export type ShellyDeviceChannelInput = Omit<ShellyDeviceChannel, 'id' | 'created_at' | 'updated_at'>;
+type ShellyDeviceChannelInput = Omit<ShellyDeviceChannel, 'id' | 'created_at' | 'updated_at'>;
 
 export async function fetchChannels(): Promise<ShellyDeviceChannel[]> {
   const { data, error } = await supabase

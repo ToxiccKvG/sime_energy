@@ -158,7 +158,7 @@ export function detectStepMs(points: { t: number }[]): number {
 }
 
 /** Plus petit pas standard ≥ au pas natif le plus grossier des deux séries. */
-export function autoStep(stepAMs: number, stepBMs: number): StepKey {
+function autoStep(stepAMs: number, stepBMs: number): StepKey {
   const coarse = Math.max(stepAMs, stepBMs);
   return (STEPS.find((s) => s.ms >= coarse) ?? STEPS[STEPS.length - 1]).key;
 }
@@ -243,7 +243,7 @@ function pearson(xs: number[], ys: number[]): number | null {
  * Compare deux séries sur une échelle de temps commune.
  * Renvoie `{ error }` si les séries ne se recouvrent pas ou sont vides.
  */
-export interface CompareOptions {
+interface CompareOptions {
   step?: StepKey | 'auto';
   from?: number;
   to?: number;

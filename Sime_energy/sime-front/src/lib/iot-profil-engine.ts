@@ -287,7 +287,7 @@ export function ajouterCumulatifs(rows: ShellyRow[]): ShellyRow[] {
  * en donner une par heure. Sans ce regroupement, nbJours, moyenne, max et min
  * étaient calculés par ligne.
  */
-export function sommerParJour(rows: ShellyRow[], heuresParJour = 24): JourAgrege[] {
+function sommerParJour(rows: ShellyRow[], heuresParJour = 24): JourAgrege[] {
   const jours = new Map<string, JourAgrege>();
   for (const r of rows) {
     const key = cleJour(r.date);
@@ -324,7 +324,7 @@ export function sommerParJour(rows: ShellyRow[], heuresParJour = 24): JourAgrege
 }
 
 /** Somme de deux jeux de flux ; null + null reste null (rien mesuré). */
-export function ajouterFlux(a: FluxRoles | undefined, b: FluxRoles): FluxRoles {
+function ajouterFlux(a: FluxRoles | undefined, b: FluxRoles): FluxRoles {
   const plus = (x: number | null | undefined, y: number | null) =>
     x == null ? y : y == null ? x : x + y;
   return {
@@ -432,7 +432,7 @@ export function analyserDonneesShelly(
 // écarté est listé avec sa raison.
 // ============================================================
 
-export interface OptionsNettoyage {
+interface OptionsNettoyage {
   /** Écarter de la moyenne, du min et du max les jours signalés JOUR_INCOMPLET */
   completude: boolean;
   /** Masquer du détail les appareils à 0 sur toute la période */
@@ -864,7 +864,7 @@ export function profilMiToShellyRow(
 // DÉTECTION FORMAT SHELLY / SUPABASE
 // ============================================================
 
-export type FormatShelly =
+type FormatShelly =
   | 'shelly_excel'      // Excel Shelly 3EM d'origine (Wh_Phase A, Temps…)
   | 'supabase_cl'       // Export CSV de shelly_cl (device_id, ts, p_a, wh_tot…)
   | 'supabase_horaire'  // Export CSV de shelly_cl_horaire (device_id, ts_heure, wh_conso…)
@@ -1001,7 +1001,7 @@ export function parseShellySectionCSV(
 // STATS DESCRIPTIVES
 // ============================================================
 
-export interface StatsDescriptives {
+interface StatsDescriptives {
   moyenne: number;
   mediane: number;
   ecartType: number;

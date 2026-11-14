@@ -178,7 +178,7 @@ interface ShellyHoraireRow {
 }
 
 // Toutes les clés PROFIL Mi valides
-export const ALL_AVAILABLE_KEYS = new Set(COLONNES_PROFIL_SHELLY.map(c => c.key));
+const ALL_AVAILABLE_KEYS = new Set(COLONNES_PROFIL_SHELLY.map(c => c.key));
 
 // ── Utilitaires ───────────────────────────────────────────────
 function n(v: number | null | undefined): number {
@@ -826,7 +826,7 @@ export async function exporterDonneesSupabase(
 }
 
 // ── Catalogue des appareils Shelly intégrés ───────────────────
-export interface DisponiblesResult {
+interface DisponiblesResult {
   sites: string[];
   devices: { name: string; device_id: string; device_family: string; site: string; room?: string | null }[];
   deviceFamilies: string[];
@@ -948,15 +948,6 @@ export async function fetchDisponibles(): Promise<DisponiblesResult> {
   } catch {
     return { sites: [], devices: [], deviceFamilies: [], rooms: [] };
   }
-}
-
-// ── Colonnes regroupées pour l'UI ─────────────────────────────
-export function getColonnesParGroupe() {
-  return {
-    entree:      COLONNES_PROFIL_SHELLY.filter(c => c.groupe === 'entree'),
-    calcule:     COLONNES_PROFIL_SHELLY.filter(c => c.groupe === 'calcule'),
-    classifieur: COLONNES_PROFIL_SHELLY.filter(c => c.groupe === 'classifieur'),
-  };
 }
 
 // ── Courbe de charge : une ligne par appareil et par jour ─────

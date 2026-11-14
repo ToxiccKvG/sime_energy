@@ -14,46 +14,6 @@ export interface OrganizationInvitation {
   role?: 'member' | 'admin';
 }
 
-// Generate a unique invitation code
-function generateInvitationCode(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let code = '';
-  for (let i = 0; i < 12; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
-}
-
-// Create an invitation for an organization
-export async function createInvitation(
-  organizationId: string,
-  inviterId: string,
-  invitedEmail?: string,
-  expiresAtDays?: number
-): Promise<OrganizationInvitation> {
-  const code = generateInvitationCode();
-  const expiresAt = expiresAtDays
-    ? new Date(Date.now() + expiresAtDays * 24 * 60 * 60 * 1000).toISOString()
-    : null;
-
-  const { data, error } = await supabase
-    .from('organization_invitations')
-    .insert([
-      {
-        organization_id: organizationId,
-        code,
-        inviter_id: inviterId,
-        invited_email: invitedEmail,
-        expires_at: expiresAt,
-      },
-    ])
-    .select()
-    .single();
-
-  if (error) throw error;
-  return data;
-}
-
 // Lecture d'une invitation par son code — via RPC SECURITY DEFINER :
 // la table n'est plus lisible par code (sinon n'importe qui pouvait
 // lister toutes les invitations). La RPC renvoie aussi le nom de
@@ -108,25 +68,12 @@ export async function revokeInvitation(invitationId: string): Promise<void> {
   if (error) throw error;
 }
 
-// Get all pending invitations for a user's email
-export async function getPendingInvitationsForEmail(email: string): Promise<OrganizationInvitation[]> {
-  const { data, error } = await supabase
-    .from('organization_invitations')
-    .select('*')
-    .eq('invited_email', email)
-    .eq('status', 'pending')
-    .gt('expires_at', new Date().toISOString()); // Not expired
-
-  if (error) throw error;
-  return data || [];
-}
-
 // ── Invitation par la plateforme (accès sur invitation seulement, 21/10/2026) ──
 // La fonction serveur `inviter-membre` vérifie que l'appelant est admin,
 // enregistre l'invitation et renvoie le lien personnel à transmettre :
 // lien de création de compte (choix du mot de passe) si la personne n'a pas
 // encore de compte, lien /invite?code=… sinon.
-export interface InvitationCreee {
+interface InvitationCreee {
   lien: string;
   compte_existant: boolean;
   code: string;

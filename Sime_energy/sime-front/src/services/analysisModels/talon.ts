@@ -12,9 +12,9 @@
 import { classifyDay, type DayClass } from './profilType';
 import { dailyUnit, groupDays, hourlyUnit, quantile, totalOf, toPoints, type SeriesContext } from './types';
 
-export const NIGHT_HOURS = [0, 1, 2, 3, 4, 5];
+const NIGHT_HOURS = [0, 1, 2, 3, 4, 5];
 
-export interface TalonDay {
+interface TalonDay {
   day: string;
   dayClass: DayClass;
   /** Talon du jour (minimum horaire de nuit, ou P5 des points). */
@@ -27,7 +27,7 @@ export interface TalonDay {
   fromP5: boolean;
 }
 
-export interface TalonResult {
+interface TalonResult {
   applicable: boolean;
   reason?: string;
   unit: string;

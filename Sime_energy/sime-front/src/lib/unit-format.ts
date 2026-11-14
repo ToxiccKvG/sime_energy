@@ -20,10 +20,10 @@
 
 import { useSyncExternalStore } from 'react';
 
-export type UnitDisplayMode = 'auto' | 'raw' | 'forced';
+type UnitDisplayMode = 'auto' | 'raw' | 'forced';
 export type UnitPrefix = '' | 'k' | 'M';
 
-export interface UnitSettings {
+interface UnitSettings {
   mode: UnitDisplayMode;
   /** Préfixe imposé en mode « forced ». */
   prefix: UnitPrefix;
@@ -45,7 +45,7 @@ const PREFIXABLE = new Set([
 /** Préfixes déjà portés par l'unité (kWh, MVA…), à retirer avant de recalculer. */
 const PREFIX_FACTOR: Record<string, number> = { k: 1e3, M: 1e6, G: 1e9 };
 
-export interface BaseUnit {
+interface BaseUnit {
   /** Unité sans préfixe (kWh → Wh). */
   base: string;
   /** Facteur de l'unité fournie vers l'unité de base (kWh → 1000). */
@@ -55,7 +55,7 @@ export interface BaseUnit {
 }
 
 /** Décompose une unité en base + facteur (« kWh » → Wh ×1000). */
-export function splitUnit(unit: string): BaseUnit {
+function splitUnit(unit: string): BaseUnit {
   const u = (unit ?? '').trim();
   if (!u) return { base: '', factor: 1, prefixable: false };
   if (PREFIXABLE.has(u)) return { base: u, factor: 1, prefixable: true };
@@ -104,7 +104,7 @@ function persist() {
   listeners.forEach(l => l());
 }
 
-export function getUnitSettings(): UnitSettings { return state; }
+function getUnitSettings(): UnitSettings { return state; }
 export function setUnitMode(mode: UnitDisplayMode) { state = { ...state, mode }; persist(); }
 export function setUnitPrefix(prefix: UnitPrefix) { state = { ...state, mode: 'forced', prefix }; persist(); }
 
@@ -134,7 +134,7 @@ function significant(v: number, digits = 5): string {
   return v.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
 }
 
-export interface FormatOptions {
+interface FormatOptions {
   /** Écrire la valeur sans son unité (colonne de tableau qui porte déjà l'unité en en-tête). */
   omitUnit?: boolean;
   /** Chiffres significatifs (5 par défaut). */
@@ -176,14 +176,3 @@ export function formatQuantity(
   return significant(inBase, opts.digits) + suffix(base);
 }
 
-/** Unité telle qu'elle sera écrite, sans valeur (en-tête de colonne, axe). */
-export function displayUnit(unit: string, sample: number | null | undefined, settings: UnitSettings = state): string {
-  if (unit == null) return '';
-  const { base, factor, prefixable } = splitUnit(unit);
-  if (!prefixable || settings.mode === 'raw') return unit;
-  if (settings.mode === 'forced') return `${settings.prefix}${base}`;
-  const abs = Math.abs((sample ?? 0) * factor);
-  if (abs >= 1e6) return `M${base}`;
-  if (abs >= 1e3) return `k${base}`;
-  return base;
-}

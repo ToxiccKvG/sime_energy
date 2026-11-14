@@ -23,7 +23,7 @@ const tooltipStyle = {
   color: '#e2e8f0',
 };
 
-export const OTHERS_COLOR = '#94a3b8';
+const OTHERS_COLOR = '#94a3b8';
 export const MAX_PARTS_CHOICES = [4, 5, 6, 8, 0] as const; // 0 = tout afficher
 
 /**
@@ -47,12 +47,12 @@ export type SliceLabelMode = 'percent' | 'value' | 'both';
  * « Autres » reliée par des pointillés à un second camembert qui en montre le détail.
  * Tout est dessiné en pixels (largeur mesurée) pour que les pointillés tombent juste.
  */
-export type PieRow = { name: string; value: number; color: string };
+type PieRow = { name: string; value: number; color: string };
 const PIE_H = 380; // hauteur par défaut
 const RAD = Math.PI / 180;
 
 
-export type CalloutLayout = { ex: number; ey: number; ax: number; ay: number; right: boolean };
+type CalloutLayout = { ex: number; ey: number; ax: number; ay: number; right: boolean };
 
 /**
  * Place les étiquettes d'un camembert : côté (gauche/droite) selon l'angle de la part, ou colonne

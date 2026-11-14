@@ -338,7 +338,7 @@ const ONGLETS_CAPTEURS = (cap: RapportCapteurs): [string, string][] => [
   ['Santé des capteurs', 'Heures mesurées, pile, signal, capteurs figés ou muets'],
 ];
 
-export interface EnteteCapteurs { titre: string; sousTitre: string; perimetre: [string, string][]; aRetenir: string; aVerifier: string }
+interface EnteteCapteurs { titre: string; sousTitre: string; perimetre: [string, string][]; aRetenir: string; aVerifier: string }
 
 /** Rapport sans énergie : uniquement ce qui est chargé, aucune feuille d'énergie vide. */
 export async function exporterRapportCapteursExcel(cap: RapportCapteurs, entete: EnteteCapteurs, nomFichier: string): Promise<void> {
@@ -394,7 +394,7 @@ export async function exporterRapportCapteursExcel(cap: RapportCapteurs, entete:
   triggerDownload(await ajouterGraphiquesNatifs(buffer, 'Graphiques', graphiques) as unknown as ExcelJS.Buffer, nomFichier);
 }
 
-export type SuiviExcel = (libelle: string, pct: number | null) => void;
+type SuiviExcel = (libelle: string, pct: number | null) => void;
 // Sans minuterie : le navigateur ralentit fortement les minuteries d'un onglet au second plan
 const pause = () => new Promise<void>(r => {
   const canal = new MessageChannel();

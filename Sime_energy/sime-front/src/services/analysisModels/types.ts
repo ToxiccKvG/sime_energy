@@ -58,7 +58,7 @@ export function toPoints(ctx: SeriesContext): Point[] {
   return pts.sort((a, b) => a.t - b.t);
 }
 
-export function dayKey(t: number): string {
+function dayKey(t: number): string {
   const d = new Date(t);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -76,7 +76,7 @@ export function std(xs: number[]): number {
 }
 
 /** Percentile par interpolation linéaire sur un tableau trié croissant. */
-export function quantileSorted(sorted: number[], q: number): number {
+function quantileSorted(sorted: number[], q: number): number {
   const n = sorted.length;
   if (n === 0) return NaN;
   if (n === 1) return sorted[0];
@@ -94,7 +94,7 @@ export function quantile(xs: number[], q: number): number {
  * Valeur « par jour » d'une grandeur : cumul (énergie sommée, puissance
  * intégrée sur le pas natif) si elle est cumulable, moyenne sinon.
  */
-export function dailyValue(points: Point[], kind: QuantityKind, stepMs: number): number {
+function dailyValue(points: Point[], kind: QuantityKind, stepMs: number): number {
   if (points.length === 0) return NaN;
   if (kind === 'energy') return points.reduce((s, p) => s + p.v, 0);
   if (kind === 'power') return points.reduce((s, p) => s + p.v, 0) * (stepMs / 3_600_000);
@@ -110,7 +110,7 @@ export function dailyUnit(unit: string, kind: QuantityKind): string {
  * Valeur « par heure » d'une tranche : somme pour une énergie (les points sont
  * des incréments), moyenne pour une puissance ou une grandeur d'ambiance.
  */
-export function hourlyValue(points: Point[], kind: QuantityKind): number {
+function hourlyValue(points: Point[], kind: QuantityKind): number {
   if (points.length === 0) return NaN;
   if (kind === 'energy') return points.reduce((s, p) => s + p.v, 0);
   return mean(points.map((p) => p.v));
@@ -127,7 +127,7 @@ export interface DayInfo {
   hourly: (number | null)[];
 }
 
-export interface DayGrouping {
+interface DayGrouping {
   stepMs: number;
   /** Données infra-journalières (un profil horaire a un sens). */
   subDaily: boolean;

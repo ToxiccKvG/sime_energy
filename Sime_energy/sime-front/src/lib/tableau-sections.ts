@@ -40,7 +40,7 @@ function titrePrecedent(suivant: string): string | null {
   return m[1] + (m[2] === '2' ? '1' : m[2] === 'b' ? 'a' : 'A');
 }
 
-export interface Desempilement {
+interface Desempilement {
   rows: unknown[][];
   sections: string[];
 }

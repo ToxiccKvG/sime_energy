@@ -1,8 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": [
-    "src/main.tsx"
-  ],
   "project": [
     "src/**/*.{ts,tsx}"
   ],
@@ -12,5 +9,11 @@
   ],
   "ignore": [
     "src/types/database.ts"
-  ]
+  ],
+  "ignoreIssues": {
+    "src/components/ui/**": [
+      "exports",
+      "types"
+    ]
+  }
 }

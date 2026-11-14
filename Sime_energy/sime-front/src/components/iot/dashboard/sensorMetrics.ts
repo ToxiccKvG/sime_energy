@@ -36,7 +36,7 @@ export interface SensorMetric {
 
 const num = (v: unknown): number | null => (typeof v === 'number' && isFinite(v) ? v : null);
 
-export const SENSOR_METRICS: SensorMetric[] = [
+const SENSOR_METRICS: SensorMetric[] = [
   {
     key: 'temperature', label: 'Température', labelCourt: 'Temp.', unite: '°C',
     couleur: '#60a5fa', fond: 'bg-blue-500/10', texte: 'text-blue-300', decimales: 1,

@@ -19,7 +19,7 @@
 import type { ShellyRow } from '@/components/iot/shared';
 
 /** Grandeurs d'un capteur environnemental : sert à reconnaître l'appareil et à comparer deux lignes. */
-export const ENV_VALUE_KEYS = [
+const ENV_VALUE_KEYS = [
   'temperature', 'humidite', 'ressenti', 'pointRosee', 'uvIndex', 'luminosite', 'pression', 'precipitation',
   'ventVitesse', 'ventRafale', 'ventDirection', 'tempInterne', 'batterie', 'batterieV', 'signal',
 ] as const;
@@ -30,7 +30,7 @@ export const BLANKABLE_ENV_KEYS = ENV_VALUE_KEYS.filter(k => k !== 'precipitatio
 const MIN_RUN_ROWS = 5;
 const MIN_RUN_MS = 30 * 60_000;
 
-export interface FrozenSummary {
+interface FrozenSummary {
   /** Lignes figées (relectures), hors première ligne de chaque séquence. */
   rows: ShellyRow[];
   /** Nombre de séquences figées. */

@@ -64,7 +64,7 @@ function withKpis(d: MeasurementData): MeasurementData {
 // ---- API ----
 
 /** Métadonnées de tous les relevés de l'utilisateur, du plus ancien au plus récent. */
-export async function listMeasurementFiles(): Promise<MeasurementFileRow[]> {
+async function listMeasurementFiles(): Promise<MeasurementFileRow[]> {
   const { data, error } = await supabase
     .from('measurement_files')
     .select(ROW_COLUMNS)
@@ -74,7 +74,7 @@ export async function listMeasurementFiles(): Promise<MeasurementFileRow[]> {
 }
 
 /** Télécharge le contenu d'un relevé et le rend prêt pour la session (KPI recalculés). */
-export async function loadMeasurementFile(row: MeasurementFileRow): Promise<MeasurementData> {
+async function loadMeasurementFile(row: MeasurementFileRow): Promise<MeasurementData> {
   if (!row.storage_path) throw new Error(`Le contenu de « ${row.alias ?? row.file_name} » n'a pas été enregistré (envoi interrompu). Réimportez-le.`);
   const content = await downloadJson<StoredContent>(BUCKET, row.storage_path, row.content_encoding);
   return withKpis({

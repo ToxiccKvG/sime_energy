@@ -25,7 +25,7 @@ export interface SideStats {
   to: string;
 }
 
-export interface ClassDelta {
+interface ClassDelta {
   dayClass: DayClass;
   before: SideStats | null;
   after: SideStats | null;
@@ -36,7 +36,7 @@ export interface ClassDelta {
   robust: boolean;
 }
 
-export interface AvantApresResult {
+interface AvantApresResult {
   splitAt: number;
   unit: string;
   hourlyUnit: string;

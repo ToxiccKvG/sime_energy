@@ -17,10 +17,10 @@ import { integrateEnergy } from '@/services/measurementStats';
 
 export type BucketGranularity = 'hour' | 'day';
 
-export type Family = 'active' | 'apparent' | 'reactive';
+type Family = 'active' | 'apparent' | 'reactive';
 type Kind = 'power' | 'energy';
 
-export interface UnitMeta {
+interface UnitMeta {
   family: Family;
   kind: Kind;
   /** Facteur vers l'unité de base de sa famille (W, VA ou var / Wh, VAh ou varh). */
@@ -90,7 +90,7 @@ export function energyUnitFor(unit?: string): string | undefined {
   return info ? BASE_ENERGY_UNIT[info.family] : unit;
 }
 
-export interface SeriesInput {
+interface SeriesInput {
   id: string;
   label: string;
   unit?: string;

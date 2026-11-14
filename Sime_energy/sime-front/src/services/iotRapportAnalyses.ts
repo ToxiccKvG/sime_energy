@@ -28,7 +28,7 @@ export interface TranchesHoraires {
 
 export const TRANCHES_DEFAUT: TranchesHoraires = { jourDebut: 7, jourFin: 19, soirDebut: 19, soirFin: 23, talonDebut: 0, talonFin: 3 };
 
-export interface EntreeAnalyses {
+interface EntreeAnalyses {
   lignes: LigneHoraire[];
   /** Appareils de la série principale ; null = pas de rôles (fichier) : toutes les lignes. */
   idsPrincipaux: Set<string> | null;
@@ -56,8 +56,6 @@ export interface EntreeAnalyses {
   aVerifier: string;
   maintenant?: Date;
 }
-
-export interface CourbeSerie { libelle: string; valeurs: (number | null)[]; couleur: string }
 
 export interface RapportAnalyses {
   essentiel: ChiffreCle[];

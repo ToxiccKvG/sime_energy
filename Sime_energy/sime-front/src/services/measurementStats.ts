@@ -108,7 +108,7 @@ export function integrateEnergy(points: { t: number; v: number }[]): number {
   return energy;
 }
 
-export interface DayGroup {
+interface DayGroup {
   /** "YYYY-MM-DD" en heure locale. */
   day: string;
   count: number;

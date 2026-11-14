@@ -7,7 +7,7 @@
  * par la plateforme — à garder aligné avec services/analysisModels,
  * lib/model-comparison et lib/sensor-comparison.
  */
-export interface GlossaryEntry {
+interface GlossaryEntry {
   /** Nom affiché en tête de la bulle. */
   term: string;
   /** Ce que c'est, en une ou deux phrases sans jargon. */

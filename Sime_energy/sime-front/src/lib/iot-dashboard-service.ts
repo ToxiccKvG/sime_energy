@@ -46,7 +46,7 @@ const FAMILY_BY_TYPE: Record<string, DeviceFamily> = {
   'SBDW-002C':'ETAT','SBBT-002C':'ETAT','SBMO-003Z':'ETAT','SHMOS-02':'ETAT','S3SW-001P8EU':'ETAT','LOQED':'ETAT',
 };
 
-export function getFamily(type?: string | null): DeviceFamily {
+function getFamily(type?: string | null): DeviceFamily {
   if (!type) return 'INCONNU';
   if (FAMILY_BY_TYPE[type]) return FAMILY_BY_TYPE[type];
   for (const [key, fam] of Object.entries(FAMILY_BY_TYPE)) {
@@ -325,24 +325,6 @@ export async function fetchLatestSnapshot(filters: Filters): Promise<ShellyClRow
     }
   }
   return latest;
-}
-
-// ── 5. Série temporelle puissance (1h max — pour sparklines) ────
-export async function fetchPowerSeries(
-  deviceIds: string[],
-  minutesBack: number = 60,
-): Promise<Array<{ device_id: string; ts: string; power_w: number | null }>> {
-  if (deviceIds.length === 0) return [];
-  const since = new Date(Date.now() - minutesBack * 60_000).toISOString();
-  const { data, error } = await supabase
-    .from('shelly_cl')
-    .select('device_id,ts,power_w')
-    .in('device_id', deviceIds)
-    .gte('ts', since)
-    .order('ts', { ascending: true })
-    .limit(10000);
-  if (error) throw error;
-  return data ?? [];
 }
 
 // ── 6. Énergie agrégée par appareil sur une période ──────────

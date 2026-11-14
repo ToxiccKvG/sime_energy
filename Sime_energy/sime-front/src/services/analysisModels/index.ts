@@ -7,7 +7,7 @@ import type { QuantityKind } from '@/services/measurementStats';
 
 export type ModelId = 'profilType' | 'talon' | 'anomalies' | 'avantApres';
 
-export interface ModelMeta {
+interface ModelMeta {
   id: ModelId;
   label: string;
   question: string;

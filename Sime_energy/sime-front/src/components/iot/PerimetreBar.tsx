@@ -65,7 +65,7 @@ export function libelleSites(sites: string[]): string {
 }
 
 /** Colonnes recommandées selon les familles chargées (fournies par l'onglet Analyse). */
-export type ColonnesRecommandees = (familles: Set<string>) => string[];
+type ColonnesRecommandees = (familles: Set<string>) => string[];
 
 export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
   colonnesRecommandees: ColonnesRecommandees;

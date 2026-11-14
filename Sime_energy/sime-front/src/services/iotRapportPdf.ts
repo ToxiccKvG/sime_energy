@@ -280,7 +280,7 @@ function colonnes(t: Tableau, titres: string[]): Tableau {
   return { colonnes: garder.map(i => t.colonnes[i]), lignes: t.lignes.map(l => garder.map(i => l[i])) };
 }
 
-export interface EntetePdfCapteurs { titre: string; sousTitre: string; perimetre: [string, string][]; aRetenir: string; aVerifier: string }
+interface EntetePdfCapteurs { titre: string; sousTitre: string; perimetre: [string, string][]; aRetenir: string; aVerifier: string }
 
 /** Synthèse courte d'un rapport capteurs : l'Excel porte le détail. */
 export function exporterRapportCapteursPdf(cap: RapportCapteurs, entete: EntetePdfCapteurs, nomFichier: string): void {

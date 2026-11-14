@@ -11,7 +11,7 @@
 // ============================================================
 
 // ---- Colonnes disponibles pour export Supabase / TCD ----
-export interface ColonneProfilShelly {
+interface ColonneProfilShelly {
   key: string;
   label: string;
   groupe: 'entree' | 'calcule' | 'classifieur';
@@ -363,7 +363,7 @@ export interface LectureFichier {
 // CONSTANTES
 // ============================================================
 
-export const JOURS_SEMAINE_COURT = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+const JOURS_SEMAINE_COURT = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
 export const JOURS_SEMAINE = JOURS_SEMAINE_COURT;
 
 export const JOURS_SEMAINE_LONG = [

@@ -19,7 +19,7 @@ import { fmtFr, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from './communs';
 const toDate = (d: ShellyRow['date']) => (d instanceof Date ? d : new Date(d as unknown as string));
 
 /** Un tableau du rapport, à l'écran : mêmes colonnes, mêmes formats. */
-export function TableauRapport({ t }: { t: Tableau }) {
+function TableauRapport({ t }: { t: Tableau }) {
   const texte = (v: string | number | Date | null, format?: string) => {
     if (v == null) return '—';
     if (v instanceof Date) return v.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'UTC' });

@@ -37,7 +37,7 @@ function perimetreDesLignes(rows: ShellyRow[]): PerimetreQualite | null {
   };
 }
 
-export interface ExclusionsQualite {
+interface ExclusionsQualite {
   /** Lignes exclues des calculs → codes des règles en cause */
   parLigne: Map<ShellyRow, string[]>;
   kwh: number;

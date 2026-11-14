@@ -80,7 +80,7 @@ function persist() {
   listeners.forEach(l => l());
 }
 
-export function getQuarantineSettings(): QuarantineSettings { return state; }
+function getQuarantineSettings(): QuarantineSettings { return state; }
 export function setQuarantineEnabled(enabled: boolean) { state = { ...state, enabled }; persist(); }
 export function setQuarantineReason(reason: QuarantineReason, on: boolean) {
   state = { ...state, reasons: { ...state.reasons, [reason]: on } };

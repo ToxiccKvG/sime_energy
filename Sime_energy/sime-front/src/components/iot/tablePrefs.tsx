@@ -15,8 +15,8 @@ import {
 } from 'react';
 import { MoveHorizontal, Maximize2, Rows3, Rows4 } from 'lucide-react';
 
-export type TableFit = 'fit' | 'scroll';
-export type TableDensity = 'comfort' | 'compact';
+type TableFit = 'fit' | 'scroll';
+type TableDensity = 'comfort' | 'compact';
 
 interface TablePrefs { fit: TableFit; density: TableDensity }
 interface TablePrefsCtx extends TablePrefs {
