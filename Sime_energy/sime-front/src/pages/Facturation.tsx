@@ -348,6 +348,8 @@ const Facturation = () => {
   const [quarantineCount, setQuarantineCount] = useState(0);
   const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
   const [senelecRows, setSenelecRows] = useState<FactureSenelec[]>([]);
+  // La page est remontée à chaque changement d'organisation (App.tsx) : ce drapeau repart à false.
+  const senelecChargees = useRef(false);
   const [senelecLoading, setSenelecLoading] = useState(false);
   const [senelecSearch, setSenelecSearch] = useState('');
   const [senelecAuditFilter, setSenelecAuditFilter] = useState<string>('all');
@@ -453,8 +455,13 @@ const Facturation = () => {
     setActiveTab('senelec');
   };
 
+  // Chargé dès l'ouverture (la carte « Données SENELEC » montre son total sur tous les onglets),
+  // puis rafraîchi à chaque entrée dans l'onglet SENELEC.
   useEffect(() => {
-    if (activeTab === 'senelec' && organization?.id) loadSenelec();
+    if (organization?.id && (activeTab === 'senelec' || !senelecChargees.current)) {
+      senelecChargees.current = true;
+      loadSenelec();
+    }
   }, [activeTab, organization?.id]);
 
   useEffect(() => {
