@@ -15,7 +15,7 @@ import { calcNJ } from '@/lib/senelec-rules'
 import { quarantineInvoice, unquarantineInvoice } from '@/lib/invoice-service'
 import { mapOcrToInvoiceData } from '@/lib/invoice-mapper'
 import {
-  CATEGORY_LABELS, CATEGORIES_BY_TENSION, getAvailableTariffYears, suggestTensionFromPS,
+  CATEGORY_LABELS, CATEGORIES_BY_TENSION, getAvailableTariffYears, grilleApplicable, suggestTensionFromPS,
 } from '@/constants/senelec-tariffs'
 import type { SimulateurInput, SimulateurResult } from '@/lib/senelec-simulator'
 import type { AuditInvoice } from '@/lib/invoice-service'
@@ -172,13 +172,22 @@ const DEFAULT_INPUT: SimulateurInput = {
   is_woyofal: false,
 }
 
+/** Grille en vigueur à la date de la facture (ISO ou JJ/MM/AAAA) ; 2023 si la date manque. */
 function deriveGrilleAnnee(dateStr?: string | null): number {
-  if (!dateStr) return 2023
-  const y = new Date(dateStr).getFullYear()
-  if (y >= 2026) return 2026
-  if (y >= 2023) return 2023
-  if (y >= 2019) return 2019
-  return 2017
+  const annee = dateStr?.match(/\d{4}/)?.[0]
+  return annee ? grilleApplicable(Number(annee)) : 2023
+}
+
+/**
+ * Applique un pré-remplissage au formulaire. Un champ absent de la facture
+ * (undefined) reprend sa valeur par défaut : sinon il écrasait le 0 du
+ * formulaire et le calcul donnait NaN (redevance vide d'un import SENELEC).
+ */
+function appliquerPreremplissage(prev: SimulateurInput, partiel: Partial<SimulateurInput>): SimulateurInput {
+  const out: Record<string, unknown> = { ...prev }
+  const defauts: Record<string, unknown> = { ...DEFAULT_INPUT }
+  for (const [cle, valeur] of Object.entries(partiel)) out[cle] = valeur ?? defauts[cle]
+  return out as unknown as SimulateurInput
 }
 
 function prefillFromOcr(invoice: AuditInvoice): Partial<SimulateurInput> {
@@ -266,7 +275,7 @@ function prefillFromSenelec(row: FactureSenelecForSelector): Partial<SimulateurI
     h1_h:                  row.heure_h1               ?? undefined,
     h2_h:                  row.heure_h2               ?? undefined,
     conso_totale_kwh:      row.consommation_facturee  ?? undefined,
-    grille_annee:          row.annee_facturation       ?? deriveGrilleAnnee(row.date_debut_periode),
+    grille_annee:          row.annee_facturation != null ? grilleApplicable(row.annee_facturation) : deriveGrilleAnnee(row.date_debut_periode),
     categorie,
     domaine,
     // Declared cosφ (fallback when Wa/Wr absent)
@@ -441,7 +450,7 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
     const inv = invoices.find(i => i.id === selectedId)
     if (!inv) return
     const partial = prefillFromOcr(inv)
-    setForm(prev => ({ ...prev, ...partial }))
+    setForm(prev => appliquerPreremplissage(prev, partial))
     setDeclaredValues(declaredFromOcr(inv))
     setResult(null)
   }, [selectedId, inputMode, invoices])
@@ -464,7 +473,7 @@ export function SimulateurPanel({ invoices, audits, onQuarantineChange, organiza
     const row = senelecRows.find(r => r.id === selectedSenelecRowId)
     if (!row) return
     const partial = prefillFromSenelec(row)
-    setForm(prev => ({ ...prev, ...partial }))
+    setForm(prev => appliquerPreremplissage(prev, partial))
     setDeclaredValues(declaredFromSenelec(row))
     setResult(null)
   }, [selectedSenelecRowId, inputMode, senelecRows])

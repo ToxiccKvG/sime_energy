@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runSimulateur, type SimulateurInput } from '@/lib/senelec-simulator'
+import { grilleApplicable, setCustomTariffGrids, getTariffGrid } from '@/constants/senelec-tariffs'
 
 // Règles de référence validées (2026-10-19) :
 //   prime fixe = Tpf × PS × NJ/30
@@ -132,5 +133,27 @@ describe('Simulateur — comparaison au montant réel', () => {
 
   it('NJ ou PS nul → résultat vide', () => {
     expect(runSimulateur({ ...BASE, nbre_jours_cons: 0, montant_reel_senelec: 1000 }).montant_ttc_calcule).toBe(0)
+  })
+})
+
+describe('Simulateur — grille applicable', () => {
+  it('une facture de 2025 relève de la grille 2023 (pas de grille 2025)', () => {
+    expect(grilleApplicable(2025)).toBe(2023)
+  })
+  it('une année de grille donne sa propre grille', () => {
+    expect(grilleApplicable(2023)).toBe(2023)
+    expect(grilleApplicable(2026)).toBe(2026)
+  })
+  it('avant la première grille connue : la plus ancienne', () => {
+    expect(grilleApplicable(2010)).toBe(2017)
+  })
+  it('une grille personnalisée compte comme grille parue', () => {
+    setCustomTariffGrids({ 2025: getTariffGrid(2023)! })
+    try { expect(grilleApplicable(2025)).toBe(2025) } finally { setCustomTariffGrids(null) }
+  })
+  it('la grille retenue donne un calcul chiffré, pas NaN', () => {
+    const r = runSimulateur({ ...BASE, grille_annee: grilleApplicable(2025) })
+    expect(r.montant_energie).toBeGreaterThan(0)
+    expect(Number.isFinite(r.montant_ttc_calcule)).toBe(true)
   })
 })

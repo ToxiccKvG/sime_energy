@@ -152,6 +152,17 @@ export function getAvailableTariffYears(): number[] {
   return Array.from(set).sort((a, b) => a - b)
 }
 
+/**
+ * Grille en vigueur pour une année de facturation : la plus récente parue
+ * au plus tard cette année-là (une facture de 2025 relève de la grille 2023).
+ * Avant la première grille connue, on prend la plus ancienne.
+ */
+export function grilleApplicable(annee: number): number {
+  const annees = getAvailableTariffYears()
+  const parues = annees.filter(a => a <= annee)
+  return parues.length ? parues[parues.length - 1] : annees[0]
+}
+
 /** True si l'année provient d'une grille custom (utilisateur). */
 export function isCustomTariffYear(year: number): boolean {
   return _customGrids[year] != null
