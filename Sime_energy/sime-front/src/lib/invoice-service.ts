@@ -162,7 +162,11 @@ export async function unquarantineInvoice(id: string): Promise<void> {
 // Factures OCR + factures SENELEC importées (Excel) : ces dernières arrivent
 // déjà structurées, elles comptent comme traitées.
 export async function getInvoiceStats(auditId: string) {
-  const [invoices, senelec] = await Promise.all([getAuditInvoices(auditId), getTotauxFacturesSenelec(auditId)]);
+  const [invoices, senelec] = await Promise.all([
+    getAuditInvoices(auditId),
+    // Les factures OCR restent affichées si la lecture des factures SENELEC échoue
+    getTotauxFacturesSenelec(auditId).catch(() => ({ nombre: 0, montantTtc: 0 })),
+  ]);
 
   const total = invoices.length + senelec.nombre;
   const processed = invoices.filter(i => i.status !== 'pending').length + senelec.nombre;

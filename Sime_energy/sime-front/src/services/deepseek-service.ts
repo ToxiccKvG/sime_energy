@@ -78,7 +78,8 @@ async function buildAuditContext(auditId: string): Promise<string> {
       .eq('audit_id', auditId)
       .order('recorded_at', { ascending: false })
       .limit(50),
-    getFacturesSenelecForSelector(auditId),
+    // Une erreur de lecture des factures SENELEC ne doit pas bloquer toute la synthèse
+    getFacturesSenelecForSelector(auditId).catch(() => [] as FactureSenelecForSelector[]),
   ]);
 
   // Calculs inventaire
