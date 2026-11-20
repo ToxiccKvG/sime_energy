@@ -360,8 +360,6 @@ export const SENELEC_DICTIONARY: AnnotationDictionary = {
         'MONTANT TOTAL(1)', 'MONTANT_TTC_TOTAL', 'TOTAL TTC', 'MONTANT FACTURE',
         // MTG tariff label
         'Montant Total TTC', 'MONTANT TOTAL TTC', 'MONTANT_TOTAL_TTC',
-        // Libellé de bas de facture (comme le dictionnaire général)
-        'TOTAL FACTURE',
       ],
     },
     // ─── IDENTIFICATION ────────────────────────────────────────────────────────
