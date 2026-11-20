@@ -148,6 +148,17 @@ export interface FactureSenelecForSelector {
   is_quarantined: boolean | null;
 }
 
+/** Nombre et montant TTC des factures SENELEC importées d'un projet. */
+export async function getTotauxFacturesSenelec(auditId: string): Promise<{ nombre: number; montantTtc: number }> {
+  const { data, error } = await supabase
+    .from('factures_senelec')
+    .select('montant_facture_ttc')
+    .eq('audit_id', auditId);
+  if (error) throw error;
+  const lignes = data ?? [];
+  return { nombre: lignes.length, montantTtc: lignes.reduce((s, l) => s + (l.montant_facture_ttc ?? 0), 0) };
+}
+
 export async function getFacturesSenelecForSelector(auditId: string): Promise<FactureSenelecForSelector[]> {
   const { data, error } = await supabase
     .from('factures_senelec')

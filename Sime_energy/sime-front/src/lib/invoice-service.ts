@@ -1,5 +1,6 @@
 import { supabase, toJson } from '@/lib/db';
 import { logActivity } from '@/lib/activity-service';
+import { getTotauxFacturesSenelec } from '@/lib/factures-senelec-service';
 
 export interface AuditInvoice {
   id: string;
@@ -158,13 +159,15 @@ export async function unquarantineInvoice(id: string): Promise<void> {
   if (error) throw error;
 }
 
+// Factures OCR + factures SENELEC importées (Excel) : ces dernières arrivent
+// déjà structurées, elles comptent comme traitées.
 export async function getInvoiceStats(auditId: string) {
-  const invoices = await getAuditInvoices(auditId);
+  const [invoices, senelec] = await Promise.all([getAuditInvoices(auditId), getTotauxFacturesSenelec(auditId)]);
 
-  const total = invoices.length;
-  const processed = invoices.filter(i => i.status !== 'pending').length;
+  const total = invoices.length + senelec.nombre;
+  const processed = invoices.filter(i => i.status !== 'pending').length + senelec.nombre;
   const verified = invoices.filter(i => i.status === 'verified').length;
-  const totalAmount = invoices.reduce((sum, i) => sum + (i.amount || 0), 0);
+  const totalAmount = invoices.reduce((sum, i) => sum + (i.amount || 0), 0) + senelec.montantTtc;
   const averageConfidence = invoices.length > 0
     ? Math.round(invoices.reduce((sum, i) => sum + (i.confidence_score || 0), 0) / invoices.length)
     : 0;
