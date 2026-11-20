@@ -3,6 +3,7 @@ import { backendHeaders } from './backend-client';
 import { getAudit, getAuditSites, getAuditBuildings } from '@/lib/audit-service';
 import { getInventorySnapshot } from '@/lib/inventory-service';
 import { mapOcrToInvoiceData } from '@/lib/invoice-mapper';
+import { getFacturesSenelecForSelector, type FactureSenelecForSelector } from '@/lib/factures-senelec-service';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -27,9 +28,41 @@ function extraireDonneesOcr(ocrData: unknown, montant: number | null) {
   }
 }
 
+// Factures SENELEC importées (Excel) : totaux sur toutes les factures retenues
+// (hors quarantaine) + détail des plus récentes, pour rester sous la taille de contexte.
+const FACTURES_SENELEC_DETAILLEES = 60;
+
+function resumerFacturesSenelec(lignes: FactureSenelecForSelector[]) {
+  const retenues = lignes.filter((f) => !f.is_quarantined);
+  const kwh = retenues.reduce((s, f) => s + (f.consommation_facturee ?? 0), 0);
+  const ttc = retenues.reduce((s, f) => s + (f.montant_facture_ttc ?? 0), 0);
+  const recentes = [...retenues]
+    .sort((a, b) => (b.date_debut_periode ?? '').localeCompare(a.date_debut_periode ?? ''))
+    .slice(0, FACTURES_SENELEC_DETAILLEES);
+  return {
+    nombre: lignes.length,
+    en_quarantaine: lignes.length - retenues.length,
+    consommation_totale_kWh: Math.round(kwh),
+    montant_total_ttc_fcfa: Math.round(ttc),
+    prix_moyen_fcfa_kwh: kwh > 0 ? Math.round((ttc / kwh) * 10) / 10 : null,
+    contrats: [...new Set(retenues.map((f) => f.numero_compte_contrat))],
+    detail_plus_recentes: recentes.map((f) => ({
+      periode: `${f.date_debut_periode ?? '?'} → ${f.date_fin_periode ?? '?'}`,
+      contrat: f.numero_compte_contrat,
+      categorie: f.categorie_tarifaire ?? f.type_tarif_numero,
+      kwh: f.consommation_facturee,
+      montant_ttc: f.montant_facture_ttc,
+      puissance_souscrite_kW: f.puissance_souscrite_kw,
+      puissance_max_kW: f.puissance_max_kw,
+      cos_phi: f.valeur_cosinus_phi,
+      penalites_depassement: f.penalites_depassement,
+    })),
+  };
+}
+
 async function buildAuditContext(auditId: string): Promise<string> {
   // Parallel fetch — tout ce dont l'IA a besoin
-  const [audit, sites, snapshot, { data: invoices }, { data: measurements }] = await Promise.all([
+  const [audit, sites, snapshot, { data: invoices }, { data: measurements }, facturesSenelec] = await Promise.all([
     getAudit(auditId),
     getAuditSites(auditId),
     getInventorySnapshot(auditId),
@@ -45,6 +78,7 @@ async function buildAuditContext(auditId: string): Promise<string> {
       .eq('audit_id', auditId)
       .order('recorded_at', { ascending: false })
       .limit(50),
+    getFacturesSenelecForSelector(auditId),
   ]);
 
   // Calculs inventaire
@@ -110,6 +144,7 @@ async function buildAuditContext(auditId: string): Promise<string> {
         periode: `${extrait.periode_debut_iso ?? '?'} → ${extrait.periode_fin_iso ?? '?'}`,
       };
     }),
+    factures_senelec_importees: resumerFacturesSenelec(facturesSenelec),
     mesures: (measurements ?? []).map((m) => ({
       capteur: m.sensor_name,
       type: m.sensor_type,
