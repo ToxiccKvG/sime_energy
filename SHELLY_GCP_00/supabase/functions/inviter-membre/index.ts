@@ -25,9 +25,13 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-// Adresses de la plateforme vers lesquelles un lien peut ramener
-const ORIGINES = (Deno.env.get("INVITE_ALLOWED_ORIGINS") ?? "http://localhost:8080")
-  .split(",").map((o) => o.trim().replace(/\/$/, "")).filter(Boolean);
+// Adresses de la plateforme vers lesquelles un lien peut ramener : le site, le serveur
+// de test (à retirer après la bascule DNS), plus INVITE_ALLOWED_ORIGINS (postes de dev).
+const ORIGINES = [
+  "https://sime.cer2e.com",
+  "https://52-48-16-170.sslip.io",
+  ...(Deno.env.get("INVITE_ALLOWED_ORIGINS") ?? "http://localhost:8080").split(","),
+].map((o) => o.trim().replace(/\/$/, "")).filter(Boolean);
 
 const VALIDITE_JOURS = 7;
 
