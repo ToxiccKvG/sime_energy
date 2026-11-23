@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useIOT } from './IOTContext';
 import { fetchDisponibles, exporterDonneesSupabase, type SupabaseExportOptions } from '@/lib/iot-supabase-service';
+import { fetchDebutsCampagne } from '@/lib/shelly-account-service';
 
 /** Ce que l'utilisateur a choisi d'analyser, partagé par toutes les vues. */
 export interface PerimetreAnalyse {
@@ -44,6 +45,13 @@ const PERIODES: { cle: string; libelle: string; debut: () => string; fin: () => 
   { cle: 'mois', libelle: 'Ce mois', debut: () => { const d = new Date(); return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1))); }, fin: () => ilYa(0) },
   { cle: 'moisPrec', libelle: 'Mois dernier', debut: () => { const d = new Date(); return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1))); }, fin: () => { const d = new Date(); return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0))); } },
 ];
+
+/** « 17/11 17:20 UTC » : début de campagne d'un site (heure de Dakar = UTC). */
+const libelleCampagne = (isoTs: string) => {
+  const d = new Date(isoTs);
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return `${p2(d.getUTCDate())}/${p2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())} UTC`;
+};
 
 const libelleResume = (nb: number, granularite: 'horaire' | 'minute') =>
   `${nb.toLocaleString('fr-FR')} relevés ${granularite === 'horaire' ? 'horaires' : 'à la minute'}`;
@@ -91,6 +99,14 @@ export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
 
   useEffect(() => { fetchDisponibles().then(d => setCatalogue({ sites: d.sites, devices: d.devices as Appareil[] })); }, []);
 
+  // Début de campagne du site (shelly_accounts.debut_campagne) : une période
+  // proposée (7 j, 30 j…) ne commence pas avant, pour ne pas analyser des jours
+  // sans mesures exploitables. Une période saisie à la main n'est jamais modifiée.
+  const [campagnes, setCampagnes] = useState<Map<string, string>>(new Map());
+  useEffect(() => { fetchDebutsCampagne().then(setCampagnes); }, []);
+  const debutCampagne = sites.length === 1 ? campagnes.get(sites[0]) ?? null : null;
+  const jourCampagne = debutCampagne ? debutCampagne.slice(0, 10) : null;
+
   // Raccourci venu de l'onglet Sources (« Analyser ») : site et appareils pré-cochés
   const { state: { analysePreset }, setAnalysePreset } = useIOT();
   useEffect(() => {
@@ -115,8 +131,20 @@ export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
   const choisirPeriode = (cle: string) => {
     setPeriode(cle);
     const p = PERIODES.find(x => x.cle === cle);
-    if (p) { setDateDebut(p.debut()); setDateFin(p.fin()); }
+    if (p) { setDateDebut(debutPropose(p.debut(), p.fin())); setDateFin(p.fin()); }
   };
+  // Période proposée avancée au début de campagne s'il tombe dedans
+  const debutPropose = (debut: string, fin: string) =>
+    jourCampagne && jourCampagne > debut && jourCampagne <= fin ? jourCampagne : debut;
+  // Site changé (ou campagne lue après coup) : la période proposée suit
+  useEffect(() => {
+    const p = PERIODES.find(x => x.cle === periode);
+    if (p) setDateDebut(debutPropose(p.debut(), p.fin()));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- debutPropose ne dépend que de jourCampagne
+  }, [periode, jourCampagne]);
+  const periodeAjustee = periode !== 'perso' && jourCampagne != null && dateDebut === jourCampagne
+    && (PERIODES.find(x => x.cle === periode)?.debut() ?? jourCampagne) < jourCampagne;
+  const avantCampagne = periode === 'perso' && jourCampagne != null && dateDebut < jourCampagne;
 
   const analyser = async () => {
     if (dateFin < dateDebut) { setErreur('La date de fin précède la date de début.'); return; }
@@ -298,6 +326,13 @@ export function PerimetreBar({ colonnesRecommandees, onCharge, repris }: {
         {resume && !chargement && <span className="text-xs text-slate-400 self-center">{resume}</span>}
         {erreur && <span className="text-xs text-red-400 self-center">{erreur}</span>}
       </div>
+      {debutCampagne && (periodeAjustee || avantCampagne) && (
+        <p className="text-xs text-amber-300">
+          {periodeAjustee
+            ? `Période ajustée au début de la campagne du site : ${libelleCampagne(debutCampagne)}.`
+            : `Les mesures de ce site sont exploitables à partir du ${libelleCampagne(debutCampagne)} : les jours précédents seront vides ou incomplets.`}
+        </p>
+      )}
 
     </div>
   );

@@ -15,7 +15,7 @@
 
 ### Comptes Shelly Cloud
 
-La collecte lit **9 sites** (une clé Shelly par site, sauf le compte Prestation partagé entre deux sites). La table `shelly_accounts` est la source de vérité (voir § 3.1).
+La collecte lit **8 sites** (une clé Shelly par site). Prestation CER2E et Mosquée Sacré Cœur sont **sorties de la plateforme le 17/11** (lignes `shelly_accounts` et `site_organisation` supprimées, mesures gardées en base). La table `shelly_accounts` est la source de vérité (voir § 3.1).
 
 | Site | Pays / distributeur | Compte | Serveur |
 |---|---|---|---|
@@ -24,11 +24,11 @@ La collecte lit **9 sites** (une clé Shelly par site, sauf le compte Prestation
 | Bureau CER2E Dakar | Sénégal / SENELEC | clé du logement Dakar, collecté depuis le 19/10 | shelly-299-eu |
 | Bureau CER2E Thiès | Sénégal / SENELEC | clé du logement Thiès, collecté depuis le 19/10 | shelly-299-eu |
 | Donsin | Burkina Faso / **SONABEL** | compte dédié Donsin | shelly-271-eu |
-| Prestation CER2E | Sénégal / SENELEC | prestation@cer2e.com, **pièce SENELEC seulement**, collecté depuis le 26/10 | shelly-98-eu |
-| Mosquée Sacré Cœur | Sénégal / SENELEC | prestation@cer2e.com (même clé), **pièce « Mosquée sacré cœur » seulement**, collecté depuis le 28/10 | shelly-98-eu |
+| Mairie de Rufisque | Sénégal / SENELEC | prestation@cer2e.com, **12 appareils listés** (3 tableaux : BAT. A, BAT. B, S.FETES), mesures exploitables depuis le **17/11 17:20 UTC** | shelly-98-eu |
 | Boussoura | Sénégal / SENELEC | compte dédié de Mme Boussoura (usages de son domicile), **11 appareils listés** depuis le 02/11, collecté depuis le 29/10 | shelly-242-eu |
 | Babs Ndiaye | Sénégal / SENELEC | compte dédié de Babs Ndiaye, tout le compte, collecté depuis le 29/10 | shelly-188-eu |
 
+- **Début de campagne** (23/11) : `shelly_accounts.debut_campagne` = instant à partir duquel les mesures d'un site sont exploitables (vide = depuis le début des données). L'onglet Analyse avance les périodes proposées (7 j, 30 j…) à cette date quand un seul site est choisi, et prévient si une période saisie à la main commence avant. Renseigné pour la Mairie de Rufisque.
 - Les mots de passe ne sont jamais écrits dans le dépôt. Ils sont gérés par le manager.
 - **Collecte partielle d'un compte** (26/10) : la colonne `shelly_accounts.appareils_inclus` (liste de `device_id`) limite la collecte à ces appareils ; leurs canaux `_1`, `_2`… suivent. Vide = tout le compte.
 - Le pays et le distributeur ne sont stockés nulle part en base (décision du 01/09 : à ajouter avec le moteur tarifaire). **Ne jamais écrire « SENELEC » dans un libellé générique** : c'est faux pour Donsin.
@@ -135,6 +135,7 @@ La collecte lit **9 sites** (une clé Shelly par site, sauf le compte Prestation
 ### 3.3 Interpréter les mesures
 - **kWh = écart du compteur cumulé `wh_tot`** entre la première et la dernière lecture, appareil par appareil, en ignorant les lignes où `wh_tot` est vide.
 - **Lignes vides** : d'avril à août, la collecte écrivait des lignes entièrement vides pour les appareils injoignables (57 % des heures en août). Depuis le 16/10, `nb_mesures_reelles` les distingue et une heure vide compte comme **absente**, pas comme 0 kWh.
+- **Heures rattrapées depuis le cloud** (API `v2/statistics`, compteurs EM seulement) : insérées dans `shelly_cl_horaire` avec `nb_mesures = 0` (repère : la collecte écrit toujours au moins 1) et **`nb_mesures_reelles = 1`**, sinon elles comptent comme absentes dans `fn_profil_charge` mais pas dans `fn_profil_horaire` (« Écart à vérifier » entre total par heures et total par jours, 4,7 kWh à la Mairie). Corrigé le 23/11 pour les 265 heures existantes (`backup.horaire_cloud_mesures_20261123`). **Tout rattrapage futur écrit `nb_mesures_reelles = 1`.**
 - **Relectures** : le collecteur relit chaque minute la dernière valeur connue. Selon l'appareil, 44 à 61 % des lignes brutes ne sont pas des mesures nouvelles. La vraie clé d'une mesure est `measured_at`.
 - **Agrégation dans le temps** : par heure, on additionne entre appareils ; par jour, on fait la moyenne des heures. Additionner 24 moyennes horaires donne une puissance 24 fois trop grande. L'énergie, elle, s'additionne aux deux niveaux.
 - **TC monté à l'envers** (`sens_inverse`) : `fn_energy_by_device` ne le gère pas et compte 0. `fn_energy_profile` et `fn_energy_repartition` permutent soutirage et injection pour ces appareils.

@@ -1535,7 +1535,7 @@ export function ProfilChargeTab({ perimetre, lignes, demandeRapport = 0 }: {
                   <div>
                     <Label htmlFor="a-retenir-rapport" className="text-xs text-slate-300">Ce qu'il faut retenir, selon vous (facultatif)</Label>
                     <Textarea id="a-retenir-rapport" value={aRetenir} onChange={e => setARetenir(e.target.value)}
-                      placeholder="Ce que les chiffres ne disent pas seuls : la consommation suit les prières…"
+                      placeholder="Ce que les chiffres ne disent pas seuls : un pic chaque matin à l'ouverture des bureaux…"
                       className="mt-1 min-h-16 bg-white/5 border-white/15 text-slate-100 text-xs" />
                   </div>
                   <div>

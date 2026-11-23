@@ -2034,6 +2034,7 @@ export type Database = {
           auth_key: string
           auth_key_last6: string | null
           created_at: string | null
+          debut_campagne: string | null
           id: string
           label: string | null
           last_error_msg: string | null
@@ -2048,6 +2049,7 @@ export type Database = {
           auth_key: string
           auth_key_last6?: string | null
           created_at?: string | null
+          debut_campagne?: string | null
           id?: string
           label?: string | null
           last_error_msg?: string | null
@@ -2062,6 +2064,7 @@ export type Database = {
           auth_key?: string
           auth_key_last6?: string | null
           created_at?: string | null
+          debut_campagne?: string | null
           id?: string
           label?: string | null
           last_error_msg?: string | null

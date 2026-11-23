@@ -53,6 +53,20 @@ export async function fetchAccounts(): Promise<ShellyAccount[]> {
   return (data ?? []) as unknown as ShellyAccount[];
 }
 
+/**
+ * Début des mesures exploitables de chaque site (`shelly_accounts.debut_campagne`),
+ * pour les sites qui en ont un : site → instant ISO. Ex. Mairie de Rufisque :
+ * 17/11/2026 17:20 UTC. En cas d'échec de lecture, aucun ajustement (map vide).
+ */
+export async function fetchDebutsCampagne(): Promise<Map<string, string>> {
+  const { data, error } = await supabase
+    .from('shelly_accounts')
+    .select('site, debut_campagne')
+    .not('debut_campagne', 'is', null);
+  if (error) { console.error('[fetchDebutsCampagne]', error); return new Map(); }
+  return new Map((data ?? []).map(r => [r.site, r.debut_campagne as string]));
+}
+
 // ── Création ──────────────────────────────────────────────────
 // auth_key est requise à la création (vérifié côté UI avant l'appel).
 // INSERT simple, pas d'upsert : ON CONFLICT DO UPDATE exige le droit de
